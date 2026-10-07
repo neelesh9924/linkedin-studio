@@ -285,3 +285,8 @@ and the gaps found when this was built.
 
 One test uses the real skills code and is skipped unless a linkedin-skills clone sits next to
 this folder.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). The licences of the two projects this app includes are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
