@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import copy %}
+{% block title %}{{ 'Set up LinkedIn Studio' if first_run else 'Folders' }}{% endblock %}
+{% block heading %}
+{% if not first_run %}<a class="crumb" href="/settings">{{ icon("arrow-left", 16) }}Settings</a>{% endif %}
+<h1>{{ self.title() }}</h1>
+{% endblock %}
+{% block content %}
+<div class="setup">
+  <p class="lede">{% if first_run %}One step before the app can start: tell it where three things are on this PC.{% else %}Where the skills, the Claude program and its sign-in are on this PC.{% endif %}
+    For each one, click a place it found, press Browse, or paste the path.</p>
+
+  {% include "_paths.html" %}
+
+  <div class="section-title"><h2>If one of them is not on this PC yet</h2></div>
+  <div class="card pad">
+    <dl class="kv wide">
+      <dt>The skills</dt>
+      <dd>Turn on <b>Developer Mode</b> in Windows Settings, so git can make the links Claude needs. Then, in PowerShell, in the folder where you keep projects:
+        <div class="mono-out" id="clone-cmd">git -c core.symlinks=true clone https://github.com/sergebulaev/linkedin-skills</div>
+        <div style="margin-top:8px">{{ copy("clone-cmd", "Copy the command") }}</div></dd>
+      <dt>Claude Code</dt>
+      <dd>Install it the way <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noopener">Anthropic's setup page {{ icon("external", 12) }}</a> describes, then run <code>claude</code> once in a terminal and sign in. If yours came from npm there is no <code>claude.exe</code> yet: run <code>claude install</code> to get it.</dd>
+      <dt>The login folder</dt>
+      <dd>It appears after that first sign-in. It is the <code>.claude</code> folder in your user folder, unless you keep a separate login for this app.</dd>
+    </dl>
+    <p class="hint" style="margin-top:12px">Done one of these? <a href="/setup">Look again</a> and it shows up under “Found on this PC”.</p>
+  </div>
+</div>
+{% endblock %}

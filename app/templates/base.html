@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}LinkedIn Studio{% endblock %} · LinkedIn Studio</title>
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<script src="/static/theme.js?v={{ asset_v }}"></script>
+<link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js?v={{ asset_v }}" defer></script>
+{% block scripts %}{% endblock %}
+</head>
+<body{% if flash %} data-flash-kind="{{ flash[0] }}" data-flash-text="{{ flash[1] }}"{% endif %}>
+<div class="app{{ ' bare' if bare }}">
+  {% if not bare %}
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+      <a class="brand" href="/" title="LinkedIn Studio">{{ logo() }}<span>LinkedIn Studio</span></a>
+      <nav class="nav" aria-label="Main">
+        {% for key, label, href, glyph in [
+            ("home", "Home", "/", "home"), ("interviewer", "Interviewer", "/interviewer", "chat"),
+            ("bank", "Story Bank & Voice", "/bank", "book"), ("planner", "Planner", "/planner", "calendar"),
+            ("drafts", "Drafts", "/drafts", "pen"), ("tools", "Tools", "/tools", "tool"),
+            ("settings", "Settings", "/settings", "settings")] %}
+        <a href="{{ href }}" title="{{ label }}"{% if nav == key %} class="on" aria-current="page"{% endif %}>{{ icon(glyph) }}<span>{{ label }}</span></a>
+        {% endfor %}
+      </nav>
+    </div>
+  </aside>
+  {% endif %}
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="titles">{% if bare %}{{ logo() }}{% endif %}{% block heading %}<h1>{{ self.title() }}</h1>{% endblock %}</div>
+        <div class="top-actions">{% block actions %}{% endblock %}</div>
+        <div class="utils">
+          {% if not bare %}
+          <div id="activity" hx-get="/jobs/active" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+          <a class="icon-btn{{ ' on' if nav == 'guide' }}" href="/guide" title="Guide: how to use LinkedIn Studio" aria-label="Guide"{% if nav == 'guide' %} aria-current="page"{% endif %}>{{ icon("help") }}</a>
+          {% endif %}
+          <button class="icon-btn" id="theme-toggle" type="button" title="Switch between light and dark" aria-label="Switch theme">{{ icon("moon", 18, "when-light") }}{{ icon("sun", 18, "when-dark") }}</button>
+          <button class="icon-btn" type="button" title="Quit LinkedIn Studio" aria-label="Quit" hx-post="/quit" hx-target="body"
+            hx-confirm="A running Claude job will be stopped. Your drafts are already saved."
+            data-confirm-title="Quit LinkedIn Studio?" data-confirm-ok="Quit">{{ icon("power") }}</button>
+        </div>
+      </div>
+    </header>
+    <main class="content" id="main">
+{% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<dialog id="confirm-dialog" class="dialog narrow">
+  <div class="dialog-head"><h2 data-role="title">Are you sure?</h2></div>
+  <div class="dialog-body"><p class="soft" data-role="text"></p></div>
+  <div class="dialog-foot">
+    <button type="button" class="btn" data-close>Cancel</button>
+    <button type="button" class="btn primary" data-role="ok">Continue</button>
+  </div>
+</dialog>
+
+{% for name in ("check-circle", "alert", "info", "x") %}<template id="tpl-icon-{{ name }}">{{ icon(name) }}</template>{% endfor %}
+
+</body>
+</html>

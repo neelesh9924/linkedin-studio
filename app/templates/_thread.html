@@ -1,0 +1,45 @@
+{% from "_macros.html" import empty %}
+<div class="thread" id="thread" data-region data-busy="{{ '1' if active else '0' }}" data-conv="{{ conv.id if conv else '' }}"
+     data-placeholder="{{ 'Waiting for the reply…' if active else 'Your answer. Enter sends, Shift+Enter adds a line.' if started else 'Optional: say what you want to cover. Enter starts.' }}"
+     hx-get="/interviewer/{{ mode }}/thread?c={{ conv.id if conv else 0 }}"
+     hx-trigger="jobs-changed[detail.kind=='{{ kind }}'] from:body" hx-swap="outerHTML">
+  {% if not msgs %}
+    {% if mode == 'bank' %}
+      {% call empty("chat", "Tell it your stories once", "The interviewer asks one question at a time and presses once when an answer is vague. It keeps what you say in your Story Bank, so drafts stop asking you for numbers. Budget 20 to 40 minutes; stop any time and pick up later.") %}
+      <button class="btn primary" type="submit" form="composer">{{ icon("chat", 15) }}<span>Start the interview</span></button>
+      {% endcall %}
+    {% else %}
+      {% call empty("feather", "Teach it how you write", "Paste three to six of your own posts or comments. It works out your rhythm, openers and habits, shows you the profile, and saves it once you say yes.") %}
+      <button class="btn primary" type="submit" form="composer">{{ icon("feather", 15) }}<span>Start</span></button>
+      {% endcall %}
+    {% endif %}
+  {% endif %}
+
+  {% for m in msgs %}
+  <div class="msg {{ m.role }}">
+    {% if m.role == 'assistant' %}<div class="bubble prose">{{ m.text|md(false, true) }}</div>{% else %}<div class="bubble">{{ m.text }}</div>{% endif %}
+    {% if m.diff %}
+    {% set added, removed = m.diff|diffstat %}
+    <details class="file-change">
+      <summary>{{ icon("file", 14) }}<span>Saved to {{ doc_name }}</span><span class="plus">+{{ added }}</span><span class="minus">−{{ removed }}</span></summary>
+      <pre class="diff">{{ m.diff|udiff }}</pre>
+    </details>
+    {% endif %}
+    <div class="meta">{{ (m.created_at|clock).split(', ')[1] }}</div>
+  </div>
+  {% endfor %}
+
+  {% if active %}
+  <div class="msg assistant" data-job="{{ active.id }}">
+    <div class="bubble typing" aria-label="Thinking"><i></i><i></i><i></i></div>
+    <div class="meta row tight">
+      <span hx-get="/jobs/{{ active.id }}/tick" hx-trigger="every 1s" hx-swap="innerHTML">{{ 'Waiting for the current job' if active.status == 'queued' else (active.progress or 'Starting') }}</span>
+      <span class="timer" data-since="{{ active.created_at }}"></span>
+      <button type="button" class="btn ghost sm" hx-post="/jobs/{{ active.id }}/cancel" hx-swap="none" hx-disabled-elt="this">Stop</button>
+    </div>
+  </div>
+  {% elif failed %}
+  <div class="note {{ '' if failed.status == 'cancelled' else 'bad' }}">{{ icon("info" if failed.status == 'cancelled' else "alert", 16) }}
+    <div>{% if failed.status == 'cancelled' %}You stopped that reply.{% else %}That reply did not arrive: {{ failed.error or 'it stopped early' }}{% endif %} Send a message to carry on.</div></div>
+  {% endif %}
+</div>

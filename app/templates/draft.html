@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "_macros.html" import status, bullets %}
+{% block title %}{{ post.title }}{% endblock %}
+{% block heading %}
+<a class="crumb" href="/drafts">{{ icon("arrow-left", 16) }}Drafts</a>
+{{ status(post) }}
+<span id="save-state" class="save-state">{% if editable %}Saved {{ (post.updated_at|clock).split(', ')[1] }}{% endif %}</span>
+{% endblock %}
+{% block actions %}
+{% if deletable %}
+<button class="btn ghost danger" type="button" hx-post="/drafts/{{ post.id }}/delete" hx-swap="none"
+  hx-confirm="The draft and its audit are removed from this computer. This cannot be undone."
+  data-confirm-title="Delete this draft?" data-confirm-ok="Delete" data-danger>{{ icon("trash", 15) }}<span>Delete</span></button>
+{% endif %}
+{% endblock %}
+{% block content %}
+<div class="editor-grid">
+  <div class="stack">
+    {% if post.error %}
+    <div class="note {{ 'bad' if post.status == 'failed' else 'warn' }}">{{ icon("alert", 17) }}<div>{{ post.error }}</div></div>
+    {% endif %}
+    {% if not editable %}
+    <div class="note">{{ icon("lock", 16) }}<div>{% if post.status == 'approved' %}Approved text is locked. Move it back to draft to edit.{% else %}This post has left the editor. The text below is what was sent.{% endif %}</div></div>
+    {% endif %}
+
+    <div id="revision" data-region hx-get="/drafts/{{ post.id }}/revision" hx-trigger="jobs-changed[detail.kind=='revise'] from:body" hx-swap="innerHTML">
+    {% include "_revision.html" %}
+    </div>
+
+    <form class="card" id="draft-form" data-slot-re="{{ slot_pattern }}"
+      {% if editable %}hx-post="/drafts/{{ post.id }}/save" hx-trigger="input delay:900ms, save-now" hx-swap="none" hx-sync="this:replace"{% endif %}>
+      <div style="padding:18px 24px 0">
+        <input class="title-input" id="draft-title" name="title" value="{{ post.title }}" maxlength="120"
+          placeholder="Title (only you see this)" aria-label="Title"{{ ' readonly' if not editable }}>
+      </div>
+      <textarea class="editor" id="post-text" name="text" aria-label="Post text"
+        placeholder="Write your post. The first two lines are the hook."{{ ' readonly' if not editable }}>{{ post.text }}</textarea>
+      <div class="editor-foot">
+        <div class="meter" id="meter" data-min="{{ target.min }}" data-max="{{ target.max }}" data-hard="{{ target.hard }}" data-fold="{{ target.fold }}">
+          <div class="meter-track"><span class="meter-zone"></span><span class="meter-thumb"></span></div>
+          <div class="meter-text"></div>
+        </div>
+        <div class="row tight" id="slot-box" hidden>
+          <span class="chip warn" id="slot-count"></span>
+          {% if editable %}<button type="button" class="btn sm" id="slot-next" title="Select the next [blank] in the text">Next blank {{ icon("arrow-right", 14) }}</button>{% endif %}
+        </div>
+      </div>
+      <div class="subfield">
+        <label class="label" for="draft-fc">First comment <span class="muted" style="font-weight:400">optional · links go here, not in the post</span></label>
+        <textarea class="input" id="draft-fc" name="first_comment" data-autosize rows="1" maxlength="{{ first_comment_max }}"
+          style="min-height:38px;resize:none" placeholder="e.g. Full write-up: https://…"{{ ' readonly' if not editable }}>{{ post.first_comment or '' }}</textarea>
+      </div>
+    </form>
+
+    {% if notes %}
+    <div class="card" style="padding:0 20px">
+      <details class="fold" style="border-top:0"><summary>{{ icon("info", 15) }}Notes from the writer ({{ notes|length }})</summary>
+        <div class="fold-body soft">{{ bullets(notes) }}</div></details>
+    </div>
+    {% endif %}
+  </div>
+
+  <aside class="rail">
+    <div class="card">
+      <div class="card-head"><h2>{{ icon("eye") }}How it opens in the feed</h2></div>
+      <div class="feed">
+        <div class="feed-head"><div class="avatar">You</div><div class="feed-who"><b>You</b><span class="muted small">Just now</span></div></div>
+        <div class="feed-text" id="feed-text"></div>
+      </div>
+      <div class="card-foot hint">Readers see roughly the first {{ target.fold }} characters before “more”.</div>
+    </div>
+    <div id="rail" class="stack" style="gap:14px" data-region hx-get="/drafts/{{ post.id }}/rail"
+         hx-trigger="jobs-changed[detail.kind=='audit'||detail.kind=='revise'] from:body" hx-swap="innerHTML">
+    {% include "_rail.html" %}
+    </div>
+  </aside>
+</div>
+
+{% if post.status == 'approved' %}
+<dialog id="schedule-dialog" class="dialog">
+  <form hx-post="/drafts/{{ post.id }}/schedule" hx-include="#when, #draft-fc" hx-swap="none" data-errors>
+    <div class="dialog-head"><h2>Schedule this post?</h2><button type="button" class="icon-btn" data-close aria-label="Close">{{ icon("x") }}</button></div>
+    <div class="dialog-body">
+      <div class="note accent">{{ icon("clock", 17) }}<div><b id="confirm-when"></b> {{ tz_label }}, through Publora.<br>
+        <span class="small">This uses 1 of your {{ limit }} posts for the month ({{ used }} used so far).</span></div></div>
+      <div class="textbox" style="max-height:260px;overflow-y:auto">{{ post.text }}</div>
+      {% if post.first_comment %}<div><div class="label" style="margin-bottom:6px">First comment</div><div class="textbox plain">{{ post.first_comment }}</div></div>{% endif %}
+      <div class="form-error" hidden></div>
+    </div>
+    <div class="dialog-foot">
+      <button type="button" class="btn" data-close>Not yet</button>
+      <button type="submit" class="btn primary">{{ icon("send", 15) }}<span>Schedule it</span></button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+{% endblock %}

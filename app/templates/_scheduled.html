@@ -1,0 +1,21 @@
+{% from "_macros.html" import status %}
+<div class="card" id="scheduled-card" data-errors>
+  <div class="card-head">
+    <h2>{{ icon("clock") }}Scheduled posts</h2>
+    {% if upcoming %}<button type="button" class="btn ghost sm" hx-post="/posts/refresh" hx-target="#scheduled-card" hx-swap="outerHTML" hx-disabled-elt="this">{{ icon("refresh", 14) }}<span>Check Publora</span></button>{% endif %}
+  </div>
+  {% if upcoming %}
+  <div class="rows">
+    {% for p in upcoming %}
+    <a class="post-row" href="/drafts/{{ p.id }}">
+      <span class="title">{{ p.title }}</span>
+      <span class="excerpt">{{ p.text|excerpt }}</span>
+      <span class="side">{{ status(p) }}<span>{{ p.scheduled_at|local }}</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card-body soft">Nothing is scheduled. Approve a draft, then pick a time.</div>
+  {% endif %}
+  <div class="form-error" hidden style="margin:0 20px 14px"></div>
+</div>

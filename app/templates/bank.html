@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Story Bank & Voice{% endblock %}
+{% block actions %}
+<a class="btn primary" href="/interviewer?mode={{ doc }}">{{ icon("chat", 15) }}<span>Open in Interviewer to change</span></a>
+{% endblock %}
+{% block content %}
+{% set f = files[doc] %}
+<div class="row between" style="margin-bottom:14px">
+  <div class="seg" role="tablist">
+    {% for key in ("bank", "voice") %}
+    <a href="/bank?doc={{ key }}" class="{{ 'on' if key == doc }}" role="tab">{{ icon('book' if key == 'bank' else 'feather', 15) }}<span>{{ mode_title[key] }}</span></a>
+    {% endfor %}
+  </div>
+  <div class="row tight small muted">
+    {% if protection %}
+    <span class="chip {{ 'ok' if protection.ok else 'warn' }}" title="{{ protection.detail }}">{{ icon('lock' if protection.ok else 'alert', 12) }}{{ 'Private: kept out of git' if protection.ok else 'Not protected from git' }}</span>
+    {% endif %}
+    <span class="chip {{ 'ok' if f.status.is_filled else '' }}">{{ 'Filled' if f.status.is_filled else 'Still empty' }}</span>
+    {% if f.status.is_filled and f.status.updated %}<span>Updated {{ f.status.updated }}</span>{% endif %}
+    {% if f.status.sessions and f.status.is_filled %}<span>· {{ f.status.sessions }} interviews</span>{% endif %}
+  </div>
+</div>
+
+{% if protection and not protection.ok %}
+<div class="note warn" style="margin-bottom:14px">{{ icon("alert", 16) }}<div><b>Not protected from git.</b> {{ protection.detail }} Until then, do not commit or push the skills folder.</div></div>
+{% elif protection and '.gitignore' in f.text %}
+<div class="note ok" style="margin-bottom:14px">{{ icon("lock", 16) }}<div><b>Already private.</b> {{ protection.detail }} The advice about <code>.gitignore</code> inside this file needs nothing more from you.</div></div>
+{% endif %}
+
+{% if f.text %}
+<div class="doc-grid">
+  <article class="card doc prose">{{ f.text|md(true) }}</article>
+  <nav class="card toc" aria-label="Sections">
+    <div class="label" style="padding:4px 8px 8px">{{ f.filled }} of {{ f.sections|length }} sections have material</div>
+    {% for s in f.sections %}
+    <a href="#{{ s.anchor }}" class="{{ 'has' if s.filled }}"><span class="dot"></span><span>{{ s.title }}</span>{% if s.filled %}<span class="n">{{ s.filled }}</span>{% endif %}</a>
+    {% endfor %}
+  </nav>
+</div>
+<p class="hint" style="margin-top:14px">Read-only here, so the format stays what the skills expect. The file is <code>{{ f.path }}</code>; back it up with <code>data\studio.db</code>.</p>
+{% else %}
+<div class="note bad">{{ icon("alert", 17) }}<div>The file <code>{{ f.path }}</code> was not found. Check <code>skills_dir</code> in config.local.toml.</div></div>
+{% endif %}
+{% endblock %}

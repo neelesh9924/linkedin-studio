@@ -1,0 +1,107 @@
+{% from "_macros.html" import working, problem, skeleton, status, empty %}
+
+{% macro item_card(i) -%}
+{% set job = item_jobs.get(i.id) %}
+{% set post = item_posts.get(i.post_id) %}
+<article class="card post-card" id="item-{{ i.id }}">
+  <div class="when"><b>{{ i.day }}</b><span>{{ i.time }}</span>{% if i.goal %}<span class="chip right">{{ icon("target", 12) }}{{ i.goal|capitalize }}</span>{% endif %}</div>
+  <div class="angle">{{ i.angle }}</div>
+  <div class="meta">
+    <span>{{ [i.pillar, i.format]|select|join(' · ') }}</span>
+    {% if i.formula %}<span>{{ i.formula }}</span>{% endif %}
+    {% if i.cta %}<span>Close: {{ i.cta }}</span>{% endif %}
+    {% if i.bank_section %}<span>From your Story Bank: {{ i.bank_section }}</span>{% endif %}
+  </div>
+  {% if post %}
+    <div class="foot"><a class="btn sm" href="/drafts/{{ post.id }}">{{ icon("pen", 14) }}<span>Open draft</span></a>{{ status(post) }}</div>
+  {% elif job and job.status in ('queued', 'running') %}
+    {{ working(job, compact=True) }}
+  {% else %}
+    {% if job %}{{ problem(job) }}{% endif %}
+    <div class="foot" data-errors>
+      <button type="button" class="btn sm" hx-post="/planner/items/{{ i.id }}/draft" hx-swap="none" hx-disabled-elt="this">{{ icon("sparkle", 14) }}<span>Draft this</span></button>
+      <span class="form-error small" hidden></span>
+    </div>
+  {% endif %}
+</article>
+{%- endmacro %}
+
+{% if plan_job %}
+  <div class="section-title"><h2>{{ 'Planning your week' if plan_job.status in ('queued', 'running') else 'The plan did not finish' }}</h2></div>
+  {% if plan_job.status in ('queued', 'running') %}
+    <div class="stack">
+      {{ working(plan_job) }}
+      <div class="board" aria-hidden="true">{% for _ in range(3) %}<div class="card post-card">{{ skeleton() }}</div>{% endfor %}</div>
+    </div>
+  {% else %}
+    {{ problem(plan_job) }}
+  {% endif %}
+{% endif %}
+
+{% for plan, items in boards %}
+  {% set inputs = plan.inputs|fromjson({}) %}
+  {% set result = plan.result|fromjson({}) %}
+  {% if loop.first %}
+    <div class="section-title">
+      <h2>{{ 'Latest plan' if plan_job and plan_job.status in ('queued', 'running') else 'This week' }}</h2>
+      <span class="muted small">Planned {{ plan.created_at|ago }} for {{ inputs.audience }}</span>
+    </div>
+    <div class="board fresh">{% for i in items %}{{ item_card(i) }}{% endfor %}</div>
+
+    {% if result.comment_targets or result.readiness or result.notes %}
+    <div class="grid cols-3" style="margin-top:16px">
+      {% if result.comment_targets %}
+      <div class="card">
+        <div class="card-head"><h2>{{ icon("comment") }}Who to comment on</h2></div>
+        <div class="card-body stack-s">
+          {% for c in result.comment_targets %}
+            {% if c is mapping %}<div><b>{{ c.day }}</b> <span class="soft">{{ c.who }}</span>{% if c.pattern %}<div class="hint">{{ c.pattern }}</div>{% endif %}</div>
+            {% else %}<div class="soft">{{ c }}</div>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if result.readiness %}
+      <div class="card">
+        <div class="card-head"><h2>{{ icon("check-circle") }}Inbound readiness</h2></div>
+        <div class="card-body">
+          <ul class="checks">
+          {% for c in result.readiness %}
+            {% if c is mapping %}<li class="{{ 'yes' if c.ok else 'no' }}">{{ icon('check' if c.ok else 'alert', 15) }}<span>{{ c.check }}{% if c.note %} <span class="muted">{{ c.note }}</span>{% endif %}</span></li>
+            {% else %}<li class="{{ 'no' if 'missing' in c|lower else 'yes' }}">{{ icon('alert' if 'missing' in c|lower else 'check', 15) }}<span>{{ c }}</span></li>{% endif %}
+          {% endfor %}
+          </ul>
+        </div>
+      </div>
+      {% endif %}
+      {% if result.notes %}
+      <div class="card">
+        <div class="card-head"><h2>{{ icon("info") }}Planner's notes</h2></div>
+        <div class="card-body"><ul class="list soft">{% for n in result.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% else %}
+    {% if loop.index == 2 %}<div class="section-title"><h2>Earlier plans</h2></div><div class="card" style="padding:0 20px">{% endif %}
+    <details class="fold"{{ ' style="border-top:0"'|safe if loop.index == 2 }}>
+      <summary>{{ plan.created_at|ago|capitalize }} · {{ items|length }} posts · {{ inputs.audience }}</summary>
+      <div class="fold-body stack-s">
+        {% for i in items %}
+        <div class="row" style="flex-wrap:nowrap;align-items:flex-start">
+          <b class="nowrap" style="min-width:74px">{{ i.day }}</b>
+          <span class="grow soft">{{ i.angle }}</span>
+          {% if item_posts.get(i.post_id) %}<a class="nowrap" href="/drafts/{{ i.post_id }}">Open draft</a>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% if loop.last %}</div>{% endif %}
+  {% endif %}
+{% else %}
+  {% if not plan_job %}
+  <div class="card" style="margin-top:20px">
+    {{ empty("calendar", "No plan yet", "Say who you write for and what the week should achieve. The plan appears here, and each post can be drafted with one click.") }}
+  </div>
+  {% endif %}
+{% endfor %}

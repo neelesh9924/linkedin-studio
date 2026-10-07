@@ -1,0 +1,21 @@
+{% from "_macros.html" import bullets %}
+{% if revision and editable %}
+{% set r = revision.result|fromjson({}) %}
+{% set how = (revision.params|fromjson({})).how %}
+<div class="card fresh" data-job="{{ revision.id }}" data-errors>
+  <div class="card-head">
+    <h2>{{ icon("sparkle") }}Revised version</h2>
+    <span class="chip accent">{{ revisions[how][0] if how in revisions else 'Revision' }}</span>
+  </div>
+  <div class="card-body stack-s">
+    <div class="textbox">{{ post.text|wdiff(r.text) }}</div>
+    <div class="hint">{{ r.text|chars|num }} characters (your draft has {{ post.text|chars|num }}). Green is added, red is removed.</div>
+    {% if r.changes %}<details class="fold"><summary>Why these changes ({{ r.changes|length }})</summary><div class="fold-body soft">{{ bullets(r.changes) }}</div></details>{% endif %}
+    <div class="row">
+      <button type="button" class="btn primary" hx-post="/drafts/{{ post.id }}/revision/{{ revision.id }}" hx-vals='{"use": 1}' hx-swap="none" hx-disabled-elt="this">{{ icon("check", 15) }}<span>Use this version</span></button>
+      <button type="button" class="btn" hx-post="/drafts/{{ post.id }}/revision/{{ revision.id }}" hx-vals='{"use": 0}' hx-swap="none" hx-disabled-elt="this">Discard</button>
+    </div>
+    <div class="form-error" hidden></div>
+  </div>
+</div>
+{% endif %}

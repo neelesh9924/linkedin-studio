@@ -1,0 +1,38 @@
+{# The three places the app needs. Posting swaps this whole form: with what is wrong, or with "saved". #}
+<form class="card" id="paths-form" hx-post="/setup" hx-target="this" hx-swap="outerHTML">
+  <div class="card-body stack">
+    {% for f in fields %}
+    <div class="field" data-path-field="{{ f.key }}">
+      <label for="path-{{ f.key }}">{{ f.label }}</label>
+      <div class="path-row">
+        <input class="input path" id="path-{{ f.key }}" name="{{ f.key }}" value="{{ values[f.key] }}"
+          placeholder="{{ examples[f.key] }}" spellcheck="false" autocomplete="off"{{ ' readonly' if saved }}>
+        {% if not saved %}<button type="button" class="btn" data-browse title="Choose it in a Windows file window">{{ icon("folder", 15) }}<span>Browse…</span></button>{% endif %}
+      </div>
+      {% if errors[f.key] %}<div class="form-error">{{ errors[f.key] }}</div>
+      {% elif values[f.key] %}<div class="hint good">{{ icon("check", 13) }}<span>{{ 'Saved' if saved else 'Found' }}</span></div>{% endif %}
+      {% if found[f.key] and not saved %}
+      <div class="pickers">
+        <span class="hint">Found on this PC:</span>
+        {% for place in found[f.key] %}<button type="button" class="pick path{{ ' on' if place == values[f.key] }}" data-fill="{{ place }}">{{ place }}</button>{% endfor %}
+      </div>
+      {% endif %}
+      <div class="hint">{{ f.what }} For example <code>{{ examples[f.key] }}</code></div>
+    </div>
+    {% endfor %}
+
+    {% if errors[''] %}<div class="form-error">{{ errors[''] }}</div>{% endif %}
+    {% if saved %}
+    <div class="note ok">{{ icon("check-circle", 17) }}<div>
+      {% if restarts %}<b>Saved.</b> LinkedIn Studio is restarting with these folders. This window closes and a new one opens.
+      {% else %}<b>Saved</b> in <code>config.local.toml</code>. Close LinkedIn Studio and open it again to use these folders.{% endif %}
+    </div></div>
+    {% else %}
+    <div class="row">
+      <button type="submit" class="btn primary">{{ icon("check", 15) }}<span>{{ 'Save and start' if first_run else 'Save and restart' if restarts else 'Save' }}</span></button>
+      {% if not first_run %}<a class="btn ghost" href="/settings">Cancel</a>{% endif %}
+      <span class="hint">Kept in <code>config.local.toml</code> in the app's folder. Nothing else in that file changes.</span>
+    </div>
+    {% endif %}
+  </div>
+</form>

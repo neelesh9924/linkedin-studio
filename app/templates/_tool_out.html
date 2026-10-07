@@ -1,0 +1,96 @@
+{% from "_macros.html" import working, problem, skeleton, copy, bullets, findings, empty %}
+{% if not job %}
+  {{ empty("inbox", "Nothing here yet", "Run the tool and its result appears on this side.") }}
+{% elif job.status in ('queued', 'running') %}
+  <div class="stack">{{ working(job) }}{{ skeleton() }}</div>
+{% elif job.status in ('failed', 'unparsed') %}
+  {{ problem(job) }}
+{% else %}
+{% set d = job.result|fromjson({}) %}
+{% set p = job.params|fromjson({}) %}
+<div class="out fresh" data-job="{{ job.id }}">
+  {% if kind == 'humanize' %}
+    {% set read = (d.reader_read or '')|lower %}
+    <div class="out-head">
+      <h3>Rewritten</h3>
+      {% if read %}<span class="chip {{ 'ok' if 'human' in read else 'bad' if 'ai' in read.split() else 'warn' }}">{{ d.reader_read }}</span>{% endif %}
+      {{ copy('out-' ~ job.id) }}
+    </div>
+    <div class="textbox" id="out-{{ job.id }}">{{ d.rewritten }}</div>
+    <div class="hint">{{ d.rewritten|chars|num }} characters, down from {{ p.text|chars|num }}</div>
+    <div>
+      {% if d.changes %}<details class="fold" open><summary>What changed ({{ d.changes|length }})</summary><div class="fold-body">{{ bullets(d.changes) }}</div></details>{% endif %}
+      <details class="fold"><summary>Compare with the original</summary><div class="fold-body"><div class="textbox">{{ p.text|wdiff(d.rewritten) }}</div></div></details>
+      {% if d.missing %}<details class="fold"><summary>Worth adding ({{ d.missing|length }})</summary><div class="fold-body"><p class="hint">Details only you know. Nothing was invented for you.</p>{{ bullets(d.missing) }}</div></details>{% endif %}
+    </div>
+
+  {% elif kind == 'audit' %}
+    {% set passed = (d.verdict or '')|upper == 'PASS' %}
+    <div class="verdict {{ 'pass' if passed else 'fail' }}">{{ icon('check-circle' if passed else 'alert', 24) }}
+      <div><b>{{ 'Ready to post' if passed else 'Not ready yet' }}</b><br><span>{{ d.summary }}</span></div></div>
+    {% if d.blockers %}<h3>Fix before posting ({{ d.blockers|length }})</h3>{% endif %}
+    {{ findings({'blockers': d.blockers}) }}
+    {% if d.warnings %}<h3>Worth a look ({{ d.warnings|length }})</h3>{% endif %}
+    {{ findings({'warnings': d.warnings}) }}
+
+  {% elif kind == 'hook' %}
+    <div class="out-head"><h3>{{ d.formula }}</h3>{% if d.confidence %}<span class="chip accent">{{ d.confidence }} confidence</span>{% endif %}</div>
+    {% if d.runner_up %}<div class="hint">Runner-up: {{ d.runner_up }}</div>{% endif %}
+    {% if d.hook %}<div class="prose"><blockquote>{{ d.hook }}</blockquote></div>{% endif %}
+    {% if d.why %}<p>{{ d.why }}</p>{% endif %}
+    <div class="out-head"><h3>Blank template</h3>{{ copy('out-' ~ job.id) }}</div>
+    <div class="textbox" id="out-{{ job.id }}">{{ d.template }}</div>
+    <div>
+      {% if d.structure %}<details class="fold"><summary>How the post is built ({{ d.structure|length }})</summary><div class="fold-body">{{ bullets(d.structure) }}</div></details>{% endif %}
+      {% if d.cautions %}<details class="fold" open><summary>Do not copy these ({{ d.cautions|length }})</summary><div class="fold-body">{{ bullets(d.cautions) }}</div></details>{% endif %}
+    </div>
+
+  {% elif kind == 'comment' %}
+    <div class="note">{{ icon("info", 16) }}<div>The app never posts comments. Copy the one you like and post it yourself.</div></div>
+    {% for v in d.variants or [] %}
+    <div class="variant">
+      <div class="out-head">
+        <h3>{{ v.template or ('Option ' ~ loop.index) }}</h3>
+        {% if v.reaction %}<span class="chip">React: {{ reactions.get(v.reaction|upper, v.reaction) }}</span>{% endif %}
+        {{ copy('out-' ~ job.id ~ '-' ~ loop.index) }}
+      </div>
+      <div class="textbox plain" id="out-{{ job.id }}-{{ loop.index }}">{{ v.text }}</div>
+      <div class="hint">{{ v.text|chars }} characters{% if v.why %} · {{ v.why }}{% endif %}</div>
+    </div>
+    {% endfor %}
+
+  {% elif kind == 'repurpose' %}
+    <div class="out-head">
+      <h3>LinkedIn post</h3>
+      {{ copy('out-' ~ job.id) }}
+      <button type="button" class="btn primary sm" hx-post="/tools/repurpose/{{ job.id }}/draft" hx-swap="none" hx-disabled-elt="this">{{ icon("pen", 14) }}<span>Save as draft</span></button>
+    </div>
+    <div class="textbox" id="out-{{ job.id }}">{{ d.post }}</div>
+    <div class="hint">{{ d.post|chars|num }} characters{% if d.formula %} · {{ d.formula }}{% endif %}</div>
+    {% if d.first_comment %}
+      <div class="out-head"><h3>First comment</h3>{{ copy('fc-' ~ job.id) }}</div>
+      <div class="textbox" id="fc-{{ job.id }}">{{ d.first_comment }}</div>
+    {% endif %}
+    {% if d.mapping %}<div><details class="fold"><summary>What became what ({{ d.mapping|length }})</summary><div class="fold-body">{{ bullets(d.mapping) }}</div></details></div>{% endif %}
+
+  {% elif kind == 'profile' %}
+    <div class="score">
+      {% for s in d.scorecard or [] %}
+      {% set v = (s.verdict or '')|lower %}
+      <div><div class="row tight between"><b>{{ s.section }}</b><span class="chip {{ 'ok' if v == 'pass' else 'bad' if v == 'fail' else 'warn' if 'work' in v else '' }}">{{ s.verdict }}</span></div><span class="soft">{{ s.note }}</span></div>
+      {% endfor %}
+    </div>
+    {% if d.priority_fixes %}<h3>Start here</h3><ol class="list">{% for f in d.priority_fixes %}<li>{{ f }}</li>{% endfor %}</ol>{% endif %}
+    <div>
+    {% for r in d.rewrites or [] %}
+      <details class="fold"{{ ' open' if loop.first }}><summary>{{ r.section }}</summary><div class="fold-body stack-s">
+        <div class="textbox" id="out-{{ job.id }}-{{ loop.index }}">{{ r.after }}</div>
+        <div class="row tight">{{ copy('out-' ~ job.id ~ '-' ~ loop.index) }}<span class="hint">{{ r.after|chars|num }} characters</span></div>
+        {% if r.before %}<details class="fold"><summary>Before</summary><div class="fold-body"><div class="textbox plain">{{ r.before }}</div></div></details>{% endif %}
+      </div></details>
+    {% endfor %}
+    </div>
+  {% endif %}
+  <div class="hint">Finished {{ job.finished_at|ago }}</div>
+</div>
+{% endif %}

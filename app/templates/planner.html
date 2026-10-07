@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Planner{% endblock %}
+{% block content %}
+<p class="lede">A week of posts from the content planner: three to five, each with a pillar, a hook formula and an angle.
+{% if bank.is_filled %}Angles come from your Story Bank.{% else %}Your <a href="/bank">Story Bank</a> is empty, so angles will be general until the <a href="/interviewer">Interviewer</a> fills it.{% endif %}</p>
+
+<form class="card" hx-post="/planner" hx-swap="none" data-errors>
+  <div class="card-head"><h2>{{ icon("calendar") }}Plan the next 7 days</h2></div>
+  <div class="card-body stack">
+    <div class="plan-form">
+      <div class="field">
+        <label for="audience">Who you are writing for</label>
+        <input class="input" type="text" id="audience" name="audience" required value="{{ last.audience or '' }}" placeholder="e.g. engineering managers at Indian SaaS startups">
+      </div>
+      <div class="field">
+        <label for="goal">What the week should achieve</label>
+        <input class="input" type="text" id="goal" name="goal" required value="{{ last.goal or '' }}" placeholder="e.g. inbound conversations about platform work">
+      </div>
+      <div class="field">
+        <label for="theme">Theme <span class="opt">optional</span></label>
+        <input class="input" type="text" id="theme" name="theme" value="{{ last.theme or '' }}" placeholder="Left empty, the plan draws on your Story Bank">
+      </div>
+      <div class="field">
+        <label>Posts this week</label>
+        <div class="row">
+          <div class="seg" role="radiogroup" aria-label="Posts this week" data-input="max_posts">
+            {% for n in (3, 4, 5) %}
+            <button type="button" role="radio" class="{{ 'on' if n == (last.max_posts or 4) }}" data-value="{{ n }}">{{ n }}</button>
+            {% endfor %}
+          </div>
+          <input type="hidden" name="max_posts" value="{{ last.max_posts or 4 }}">
+          <label class="check"><input type="checkbox" name="founder" value="1"{{ ' checked' if last.founder }}> Founders edition</label>
+        </div>
+      </div>
+    </div>
+    <div class="form-error" hidden></div>
+    <div class="row">
+      <button class="btn primary" type="submit">{{ icon("sparkle", 15) }}<span>Plan the week</span></button>
+      <span class="hint">Takes about a minute. You can leave this page while it runs.</span>
+    </div>
+  </div>
+</form>
+
+<div id="board" data-region hx-get="/planner/board" hx-trigger="jobs-changed[detail.kind=='plan'||detail.kind=='draft'] from:body" hx-swap="innerHTML">
+{% include "_board.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% from "_macros.html" import working, problem, status, empty %}
+{% if write_jobs %}
+<div class="stack-s" style="margin-bottom:16px">
+  {% for j in write_jobs %}{{ working(j) if j.status in ('queued', 'running') else problem(j) }}{% endfor %}
+</div>
+{% endif %}
+
+{% if total %}
+<div class="row" style="margin-bottom:14px">
+  <div class="seg" role="tablist" aria-label="Filter drafts">
+    {% for key, label in [("all", "All"), ("draft", "Drafts"), ("approved", "Approved"), ("scheduled", "Scheduled"), ("published", "Published"), ("other", "Failed or cancelled")] %}
+      {% if key in ("all", "draft") or counts[key] %}
+      <a href="/drafts?show={{ key }}" class="{{ 'on' if show == key }}" role="tab">{{ label }} <span class="count">{{ counts[key] }}</span></a>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if posts %}
+<div class="card rows fresh">
+  {% for p in posts %}
+  <a class="post-row" href="/drafts/{{ p.id }}">
+    <span class="title">{{ p.title }}</span>
+    <span class="excerpt">{{ p.text|excerpt or 'Nothing written yet' }}</span>
+    <span class="side">
+      {{ status(p) }}
+      <span>{% if p.status in ('scheduling', 'scheduled', 'published') and p.scheduled_at %}{{ p.scheduled_at|local }}{% else %}{{ p.text|chars|num }} characters · {{ p.updated_at|ago }}{% endif %}</span>
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% elif total %}
+<div class="card">{{ empty("inbox", "Nothing in this view", "Pick another filter to see your other posts.") }}</div>
+{% elif not write_jobs %}
+<div class="card">
+  {% call empty("pen", "No drafts yet", "Let the post writer draft one from a topic, start from the week plan, or begin with a blank page.") %}
+  <div class="row" style="justify-content:center">
+    <button class="btn primary" type="button" data-open="write-dialog">{{ icon("sparkle", 15) }}<span>Write a post</span></button>
+    <a class="btn" href="/planner">{{ icon("calendar", 15) }}<span>Plan the week</span></a>
+  </div>
+  {% endcall %}
+</div>
+{% endif %}
