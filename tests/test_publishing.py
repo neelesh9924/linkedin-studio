@@ -772,3 +772,18 @@ def test_check_now_answers_in_words_and_a_failed_ask_stays_for_the_notice(checke
     assert client.get(f"/api/post/{ids['due']}").json()["link"] is None        # a stored address is checked again
     assert client.post(f"/api/post/{ids['trashed']}/refresh", json={}).status_code == 404
     assert recorder.only_read() and ("get_post", "pg-trashed") not in recorder.asked
+
+
+def test_the_demos_publora_sends_a_post_at_its_time(cfg, tmp_path):
+    """dev/demo_server.py's stand-in: scheduled until the time it was given, then published with a made-up link."""
+    from dev.demo_server import ScriptedPublora
+    stand_in = ScriptedPublora()
+    stand_in.update_post_once("demo-due", {"status": "scheduled", "scheduledTime": "2026-10-01T03:30:00Z"})
+    stand_in.update_post_once("demo-later", {"status": "scheduled", "scheduledTime": "2099-10-01T03:30:00Z"})
+    db = DB(tmp_path / "demo.db")
+    pub = Publisher(db, cfg, client_factory=lambda: stand_in)
+    due, later, unknown = (new_post(db, status="scheduled", scheduled_at=DUE) for _ in range(3))
+    for pid, group in ((due, "demo-due"), (later, "demo-later"), (unknown, "demo-unknown")):
+        db.run("UPDATE posts SET publora_post_id=? WHERE id=?", (group, pid))
+    assert [pub.refresh(pid) for pid in (due, later, unknown)] == ["published", "scheduled", "scheduled"]
+    assert post_row(db, due)["published_url"] == "https://www.linkedin.com/feed/update/urn:li:share:demo-due"
