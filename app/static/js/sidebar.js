@@ -1,32 +1,67 @@
-// The sidebar: + New post, the posts (each by its first line, with where it stands), the studio's pages and the Trash,
-// and light or dark. Nothing in it counts anything: the figures are on the pages.
-import { $, state, h, icon, post, go, drawIfChanged, focusFirst, announce, whileBusy } from "./core.js";
+// The sidebar: + New post, the posts (each by its first line, with where it stands; the ones done with folded away under
+// Earlier), the studio's pages and the Trash, and light or dark. Nothing in it counts anything: the figures are on the
+// pages.
+import { $, state, h, icon, post, put, go, drawIfChanged, focusFirst, announce, whileBusy, recall, keep } from "./core.js";
 
 const PAGE_OF = { goPlanner: ["planner"], goBank: ["bank", "voice"], goTools: ["tools"], goGuide: ["guide"], goSettings: ["settings", "setup"],
   goTrash: ["trash"] };
+const EARLIER = new Set(["published", "cancelled"]);   // done with: on LinkedIn, or cancelled on Publora
 
-// Where a post stands, in the sidebar's line and the top bar's chip: Claude at work on it first.
+// Where a post stands, in the sidebar's line and the top bar's chip: Claude at work on it first, and for how long once
+// that is a minute or more.
 export function statusOf(p) {
-  if (p.busy) return { text: "Claude is working", kind: "busy" };
+  if (p.busy) {
+    const job = state.jobs.find((j) => j.post_id === p.id && j.status === "running");
+    const minutes = job ? Math.floor((job.seconds || 0) / 60) : 0;
+    return { text: minutes >= 1 ? `Claude is working · ${minutes} min` : "Claude is working", kind: "busy" };
+  }
   if (p.status === "scheduled" && p.when) return { text: `Scheduled · ${p.when.replace(/ [A-Z]{2,5}$/, "")}`, kind: "ok" };
   return { text: p.label, kind: p.kind };
 }
 
+// Earlier, after the posts as they are today: closed at first, then as the owner left it (kept in this window's
+// storage). The open post always shows: an earlier one opens the fold while it is the open post, and what is kept
+// stays as it was; closed by hand meanwhile, the fold keeps that one post under it until another post opens.
+let shut = 0;   // the earlier post the fold was closed on by hand
+
+function fold(open, here) {
+  keep("earlier", open ? "0" : "1");
+  shut = open ? here : 0;
+  renderList();
+}
+
+const postButton = (row) => h("button",
+  { class: "nav-item", type: "button", "aria-current": row.current ? "page" : null, title: row.first, "data-post": row.id,
+    onclick: () => go(`#post-${row.id}`) },
+  icon("file", 17),
+  h("span", { class: "nav-text" }, h("span", { class: "name" }, row.first), h("span", { class: "sub" }, row.text)),
+  h("i", { class: `dot ${row.kind}`, "aria-hidden": "true" }));
+
 // The posts, drawn again only when one of them changes, so a button the owner is on keeps the focus; when they are
-// drawn again, the focus stays on the same post's button. No posts: "None yet", in words.
+// drawn again, the focus stays on the same post's button (or on Earlier, when the post went under it). No posts:
+// "None yet", in words. The order is the studio's, as Ctrl+K and Alt+↑/↓ have it: today's, then the earlier ones.
 export function renderList() {
-  const rows = state.posts.map((p) => ({ id: p.id, first: p.first, ...statusOf(p), current: state.page === "post" && p.id === state.postId }));
+  const now = [];
+  const earlier = [];
+  for (const p of state.posts) {
+    (EARLIER.has(p.status) ? earlier : now).push({ id: p.id, first: p.first, ...statusOf(p), current: state.page === "post" && p.id === state.postId });
+  }
+  const onEarlier = (earlier.find((row) => row.current) || { id: 0 }).id;
+  if (shut !== onEarlier) shut = 0;
+  const open = earlier.length > 0 && (recall("earlier") === "1" || (onEarlier > 0 && shut !== onEarlier));
+  const under = open ? earlier : earlier.filter((row) => row.current);
   const list = $("list");
-  drawIfChanged(list, JSON.stringify(rows), () => {
-    const on = list.contains(document.activeElement) ? document.activeElement.dataset.post : null;
-    if (!rows.length) return void list.replaceChildren(h("span", { class: "soft", style: "padding:6px 10px" }, "None yet"));
-    list.replaceChildren(...rows.map((row) => h("button",
-      { class: "nav-item", type: "button", "aria-current": row.current ? "page" : null, title: row.first, "data-post": row.id,
-        onclick: () => go(`#post-${row.id}`) },
-      icon("file", 17),
-      h("span", { class: "nav-text" }, h("span", { class: "name" }, row.first), h("span", { class: "sub" }, row.text)),
-      h("i", { class: `dot ${row.kind}`, "aria-hidden": "true" }))));
-    if (on) focusFirst([...list.children].find((button) => button.dataset.post === on));
+  drawIfChanged(list, JSON.stringify([now, earlier.length > 0, open, under]), () => {
+    const at = list.contains(document.activeElement) ? document.activeElement : null;
+    const on = at ? at.dataset.post || at.id : "";
+    if (!now.length && !earlier.length) return void list.replaceChildren(h("span", { class: "soft", style: "padding:6px 10px" }, "None yet"));
+    const toggle = earlier.length ? h("button", { class: "side-fold", id: "earlierFold", type: "button", "aria-expanded": String(open),
+      "aria-controls": "earlierList", title: "Published and cancelled posts", onclick: () => fold(open, onEarlier) },
+    icon("chevron-down", 15), h("span", null, "Earlier")) : null;
+    const group = earlier.length ? h("div", { class: "nav-group", id: "earlierList", role: "group", "aria-labelledby": "earlierFold",
+      hidden: !under.length }, under.map(postButton)) : null;
+    put(list, now.map(postButton), toggle, group);
+    if (on) focusFirst(on === "earlierFold" ? null : list.querySelector(`[data-post="${on}"]`), $("earlierFold"));
   });
   for (const [id, pages] of Object.entries(PAGE_OF)) {
     const here = pages.includes(state.page);

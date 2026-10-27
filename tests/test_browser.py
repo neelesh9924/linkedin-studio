@@ -54,7 +54,11 @@ def test_the_shell_lists_the_posts_with_no_counts_anywhere_in_the_sidebar(studio
     page, errors, _ = studio
     names = page.locator("#list .nav-item .name").all_inner_texts()
     subs = page.locator("#list .nav-item .sub").all_inner_texts()
-    assert len(names) == 4 and {"Draft", "Approved", "Published"} <= set(subs)
+    assert len(names) == 3 and {"Draft", "Approved"} <= set(subs) and "Published" not in subs   # the published one: Earlier
+    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false"
+    page.click("#earlierFold")
+    assert page.locator("#earlierList .nav-item .sub").all_inner_texts() == ["Published"]
+    page.click("#earlierFold")                                         # closed again, as it was
     side = page.locator(".sidebar").inner_text()
     assert [w for w in ("Planner", "Story Bank & Voice", "Tools", "Guide", "Settings", "Trash") if w not in side] == []
     assert page.locator(".sidebar .chip, .sidebar .badge, .sidebar .count").count() == 0
@@ -151,7 +155,7 @@ WATCH_ALARMS = """() => {
 def test_new_post_opens_the_new_post_empty_with_the_focus_in_the_ask_box(studio):
     page, errors, _ = studio
     before = page.locator("#list .nav-item").count()
-    assert before >= 4
+    assert before >= 3
     with page.expect_response("**/api/posts/new") as made:
         page.click("#newPost")
     new = made.value.json()["id"]
