@@ -8,27 +8,47 @@ import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor
 import { statusOf, renderList, openNew } from "./sidebar.js";
 
 let shown = null;      // the post as the studio last said it
-let asking = 0;        // the post being asked for: asking again for it waits for that answer; another post does not
+let asking = 0;        // the post being asked for, while its answer is on the way
+let answer = null;     // that answer
+let again = null;      // asked for the same post meanwhile: one more ask once that answer is in
+let againFor = 0, againLoud = false;
 
-export async function loadPost(id, { quiet = false } = {}) {
-  if (asking === id) return;
-  asking = id;
-  if (shown && shown.id !== id) shown = null;   // the gear and the top bar never act on the post shown before
-  try {
-    const data = await api(`/api/post/${id}`);
-    if (state.postId !== id) return;
-    if (data.error) {
-      if (data.gone || data.trashed) return void lost(id, data.trashed);
-      if (!quiet) announce(data.error, { urgent: true });
-      return;
+// Asking again for the post whose answer is on the way never drops the ask: that answer may predate a change just made
+// (Approve refused, a save, Claude's rewrite), so it asks once more after it, and every caller waits for that.
+export function loadPost(id, { quiet = false } = {}) {
+  if (asking === id) {
+    if (againFor !== id) {
+      againFor = id;
+      againLoud = false;
+      again = answer.then(() => askAgain(id));
     }
-    shown = data;
-    renderPost(data, () => loadPost(id, { quiet: true }));   // makes the stage (and its notice) the first time
-    renderTop(data);
-    renderNotice(data);
-  } finally {
-    if (asking === id) asking = 0;
+    againLoud ||= !quiet;
+    return again;
   }
+  asking = id;
+  answer = fetchPost(id, quiet).finally(() => { if (asking === id) asking = 0; });
+  return answer;
+}
+
+function askAgain(id) {
+  const loud = againLoud;
+  if (againFor === id) { againFor = 0; again = null; againLoud = false; }
+  return state.postId === id ? loadPost(id, { quiet: !loud }) : undefined;
+}
+
+async function fetchPost(id, quiet) {
+  if (shown && shown.id !== id) shown = null;   // the gear and the top bar never act on the post shown before
+  const data = await api(`/api/post/${id}`);
+  if (state.postId !== id) return;
+  if (data.error) {
+    if (data.gone || data.trashed) return void lost(id, data.trashed);
+    if (!quiet) announce(data.error, { urgent: true });
+    return;
+  }
+  shown = data;
+  renderPost(data, () => loadPost(id, { quiet: true }));   // makes the stage (and its notice) the first time
+  renderTop(data);
+  renderNotice(data);
 }
 
 // The post went (to the Trash, or for good) while it was open: it leaves the list, and the page goes, once and quietly,

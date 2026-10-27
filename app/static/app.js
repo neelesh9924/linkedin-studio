@@ -1,7 +1,7 @@
 // The studio's page, its entry (a module: no build step, nothing from outside this PC). Here: the pages and the address
 // they follow (#post-<id>, #~planner, #~bank, #~voice, #~tools, #~guide, #~settings, #~trash, #~setup), asking the studio
 // what changed and having each area draw it, and the start. Each area is its module in js/.
-import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst } from "./js/core.js";
+import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst, forget } from "./js/core.js";
 import { renderList, takeMade, init as initSidebar } from "./js/sidebar.js";
 import { loadPost, forgetRefusal, init as initPost } from "./js/post.js";
 import { showFor, refresh as refreshChat, init as initAssist } from "./js/assist.js";
@@ -55,6 +55,7 @@ async function route() {
   state.postId = null;
   $("postGear").hidden = true;
   $("topActions").replaceChildren();
+  forget($("topActions"));   // so the same post, opened again unchanged, draws its buttons again
   $("status").replaceChildren();
   const [page, sub] = mark.startsWith("~") ? mark.slice(1).split("-") : ["posts"];
   if (PAGES[page]) {

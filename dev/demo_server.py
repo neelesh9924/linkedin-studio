@@ -292,8 +292,9 @@ def main() -> None:
     db = DB(db_path)
     if fresh and "--empty" not in args and "--db" not in args:
         seed(db)
-    app = create_app(cfg, "demo", db_path=db_path, runner=ScriptedRunner(cfg.story_bank),
-                     publisher=Publisher(db, cfg, client_factory=lambda publora=ScriptedPublora(): publora))
+    publisher = Publisher(db, cfg, client_factory=lambda publora=ScriptedPublora(): publora)
+    app = create_app(cfg, "demo", db_path=db_path, runner=ScriptedRunner(cfg.story_bank), publisher=publisher)
+    publisher.db = app.state.db   # the app's own, as in the real app: Approve, Schedule… and the rest move the page's poll
     print(json.dumps({"url": f"http://127.0.0.1:{port}/auth?token=demo", "folder": str(folder), "started": db.started}), flush=True)
     uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
 

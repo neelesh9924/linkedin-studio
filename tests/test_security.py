@@ -67,7 +67,7 @@ def test_a_change_from_another_origin_is_rejected(client, origin):
 
 def test_a_change_from_our_origin_is_accepted(client, cfg):
     r = signed_in(client).post("/api/posts/new", json={}, headers={"Origin": cfg.origin})
-    assert r.status_code == 200 and r.json() == {"id": 1}
+    assert r.status_code == 200 and r.json()["id"] == 1
 
 
 def test_referer_is_the_fallback(client, cfg):

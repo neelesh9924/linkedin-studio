@@ -110,6 +110,8 @@ SCREENS = [
                 "characters and its picture.",
                 "Click the text to edit it there. The meter shows your length against the {target_min}-{target_max} "
                 "sweet spot.",
+                "Edit text opens the editor from the keyboard. Copy and Copy first comment copy the words as they "
+                "will go out.",
                 "The top bar says where it stands and holds the next step: Approve, then Schedule…",
                 "The gear holds the title, Versions to go back to (your own edits are kept too), New draft from "
                 "this and Move to Trash…; scheduled and published posts stay out of the Trash."]},
@@ -146,6 +148,13 @@ SCREENS = [
                 "ChatGPT: who is signed in for pictures, and how many were made today.",
                 "Connections confirms your Publora key works. Run it after changing .env.",
                 "Recent runs lists every Claude run and how long it took."]},
+    {"key": "trash", "title": "Trash", "href": "#~trash", "icon": "trash",
+     "purpose": "The posts you moved out of the way, kept until you say otherwise.",
+     "points": ["Move to Trash… in a post's gear sends a draft, approved, failed or cancelled post here, with its "
+                "versions, chat and pictures.",
+                "Put back returns it to your posts as it was.",
+                "Delete forever… and Empty trash ask first and name what goes. Scheduled and published posts never "
+                "come here: cancel a scheduled one on Publora first."]},
 ]
 
 # The text in the "Try the editor" box. Two blanks, so Next blank has something to find.

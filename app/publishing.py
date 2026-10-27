@@ -275,6 +275,8 @@ class Publisher:
             row = con.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
             if row is None:
                 raise ScheduleError("No such post.")
+            if row["trashed_at"]:   # the API refuses it first; this keeps the Trash out of Publora whoever calls
+                raise ScheduleError("That post is in the Trash. Put it back first.")
             if row["publora_post_id"]:
                 raise ScheduleError("This post already exists on Publora; it will not be sent again.")
             if row["status"] != "approved":
@@ -306,6 +308,8 @@ class Publisher:
             row = con.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
             if row is None or row["status"] != "failed" or row["publora_post_id"] or not row["publora_payload"]:
                 raise ScheduleError("Only a post whose schedule call failed can be retried.")
+            if row["trashed_at"]:
+                raise ScheduleError("That post is in the Trash. Put it back first.")
             if picture:
                 if row["media_step"] not in MEDIA_STEPS:
                     raise ScheduleError("This post was sent without a picture. Move it back to draft to add one.")

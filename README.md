@@ -19,6 +19,22 @@ One window in three columns. **New to it? Open Guide in the sidebar**: it shows 
 steps you can click through, each with a picture of where it happens, what happens while Claude
 works, a post's four states, and an editor to practise in.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/post-dark.webp">
+  <img src="app/static/guide/post-light.webp" width="900" alt="A post as LinkedIn shows it, with the sidebar of posts on the left and Ask Claude on the right">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/chat-dark.webp">
+  <img src="app/static/guide/chat-light.webp" width="445" alt="Ask Claude at work: each step numbered while it runs">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/trash-dark.webp">
+  <img src="app/static/guide/trash-light.webp" width="445" alt="The Trash, with Put back and Delete forever…">
+</picture>
+
+*Made-up demo data; the Guide's own pictures, retaken by `dev\guide_shots.py`.*
+
 - **The sidebar** lists your posts, each with its first line and its state: drafts first, then
   approved, scheduled (soonest first) and published. **New post** starts one. Below the list:
   Planner, Story Bank & Voice, Tools, Guide, Settings, Trash, and the light/dark switch.
@@ -38,8 +54,9 @@ works, a post's four states, and an editor to practise in.
 
 **Editing a post**
 
-- **Autosave.** Click the text and type: it saves about a second after you stop (Ctrl+S saves
-  at once).
+- **Autosave.** Click the text (or press **Edit text**) and type: it saves about a second after
+  you stop (Ctrl+S saves at once). **Copy** and **Copy first comment** copy the words as they go
+  out.
 - **Character meter.** Where the post sits against the 900-1,300 sweet spot and LinkedIn's 3,000
   limit.
 - **Blanks.** The writer marks facts it does not have as `[N]` or `[DD Month YYYY]`. The editor
@@ -202,6 +219,7 @@ test fails if a tracked file ever looks like one of those or like a real Publora
 | What | Where |
 |---|---|
 | Plans, posts, their versions, chats, job log | `data\studio.db` (SQLite) |
+| Posts in the Trash, with their versions, chats and pictures | the same `data\studio.db` and `data\images\`, until **Delete forever…** or **Empty trash** |
 | Post pictures (made or attached) | `data\images\` |
 | Files attached in a chat | `data\attachments\<chat>\` |
 | Pictures made per day, Codex's sign-in log | `data\chatgpt.json`, `data\chatgpt.log` |
@@ -307,8 +325,9 @@ in-between state can be looked at without spending anything (`--empty` starts it
 - `app\attachments.py`, `app\static\attach.js` and `attach.css` (and `tests\test_attachments.py`)
   are shared byte for byte with other studios built like this one: change them there, never here
   alone.
-- `tests\test_browser.py` and `tests\test_browser_pages.py` drive the page in Chrome or Edge
-  through Playwright, on the demo server; they are skipped when neither is installed.
+- `tests\test_browser.py`, `test_browser_keys.py` and `test_browser_pages.py` drive the page in
+  Chrome or Edge through Playwright, on the demo server; they are skipped when Playwright or
+  both browsers are missing.
 - **The Guide's pictures** (`app\static\guide\`) are taken on the demo, never on your own data:
   `.venv\Scripts\python dev\guide_shots.py` starts the demo in a folder that names no one, uses
   the page as a person would and saves each screen in light and dark, small, as WebP. It never

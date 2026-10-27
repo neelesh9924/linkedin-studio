@@ -104,6 +104,34 @@ def test_the_post_is_read_as_its_text_with_an_edit_text_button(studio):
 
 
 @needs_browser
+def test_the_top_bar_keeps_its_next_step_after_another_page(studio):
+    """Another page clears the top bar; the same post, opened again unchanged, draws its next step again."""
+    page, errors = studio
+    draft = open_draft(page)
+    page.wait_for_selector('#topActions [data-act="approve"]')
+    for leave in ("#goPlanner", "#goTrash"):
+        page.click(leave)
+        page.wait_for_function("() => !location.hash.startsWith('#post-')")
+        page.click(f'#list [data-post="{draft}"]')
+        page.wait_for_selector('#topActions [data-act="approve"]', timeout=5000)
+    assert errors == []
+
+
+@needs_browser
+def test_back_to_draft_and_approve_reach_ask_claude_at_the_next_poll(studio):
+    """Publora's side of a post (Approve, Back to draft) moves the page's poll too: Ask Claude's panel follows it."""
+    page, errors = studio
+    page.locator("#list .nav-item", has_text="The best code review").first.click()
+    locked = "() => document.querySelector('#assistEmpty').innerText.includes('locked')"
+    page.wait_for_function(locked, timeout=6000)
+    page.locator('#topActions [data-act="back"]').click()
+    page.wait_for_function(f"() => !({locked})()", timeout=6000)
+    page.locator('#topActions [data-act="approve"]').click()
+    page.wait_for_function(locked, timeout=6000)
+    assert errors == []
+
+
+@needs_browser
 def test_the_focus_stays_put_through_polls(studio):
     page, errors = studio
     draft = open_draft(page)

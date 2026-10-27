@@ -184,6 +184,20 @@ def test_only_approved_posts_can_be_scheduled(setup):
     assert client.calls == []
 
 
+def test_a_post_in_the_trash_never_reaches_publora(setup):
+    """Belt and braces under the API's own refusal: neither Schedule nor Retry sends a post that is in the Trash."""
+    db, pub, client = setup
+    approved, failed = new_post(db), new_post(db, status="failed")
+    db.run("UPDATE posts SET publora_payload='{\"content\":\"x\"}', idempotency_key='k' WHERE id=?", (failed,))
+    db.run("UPDATE posts SET trashed_at=? WHERE id IN (?,?)", (utcnow(), approved, failed))
+    with pytest.raises(ScheduleError, match="Trash"):
+        pub.schedule(approved, "2026-10-08T09:00", None)
+    with pytest.raises(ScheduleError, match="Trash"):
+        pub.retry(failed)
+    assert client.calls == []
+    assert [r["status"] for r in db.all("SELECT status FROM posts ORDER BY id")] == ["approved", "failed"]
+
+
 def test_timeout_then_retry_resends_identical_body_and_key(setup):
     db, pub, client = setup
     client.fail = requests.Timeout("read timed out")
