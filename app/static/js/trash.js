@@ -6,6 +6,7 @@ import { state, h, icon, api, post, put, plural, announce, whileBusy, focusFirst
   drawIfChanged } from "./core.js";
 
 const SHOWN_NAMES = 8;   // a confirmation names this many, then "and N more"
+const WAS = { draft: "it was a draft", approved: "it was approved", failed: "its sending had failed", cancelled: "it was cancelled on Publora" };
 
 let box = null;
 let entries = [];
@@ -74,7 +75,7 @@ function row(entry) {
   const gone = h("button", { class: "btn danger small", type: "button", "data-keep": `delete-${entry.id}`, "aria-label": `Delete forever, ${name}` },
     "Delete forever…");
   gone.addEventListener("click", () => askDelete(entry));
-  const facts = [`Moved here ${entry.ago || entry.when}`, `it was ${entry.label.toLowerCase()}`,
+  const facts = [`Moved here ${entry.ago || entry.when}`, WAS[entry.status] || `it was ${entry.label.toLowerCase()}`,
     entry.versions ? plural(entry.versions, "version", "versions") : null, entry.picture ? "a picture" : null].filter(Boolean);
   return h("li", { class: "trash-row", "data-id": entry.id },
     icon(entry.picture ? "image" : "file", 16),
@@ -88,7 +89,7 @@ async function putBack(entry, button) {
   await whileBusy(button, async () => {
     const reply = await post("/api/trash/back", { id: entry.id });
     if (reply.error) return draw({ said: reply.error, kind: "bad" });
-    await draw({ said: `${nameOf(entry)} is back among your posts, ${entry.label.toLowerCase()} as it was.`, kind: "ok" });
+    await draw({ said: `${nameOf(entry)} is back among your posts, as it was.`, kind: "ok" });
     window.dispatchEvent(new Event("studio:poll"));   // the list has it again
   });
 }
