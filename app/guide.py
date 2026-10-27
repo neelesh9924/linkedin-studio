@@ -107,7 +107,7 @@ SCREENS = [
     {"key": "post", "title": "A post", "href": "#~posts", "icon": "file", "shot": "post",
      "purpose": "The post as LinkedIn shows it, and the place you finish it.",
      "points": ["The middle shows it as a reader sees it, at Desktop or Phone width, with \"…more\" after about {fold} "
-                "characters and its picture.",
+                "characters and its picture, under your name, headline and photo (Settings, You in the preview).",
                 "Click the text to edit it there. The meter shows your length against the {target_min}-{target_max} "
                 "sweet spot.",
                 "Edit text opens the editor from the keyboard. Copy and Copy first comment copy the words as they "
@@ -124,11 +124,12 @@ SCREENS = [
                 "On a locked post (approved, scheduled or published) it changes nothing: it can audit it, and says "
                 "what unlocks the text."]},
     {"key": "planner", "title": "Planner", "href": "#~planner", "icon": "calendar",
-     "purpose": "This month at a glance, and the week in one go.",
-     "points": ["Posts used this month, the next scheduled post and Claude's status at the top.",
-                "Plan the next 7 days: each card is one post; Draft this writes it.",
-                "Below: who to comment on, and the inbound-readiness checklist.",
-                "Older plans move to Earlier plans."]},
+     "purpose": "The week in one go, and this month at a glance.",
+     "points": ["This week comes first: one card per planned post; Draft this writes it. Who to comment on and the "
+                "inbound-readiness checklist sit under the cards.",
+                "Getting set up stays until each of its steps is done.",
+                "Then this month: posts used, the next scheduled post, Claude's status and the scheduled posts.",
+                "Plan the next 7 days makes a new week; older plans move to Earlier plans."]},
     {"key": "bank", "title": "Story Bank & Voice", "href": "#~bank", "icon": "book",
      "purpose": "What the skills know about you, and the interviews that fill it.",
      "points": ["Read-only, so the format stays what the skills expect.",
@@ -139,13 +140,17 @@ SCREENS = [
      "purpose": "One-off jobs. Nothing here is posted; you copy what you want.",
      # The page adds one line per tool in front of these, in the words the Tools screen uses.
      "points": ["Under a Humanize result, Compare with the original shows every change.",
-                "A repurposed post has Save as a post, which adds it to your posts."]},
+                "Start a post from this makes a new post of a Humanize rewrite, an audited draft (its findings beside "
+                "it), a repurposed post with its first comment, or a hook's blank template, and opens it.",
+                "Earlier results, under a tool's result, lists its last ten: pick one to see it again with its copy "
+                "buttons."]},
     {"key": "settings", "title": "Settings", "href": "#~settings", "icon": "settings", "shot": None,
      "purpose": "Checking that everything is connected.",
      "points": ["Claude: its version and the account its login folder is signed in to; Check the sign-in asks again.",
                 "Change folders: where the skills, the Claude program and its sign-in are on this PC. It names the "
                 "account beside each login folder, and refuses one that is not signed in.",
                 "ChatGPT: who is signed in for pictures, and how many were made today.",
+                "You in the preview: your name, headline and photo for every post's preview. They stay on this PC.",
                 "Connections confirms your Publora key works. Run it after changing .env.",
                 "Recent runs lists every Claude run and how long it took."]},
     {"key": "trash", "title": "Trash", "href": "#~trash", "icon": "trash",

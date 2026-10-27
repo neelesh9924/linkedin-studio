@@ -1,5 +1,6 @@
-"""The API of the pages beside the posts: Planner, Story Bank & Voice (with its two chats), Tools, Settings
-(with ChatGPT and the health checks), the setup screen and the Guide."""
+"""The API of the pages beside the posts: Planner, Story Bank & Voice (with its two chats), Tools (with each tool's
+earlier results, and Start a post from this), Settings (with ChatGPT, the health checks and You in the preview), the
+setup screen and the Guide."""
 from __future__ import annotations
 
 import dataclasses
@@ -13,12 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
-from . import attached, attachments, codex, flows, guide, paths, render
+from . import attached, attachments, codex, flows, guide, paths, profile, render, versions
 from .api_posts import fail
 from .config import ConfigError, path_problems, problems
-from .db import loads, utcnow
+from .db import dumps, loads, utcnow
 from .health import claude_account, claude_version
 from .main import ACTIVE, PROBLEM, TARGET, Studio
 from .publishing import MAX_AHEAD, MIN_LEAD, POST_MAX
@@ -31,6 +32,11 @@ HUMANIZE_MODES = ("default", "forensic", "strict", "aesthetic", "all")
 REACTIONS = {"LIKE": "Like", "PRAISE": "Celebrate", "EMPATHY": "Love", "INTEREST": "Insightful",
              "APPRECIATION": "Support", "ENTERTAINMENT": "Funny"}
 VERSION_TTL = 60   # seconds the Claude version and its sign-in are kept between visits
+EARLIER = 10       # finished results Tools lists under a tool's result
+# Start a post from this: the tools whose result holds a post's text, and its first version's note.
+TOOL_POSTS = {"humanize": "From Humanize", "audit": "From Audit", "hook": "From Hook extractor", "repurpose": "Repurposed"}
+NOT_A_POST = {"comment": "A comment is not a post: copy the one you like and post it yourself.",
+              "profile": "A profile review is not a post: copy the rewrites into LinkedIn yourself."}
 GUIDE_SHOTS = Path(__file__).resolve().parent / "static" / "guide"
 
 
@@ -123,7 +129,8 @@ def register(app: FastAPI, s: Studio) -> None:
              "text": "A 20-40 minute interview. Drafts then draw on real numbers and stories."},
             {"done": voice["is_filled"], "title": "Teach it your voice", "href": "#~voice",
              "text": "Paste 3-6 of your own posts so drafts sound like you."},
-            {"done": publora["key"] and publora["platform_id"], "title": "Connect Publora", "href": "#~settings",
+            # The LinkedIn channel is worked out from the key when a post is scheduled: the key is the whole step.
+            {"done": publora["key"], "title": "Connect Publora", "href": "#~settings",
              "text": "Add your key to linkedin-skills\\.env to schedule from here."},
             {"done": bool(plans), "title": "Plan your week", "href": "#~planner",
              "text": "Three to five posts, each with a formula and an angle."},
@@ -271,22 +278,78 @@ def register(app: FastAPI, s: Studio) -> None:
                       "AND status != 'cancelled' AND NOT (status IN ('failed','unparsed') AND acked=1) "
                       "ORDER BY id DESC LIMIT 1", (kind,))
 
+    def tool_done(job) -> dict:
+        """A finished tool job as the page shows it: its result, what it was given, and for Humanize the comparison."""
+        out = s.job_public(job)
+        out["result"] = loads(job["result"], {}) or {}
+        out["params"] = {k: v for k, v in (loads(job["params"], {}) or {}).items() if k in ("text", "url", "mode", "goal", "angle")}
+        if job["kind"] == "humanize":
+            out["compare"] = render.wdiff(out["params"].get("text", ""), str(out["result"].get("rewritten") or ""))
+        out["finished_ago"] = s.ago(job["finished_at"])
+        return out
+
+    def tool_result(kind: str, job_id: int):
+        """One of this tool's finished results from Tools, or None."""
+        return db.one("SELECT * FROM jobs WHERE id=? AND kind=? AND status='done' AND json_extract(params,'$.source')='tools'",
+                      (job_id, kind)) if kind in TOOL_KINDS else None
+
+    def input_line(params: str | None) -> str:
+        """What a result was made from, in a line: the first line of the text, or the link."""
+        given = loads(params, {}) or {}
+        line = next((x.strip() for x in str(given.get("text") or "").splitlines() if x.strip()), "") or str(given.get("url") or "").strip()
+        return line if len(line) <= 120 else line[:119].rstrip() + "…"
+
     def tool_public(kind: str) -> dict:
         job = tool_job(kind)
         out = s.job_public(job) if job is not None else None
         if out is not None and job["status"] == "done":
-            out["result"] = loads(job["result"], {}) or {}
-            out["params"] = {k: v for k, v in (loads(job["params"], {}) or {}).items() if k in ("text", "url", "mode", "goal", "angle")}
-            if kind == "humanize":
-                out["compare"] = render.wdiff(out["params"].get("text", ""), str(out["result"].get("rewritten") or ""))
-            out["finished_ago"] = s.ago(job["finished_at"])
+            out = tool_done(job)
+        finished = db.all("SELECT id, params, finished_at FROM jobs WHERE kind=? AND status='done' "
+                          "AND json_extract(params,'$.source')='tools' ORDER BY id DESC LIMIT ?", (kind, EARLIER))
         return {"kind": kind, "title": ACTIONS[kind].title, "blurb": ACTIONS[kind].blurb, "icon": ACTIONS[kind].icon,
-                "job": out}
+                "job": out, "can_post": kind in TOOL_POSTS,
+                "earlier": [{"id": r["id"], "when": s.ago(r["finished_at"]), "first": input_line(r["params"])} for r in finished]}
 
     @app.get("/api/tools")
     def tools():
         return {"tools": [tool_public(k) for k in TOOL_KINDS], "apify": pub.status()["apify"], "goals": GOALS,
                 "modes": HUMANIZE_MODES, "reactions": REACTIONS}
+
+    @app.get("/api/tools/{kind}/{job_id}")
+    def tool_earlier(kind: str, job_id: int):
+        job = tool_result(kind, job_id)
+        if job is None:
+            return fail("That result is not here any more.", 404)
+        return {"job": tool_done(job)}
+
+    @app.post("/api/tools/{kind}/{job_id}/draft")
+    def tool_to_post(kind: str, job_id: int):
+        """Start a post from this: a draft of the post's text a result holds, with its first version. Humanize gives its
+        rewrite (what is worth adding becomes the writer's notes), Audit the draft it audited (its findings beside it),
+        Hook extractor its blank template, Repurposer its post and first comment."""
+        if kind not in TOOL_KINDS:
+            return fail("Unknown tool.", 404)
+        if kind not in TOOL_POSTS:
+            return fail(NOT_A_POST.get(kind, "This result is not a post."))
+        job = tool_result(kind, job_id)
+        if job is None:
+            return fail("That result is not here any more.", 404)
+        data, given = loads(job["result"], {}) or {}, loads(job["params"], {}) or {}
+        text = {"humanize": data.get("rewritten"), "audit": given.get("text"), "hook": data.get("template"),
+                "repurpose": data.get("post")}[kind]
+        text = str(text or "").replace("\r\n", "\n").strip()
+        if not text:
+            return fail("This result holds no post text.")
+        first = str(data.get("first_comment") or "").strip() or None if kind == "repurpose" else None
+        formula = str(data.get("formula") or "") or None if kind in ("hook", "repurpose") else None
+        notes = [str(n) for n in data.get("missing") or [] if str(n).strip()] if kind == "humanize" else []
+        audit = dumps({**data, "job_id": job_id, "text": text}) if kind == "audit" else None
+        now = utcnow()
+        post_id = db.run("INSERT INTO posts (created_at, updated_at, title, text, first_comment, formula, notes, audit, status) "
+                         "VALUES (?,?,?,?,?,?,?,?, 'draft')",
+                         (now, now, flows.short_title(text.splitlines()[0]), text, first, formula, dumps(notes), audit))
+        versions.record(db, post_id, text, first, "you" if kind == "audit" else "claude", TOOL_POSTS[kind])
+        return {"post": post_id}
 
     @app.post("/api/tools/{kind}")
     def tool_run(kind: str, data: dict = Body(default={})):
@@ -358,6 +421,39 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/settings/claude/check")
     def settings_sign_in():
         return {"sign_in": sign_in(fresh=True)}
+
+    # Settings › You in the preview (profile.py): kept beside the database, read by the preview alone.
+    @app.get("/api/profile")
+    def profile_get():
+        return profile.public(db)
+
+    def profile_change(change, *args):
+        try:
+            return change(db, *args)
+        except profile.Refused as exc:
+            return fail(str(exc))
+        except OSError as exc:
+            return fail(f"It could not be saved ({exc.strerror or exc}).", 500)
+
+    @app.post("/api/profile")
+    def profile_save(data: dict = Body(default={})):
+        return profile_change(profile.save_words, data.get("name"), data.get("headline"))
+
+    @app.post("/api/profile/photo")
+    def profile_photo(data: dict = Body(default={})):
+        return profile_change(profile.save_photo, data.get("data"))
+
+    @app.post("/api/profile/photo/remove")
+    def profile_photo_remove(_data: dict = Body(default={})):
+        return profile_change(profile.remove_photo)
+
+    @app.get("/api/profile/photo")
+    def profile_photo_file():
+        found = profile.photo(db)
+        if found is None:
+            return fail("No photo is set.", 404)
+        body, mime = found
+        return Response(body, media_type=mime, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/settings/health/{name}")
     def settings_health(name: str):

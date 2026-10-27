@@ -59,6 +59,23 @@ def test_another_site_cannot_run_the_sign_in_check(web):
     assert web.post("/api/settings/claude/check", json={}, headers={"Origin": "http://evil.example"}).status_code == 403
 
 
+# ---- the Planner's Getting set up ------------------------------------------------------------
+def test_getting_set_up_is_done_once_its_steps_are_and_the_key_is_the_publora_step(web, cfg):
+    steps = {s["title"]: s["done"] for s in web.get("/api/planner").json()["steps"]}
+    assert steps["Connect Publora"] is True            # the key alone: the channel is worked out from it when scheduling
+    assert not steps["Fill your Story Bank"] and not steps["Plan your week"]
+    for name in ("story-bank.md", "voice-profile.md"):
+        (cfg.skills_dir / "references" / name).write_text("# Made up\n\n## Status\n\n- filled: yes\n", encoding="utf-8")
+    web.app.state.db.run("INSERT INTO plans (created_at, inputs, result) VALUES (?,?,?)", ("2026-10-27T03:30:00+00:00", "{}", "{}"))
+    assert all(s["done"] for s in web.get("/api/planner").json()["steps"])   # the page then shows no Getting set up
+
+
+def test_the_guide_names_the_new_ways_once():
+    words = json.dumps([guide.SCREENS, guide.LANES, guide.STATES])
+    assert "Start a post from this" in words and "Save as a post" not in words
+    assert "Earlier results" in words and "You in the preview" in words
+
+
 # ---- the Guide's pictures --------------------------------------------------------------------
 def test_the_guide_lists_the_pictures_present_and_puts_them_on_their_steps_and_screens(web, tmp_path, monkeypatch):
     shots = tmp_path / "guide"
