@@ -5,6 +5,7 @@
 import { state, h, icon, api, post, put, number, announce, whileBusy, drawIfChanged, copyButton, go, focusFirst } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { auditView } from "./audit.js";
+import { wordDiff } from "./wdiff.js";
 
 const LABELS = { humanize: ["Text to humanize", "Humanize", "Paste the text you want to sound like a person wrote it."],
   audit: ["Draft to audit", "Audit", "Paste a finished draft."], hook: ["Post text", "Find the hook", "Paste the post you want to learn from."],
@@ -246,7 +247,7 @@ function result(kind, job) {
       h("p", { class: "soft" }, `${number(String(d.rewritten || "").length)} characters, from ${number(String(p.text || "").length)}`),
       fold("What changed", d.changes, true),
       job.compare ? h("details", { class: "fold" }, h("summary", null, "Compare with the original"),
-        h("p", { class: "wdiff fold-body" }, job.compare.map(([op, text]) => (op === "+" ? h("ins", null, text) : op === "-" ? h("del", null, text) : text)))) : null,
+        h("p", { class: "wdiff fold-body" }, wordDiff(job.compare))) : null,
       d.missing && d.missing.length ? h("details", { class: "fold" }, h("summary", null, `Worth adding (${d.missing.length})`),
         h("div", { class: "fold-body" }, h("p", { class: "soft" }, "Details only you know. Nothing was invented for you."), bullets(d.missing))) : null);
   } else if (kind === "audit") {

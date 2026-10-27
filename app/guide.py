@@ -70,13 +70,17 @@ LANES = [
          "claude": "", "demo": "schedule",
          "do": ["Press Schedule…, pick a time or tap a recommended slot.",
                 "Check the final text, the picture, the time and the first comment, then confirm.",
+                "Before you confirm lists what is worth a second look: a blank, a link that reads better as the first "
+                "comment, a picture not on the post, a time far from the plan's, the month's last posts. It never "
+                "stops you.",
                 "It must be between {min_lead} minutes and {max_days} days ahead."],
          "gives": "The post waits at Publora with its picture. If the connection drops, Try again carries on and "
                   "cannot create a second copy."},
-        {"id": "published", "shot": "planner", "title": "Published", "icon": "check-circle", "where": "Planner", "href": "#~planner",
-         "claude": "", "demo": "published",
-         "do": ["After the time has passed, press Check Publora on the Planner.",
-                "The post shows as Published and counts toward your {limit} for the month."],
+        {"id": "published", "shot": "post", "title": "Published", "icon": "check-circle", "where": "The post's top bar",
+         "href": "#~posts", "claude": "", "demo": "published",
+         "do": ["Once its time has passed, the studio asks Publora every few minutes whether it went out; Check now, "
+                "in the post's top bar, asks at once.",
+                "The post shows as Published, with Open on LinkedIn, and counts toward your {limit} for the month."],
          "gives": "It is on LinkedIn. A link you put in First comment appears right under it."},
     ]},
     {"label": "Every day", "note": "Alongside your own posts", "steps": [
@@ -97,9 +101,11 @@ STATES = [
     ("Approved", "The text and picture are final and locked.", ["Schedule… and pick a time", "Back to draft to edit again",
                                                                 "Ask Claude to audit it; the text stays as it is",
                                                                 "Move to Trash…"]),
-    ("Scheduled", "It is waiting at Publora.", ["Check status", "Cancel on Publora (the gear)", "Open the Publora dashboard",
+    ("Scheduled", "It is waiting at Publora.", ["Check now, which asks Publora whether it went out",
+                                                "Cancel on Publora (the gear)", "Open the Publora dashboard",
                                                 "It stays out of the Trash while it is scheduled"]),
-    ("Published", "It is on LinkedIn.", ["New draft from this, for an editable copy",
+    ("Published", "It is on LinkedIn.", ["Open on LinkedIn, once Publora gave its link",
+                                         "New draft from this, for an editable copy",
                                          "It counts toward this month's {limit}", "It stays out of the Trash"]),
 ]
 
@@ -112,9 +118,12 @@ SCREENS = [
                 "sweet spot.",
                 "Edit text opens the editor from the keyboard. Copy and Copy first comment copy the words as they "
                 "will go out.",
-                "The top bar says where it stands and holds the next step: Approve, then Schedule…",
-                "The gear holds the title, Versions to go back to (your own edits are kept too), New draft from "
-                "this and Move to Trash…; scheduled and published posts stay out of the Trash."]},
+                "The top bar says where it stands and holds the next step: Approve, then Schedule…, then Check now; "
+                "once it is out, Open on LinkedIn.",
+                "The gear holds the title, Versions to compare with now and go back to (your own edits are kept too), "
+                "New draft from this and Move to Trash…; scheduled and published posts stay out of the Trash.",
+                "The sidebar lists your posts as they are today; published and cancelled ones fold away under "
+                "Earlier, which stays as you leave it. The post you have open always shows."]},
     {"key": "chat", "title": "Ask Claude", "href": "#~posts", "icon": "sparkle", "shot": "chat",
      "purpose": "A conversation beside each post, kept with it.",
      "points": ["Ask for any change; Claude rewrites the post and keeps a version.",
@@ -122,7 +131,9 @@ SCREENS = [
                 "Ask for an illustration and ChatGPT makes one; Use as the picture puts it on the post.",
                 "Each step shows while it works, and Stop ends it. A request that got no answer offers Try again.",
                 "On a locked post (approved, scheduled or published) it changes nothing: it can audit it, and says "
-                "what unlocks the text."]},
+                "what unlocks the text.",
+                "Drag the panel's left edge to make it wider or narrower, or focus the edge and use ← and →; a "
+                "double-click puts it back."]},
     {"key": "planner", "title": "Planner", "href": "#~planner", "icon": "calendar",
      "purpose": "The week in one go, and this month at a glance.",
      "points": ["This week comes first: one card per planned post; Draft this writes it. Who to comment on and the "
@@ -180,6 +191,7 @@ SHORTCUTS = [
     ("Enter", "Send in Ask Claude and the interviews"),
     ("Shift + Enter", "A new line in a chat"),
     ("↑", "In an empty Ask box: brings back your last message"),
+    ("← / →", "On Ask Claude's edge: the panel wider or narrower (with Shift, in bigger steps)"),
     ("Ctrl + Enter", "Run the tool you are typing in"),
     ("Ctrl + S", "Save the post now (it also saves by itself)"),
     ("Esc", "Close a dialog, or leave the text for the preview"),

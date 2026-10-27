@@ -8,6 +8,7 @@ import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy,
 import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor.js";
 import { statusOf, renderList, openNew } from "./sidebar.js";
 import { wordDiff } from "./wdiff.js";
+import { beforeYouConfirm } from "./precheck.js";
 
 let shown = null;      // the post as the studio last said it
 let asking = 0;        // the post being asked for, while its answer is on the way
@@ -83,14 +84,19 @@ function renderTop(p) {
 }
 
 // Where the post stands, in the sidebar's words (statusOf): from the full post when it is drawn, and from the list after
-// each poll, so the chip moves with the sidebar's line (Claude's working minutes among it).
+// each poll, so the chip moves with the sidebar's line (Claude's working minutes among it). The chip sits in a live
+// region: the minutes are shown but not said, so a screen reader hears the post move on, not each minute.
 function drawChip(p) {
   const status = statusOf(p);
   if (!chip) chip = h("span", { class: "chip" }, h("i", { class: "dot", "aria-hidden": "true" }), h("span", { class: "chip-text" }));
   if (chip.parentNode !== $("status")) $("status").replaceChildren(chip);
   const kind = `chip ${status.kind}`.trim();
   if (chip.className !== kind) chip.className = kind;
-  if (chip.lastChild.textContent !== status.text) chip.lastChild.textContent = status.text;
+  const text = chip.lastChild;
+  const [said, ticking = ""] = status.text.split(/(?= · \d+ min$)/);
+  if (!text.firstChild) text.append(document.createTextNode(""), h("span", { "aria-hidden": "true" }));
+  if (text.firstChild.data !== said) text.firstChild.data = said;
+  if (text.lastChild.textContent !== ticking) text.lastChild.textContent = ticking;
 }
 
 function chipAfterPoll() {
@@ -231,6 +237,7 @@ async function approve() {
     announce(reply.error, { urgent: true });
   } else {
     announce("Approved. Pick a time and schedule it.");
+    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
   }
   await refresh();
   if (!reply.error) focusFirst($("topActions").querySelector('[data-act="schedule"]'));
@@ -247,6 +254,7 @@ async function change(what, said) {
     announce(reply.error || "It did not go through.", { urgent: true });
   } else {
     announce(said);
+    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
   }
   await refresh();
 }
@@ -314,6 +322,7 @@ function confirmSchedule(value) {
   }));
   showDialog(h("h2", null, "Schedule this post?"),
     h("p", null, h("b", null, inWords(value)), ` ${state.tz}, through Publora. This uses 1 of your ${p.limit} posts for the month (${p.used} used so far).`),
+    beforeYouConfirm(p, value),
     h("div", { class: "textbox confirm-text", tabindex: "0", "aria-label": "The final text" }, p.text),
     p.picture ? h("img", { class: "confirm-picture", src: p.picture.url, alt: "The picture that goes out with it" }) : null,
     p.first_comment ? [h("h3", { style: "margin-top:12px" }, "First comment"), h("div", { class: "textbox" }, p.first_comment)] : null,

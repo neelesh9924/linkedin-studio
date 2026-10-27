@@ -44,7 +44,10 @@ def studio(tmp_path_factory):
 
 
 def open_post(page, has_text, status):
-    page.locator("#list .nav-item", has_text=has_text).click()
+    item = page.locator("#list .nav-item", has_text=has_text)
+    if not item.count():
+        page.click("#earlierFold")          # published and cancelled posts sit under Earlier, closed at first
+    item.click()
     page.wait_for_function("(s) => document.querySelector('#status').innerText.includes(s)", arg=status)
 
 

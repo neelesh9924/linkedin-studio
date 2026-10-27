@@ -1,7 +1,7 @@
 // The studio's page, its entry (a module: no build step, nothing from outside this PC). Here: the pages and the address
 // they follow (#post-<id>, #~planner, #~bank, #~voice, #~tools, #~guide, #~settings, #~trash, #~setup), asking the studio
 // what changed and having each area draw it, and the start. Each area is its module in js/.
-import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst, forget, currentPost } from "./js/core.js";
+import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst, forget } from "./js/core.js";
 import { renderList, takeMade, init as initSidebar } from "./js/sidebar.js";
 import { loadPost, forgetRefusal, init as initPost } from "./js/post.js";
 import { showFor, refresh as refreshChat, init as initAssist } from "./js/assist.js";
@@ -132,8 +132,6 @@ async function poll() {
     state.offline = false;
     const contentChanged = data.rev !== state.rev;
     const jobsChanged = JSON.stringify(data.jobs.map((j) => [j.id, j.status])) !== JSON.stringify(state.jobs.map((j) => [j.id, j.status]));
-    const minutes = (jobs) => jobs.map((j) => Math.floor((j.seconds || 0) / 60)).join();   // the status line's "· N min"
-    const minuteOn = minutes(data.jobs) !== minutes(state.jobs);
     Object.assign(state, { posts: data.posts, jobs: data.jobs, ended: data.ended, rev: data.rev, seq: data.seq, setup: data.setup,
       tz: data.tz, chatgpt: data.chatgpt, target: data.target, slot: data.slot });
     if (state.first) {
@@ -145,8 +143,6 @@ async function poll() {
       else if (PAGES[state.page]) PAGES[state.page][1].refresh();
       else if (state.page === "empty" && state.posts.length) route();
       refreshChat();
-    } else if (state.page === "post" && minuteOn && (currentPost() || {}).busy) {
-      loadPost(state.postId, { quiet: true });   // the top bar's chip says the new minute, as the sidebar does
     } else if (PAGES[state.page] && PAGES[state.page][1].tick) {
       PAGES[state.page][1].tick();
     }

@@ -17,9 +17,18 @@ username in them).
   each of Publora's four media steps (`posts.media`, `posts.media_step`), and Retry carries on
   from the one that failed. Keep a picture's file while its post is scheduling. Never call the
   real Publora from tests or checks; never read or print the keys (the skills folder's `.env`).
+- **The light check only reads.** `app/status_check.py` asks Publora's get-post about scheduled posts whose time has
+  passed, in a background thread kicked by `/api/state`: one check at a time, at most every 3 minutes, never during
+  setup or for the Trash. It is off unless `create_app(..., check_publora=True)` (`launch.py`, `python -m app`, the
+  demo); tests turn it on only with a stand-in Publora. Only a `https://www.linkedin.com/` address is ever kept as a
+  post's link (`posts.published_url`).
 - **The Story Bank and voice profile are private.** Never print, copy or commit what is in them,
   and never change the owner's skills clone by hand; the app keeps the two files out of git
   there itself (`app/privacy.py`).
+- **You in the preview stays on this PC.** `app/profile.py` keeps the name, headline and photo beside the database
+  (`data\profile.json`, `data\profile-photo`). Only the page's preview reads them, never Claude, Publora or ChatGPT.
+  A photo is kept and served only when its bytes are a PNG, JPEG or WebP (`publishing.sniff_image`), with no-store
+  and nosniff. The demo, the tests and the Guide's pictures show You / Your headline.
 - **ChatGPT's pictures use only the Codex home in `config.local.toml` (`codex_home`).** It has no
   default: never the PC's own `~/.codex`, which may be signed in to another account; never sign
   it in, read it or change it. Tests give Codex a home of their own and never call the real one:
@@ -60,15 +69,17 @@ username in them).
 | Where | What |
 |---|---|
 | `app/main.py` | `create_app`: the middleware, `/api/state` (posts, jobs, what changed), jobs, images, `/mcp` |
-| `app/api_posts.py` | A post: save, audit, revise, approve, schedule, retry, cancel, versions, picture, its chat and attachments, Move to Trash, New draft from this |
+| `app/api_posts.py` | A post: save, audit, revise, approve, schedule, retry, Check now, cancel, versions (compared with now), picture, its chat and attachments, Move to Trash, New draft from this |
 | `app/api_trash.py` | The Trash: its list, Put back, Delete forever and Empty trash (confirmed); a post in the Trash is `posts.trashed_at`, and `api_posts.find` refuses it everywhere |
-| `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools, Settings (ChatGPT card, Claude's account), setup, Guide (its pictures) |
+| `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools (each tool's earlier results, Start a post from this), Settings (ChatGPT card, Claude's account, You in the preview), setup, Guide (its pictures) |
+| `app/profile.py` | You in the preview: the name, headline and photo kept beside the database |
 | `app/jobs.py`, `app/flows.py` | One job at a time with its numbered steps; what each job does when it ends |
 | `app/skills.py`, `app/claude_runner.py` | Each action's skill, prompt and tools; the `claude -p` command, its env and MCP config |
 | `app/mcp.py`, `app/codex.py` | The post chat's tools (`set_post_text`, `make_image`, `record_audit`, `fetch_post`); ChatGPT's pictures through `codex.exe` |
-| `app/publishing.py` | Publora: schedule (with a picture), retry, back to draft, check |
+| `app/publishing.py` | Publora: schedule (with a picture), retry, back to draft, refresh (read-only: published with its LinkedIn link, failed in Publora's words) |
+| `app/status_check.py` | The light check: due scheduled posts asked of Publora (get-post only) in the background, every few minutes; what it heard, for the post's notice |
 | `app/versions.py`, `app/images.py`, `app/attached.py` | A post's versions, its pictures, a chat's attached files |
-| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, planner, bank, tools, settings, guide, jobs, md, audit, palette, trash) |
+| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, planner, bank, tools, settings, guide, jobs, md, audit, palette, trash, wdiff, precheck) |
 | `dev/demo_server.py` | The page on made-up data with stand-ins for Claude (and its sign-in), Publora and ChatGPT |
 | `dev/guide_shots.py` | The Guide's pictures, taken on the demo into `app/static/guide/` |
 
@@ -109,3 +120,30 @@ username in them).
   next step (`route()` now forgets the drawn buttons), and the demo's Publora stand-in wrote
   through a second database object, so Approve and Back to draft never moved the demo page's poll
   (`dev/demo_server.py` hands it the app's own).
+- Second pass, the same evening, from the first pass's deferred list:
+  - Publora's answer by itself: `posts.published_url`; `Publisher.refresh` read-only (published
+    with its LinkedIn link, failed in Publora's own words); the light check
+    (`app/status_check.py`); Check now in words and Open on LinkedIn in the top bar, which says a
+    scheduled post's time once; Compare with now in the gear's Versions, and going back said in
+    the post's chat; one word diff (`js/wdiff.js`) for Versions, the revision card and Tools; the
+    demo's Claude replies in plain words and its Publora sends a post at its time.
+  - The frame: Before you confirm in the Schedule… dialog (`js/precheck.js`: blanks, LinkedIn's
+    limits, a link in the text, a picture not on the post, a time gone or far from the plan's,
+    the month's last posts; warnings only, said as the dialog opens); the sidebar's Earlier fold
+    for published and cancelled posts (no count, closed at first and kept as left, the open post
+    always shown); Ask Claude's panel resized from its left edge (drag, ←/→, Home/End,
+    double-click resets; kept, never squeezing the centre below its 941 px room); "Claude is
+    working · N min" (the minutes shown, not said each minute); Approved's own "ready" colour.
+  - Pages: Settings › You in the preview (`app/profile.py`), shown in the post's head and first
+    comment and redrawn at once on a save; the Planner shows This week first, and Getting set up
+    is done once the Publora key is set; Tools keep each tool's last ten results under Earlier
+    results; Start a post from this (a Humanize rewrite, an audited draft with its findings, a
+    hook's template, a repurposed post; refused for comments and the profile review) replaced
+    Save as a post, and the old Repurpose route went with it.
+  - Found on the merged page: a post back in draft with no first comment kept that box hidden
+    (`editor.js drawComment`); the sidebar's line now follows Approve and Back to draft at once;
+    the top bar's chip follows each poll one way (`post.js chipAfterPoll`); the Guide's pictures
+    were retaken, and their guard against the Planner's Claude card reads its "Account" row.
+  - Left for the owner's word: Draft all, Story Bank's Ask me about this, a separate local Back
+    up, the stage bar's results chip, a rail or drawer layout under 1,180 px. Dropped: Back to
+    draft for a cancelled post (New draft from this does that).

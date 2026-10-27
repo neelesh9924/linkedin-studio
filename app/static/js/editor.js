@@ -4,9 +4,11 @@
 // Next blank finds them. Beside it: a revision shown word by word, the audit's findings, the post's pictures and the
 // writer's notes. The text is read as a paragraph, and drawn again only when it changes, so the focus stays put.
 // Above it and beside the first comment: your name, headline and photo from Settings › You in the preview, or You.
-import { $, state, h, icon, api, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton } from "./core.js";
+import { $, state, h, icon, api, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton,
+  recall, keep } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { auditView } from "./audit.js";
+import { wordDiff } from "./wdiff.js";
 
 const SAVE_AFTER = 900;   // ms after the last key
 const ed = { id: null, data: null, editing: false, expanded: false, dirty: false, typed: false, seq: 0, sent: 0, timer: 0, onChange: () => {} };
@@ -213,11 +215,7 @@ function phoneLevels() {
 }
 
 function readView() {
-  try {
-    return localStorage.getItem("view") === "phone" ? "phone" : "desktop";
-  } catch {
-    return "desktop";
-  }
+  return recall("view") === "phone" ? "phone" : "desktop";
 }
 
 export function setView(view) {
@@ -225,9 +223,7 @@ export function setView(view) {
   parts.desktop.setAttribute("aria-pressed", String(view === "desktop"));
   parts.phone.setAttribute("aria-pressed", String(view === "phone"));
   parts.stage.classList.toggle("phone", view === "phone");
-  try {
-    localStorage.setItem("view", view);
-  } catch {}
+  keep("view", view);
   if (ed.editing) placeFold();
 }
 
@@ -509,6 +505,8 @@ function drawComment() {
       put(parts.comment, commentAvatar(), h("div", { class: "li-bubble" }, h("b", { "data-who": "comment" }), fc));
       paintWho(parts.comment);
     }
+    parts.comment.hidden = false;   // back in draft: the box shows, empty or not
+    forget(parts.comment);          // and a read-only view later is drawn afresh
     if (!ed.dirty && fc.value !== value) fc.value = value;
     autosize(fc);
     return;
@@ -623,8 +621,7 @@ function revisionCard() {
   act(use, true);
   act(discard, false);
   return card("sparkle", "Revised version", h("span", { class: "chip busy" }, r.label),
-    h("p", { class: "wdiff", "aria-label": "The revision, word by word: added words marked, removed words struck" },
-      r.segments.map(([op, text]) => (op === "+" ? h("ins", null, text) : op === "-" ? h("del", null, text) : text))),
+    h("p", { class: "wdiff" }, wordDiff(r.segments)),
     h("div", { class: "soft" }, `${number(r.chars)} characters (yours has ${number(ed.data.chars)}). Green is added, red is removed.`),
     r.changes.length ? h("details", { class: "fold" }, h("summary", null, `Why these changes (${r.changes.length})`),
       h("ul", { class: "list fold-body" }, r.changes.map((c) => h("li", null, c)))) : null,

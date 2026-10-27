@@ -61,9 +61,10 @@ def shows_private(text: str, words: list[str]) -> str:
 
 VISIBLE_TEXT = """() => [document.title, document.body.innerText,
   ...[...document.querySelectorAll('input, textarea')].filter((e) => e.offsetParent).map((e) => e.value)].join('\\n')"""
-# The Planner's Claude card names the login folder ("Login folder"): it must be out of the window.
+# The Planner's Claude card names the account its login folder is signed in to ("Account"; its "Model" row is there
+# whether or not it can tell): it must be out of the window.
 CLAUDE_CARD_SHOWN = """() => [...document.querySelectorAll('dt')].some((dt) => {
-  if (dt.textContent.trim() !== 'Login folder' || !dt.offsetParent) return false;
+  if (!['Account', 'Model', 'Login folder'].includes(dt.textContent.trim()) || !dt.offsetParent) return false;
   const r = dt.getBoundingClientRect();
   return r.bottom > 0 && r.top < innerHeight;
 })"""

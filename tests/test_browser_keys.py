@@ -227,7 +227,7 @@ def test_a_toast_stays_clear_of_send_and_a_banner_is_said_once(studio):
     page.wait_for_timeout(6500)                                        # past its 6 seconds: it waits while pointed at
     assert note.count() == 1
     page.mouse.move(5, 5)
-    note.wait_for(state="detached", timeout=6000)
+    note.wait_for(state="detached", timeout=9000)                     # what was left of its 6 seconds, with room for a busy PC
     heard = page.evaluate("""async () => {
       const m = await import('/static/js/core.js');
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));

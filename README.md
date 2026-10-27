@@ -36,13 +36,18 @@ works, a post's four states, and an editor to practise in.
 *Made-up demo data; the Guide's own pictures, retaken by `dev\guide_shots.py`.*
 
 - **The sidebar** lists your posts, each with its first line and its state: drafts first, then
-  approved, scheduled (soonest first) and published. **New post** starts one. Below the list:
-  Planner, Story Bank & Voice, Tools, Guide, Settings, Trash, and the light/dark switch.
+  approved and scheduled (soonest first). Published and cancelled posts fold away under
+  **Earlier**, which stays as you leave it; the post you have open always shows. **New post**
+  starts one. Below the list: Planner, Story Bank & Voice, Tools, Guide, Settings, Trash, and the
+  light/dark switch.
 - **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
-  "…more" fold at about 210 characters and its picture). The top bar has its title, its state
-  and the next step: **Approve this text**, then **Schedule…**, then the time it goes out. The
-  gear holds its versions (your own edits are kept as versions too), earlier chats, **New draft
-  from this** (an editable copy of any post) and **Move to Trash…**.
+  "…more" fold at about 210 characters and its picture), under your name, headline and photo
+  from **Settings › You in the preview** (they stay on this PC). The top bar has its title, its
+  state and the next step: **Approve this text**, then **Schedule…**, then **Check now** (it asks
+  Publora whether the post went out) and, once it is out, **Open on LinkedIn**. The gear holds its
+  versions (your own edits are kept as versions too; **Compare with now** shows an earlier one's
+  words against the post's now), earlier chats, **New draft from this** (an editable copy of any
+  post) and **Move to Trash…**.
 - **Ask Claude**, on the right, is a chat kept with each post. Ask for a draft, a sharper hook,
   a shorter take, an audit or a picture: Claude works through the skills and changes the post
   itself, and each change is kept as a version you can go back to. You can attach files (notes,
@@ -50,7 +55,8 @@ works, a post's four states, and an editor to practise in.
   is not a draft the text is locked: the panel says what unlocks it (Back to draft, cancelling on
   Publora, or New draft from this), and Claude can still audit it, but its run gets no tool that
   rewrites the post or makes a picture, so none is spent on it. A request that never got an
-  answer (the app closed meanwhile) offers **Try again**.
+  answer (the app closed meanwhile) offers **Try again**. The panel widens or narrows from its
+  left edge: drag it, or use ← and → on it; a double-click puts it back.
 
 **Editing a post**
 
@@ -66,7 +72,11 @@ works, a post's four states, and an editor to practise in.
   version**.
 - **Publish.** Draft → Approved → Scheduled → Published. Approved text is locked. Scheduling asks
   for a time (the skills' recommended slots one click away), then confirms the final text, time,
-  first comment and picture.
+  first comment and picture. Before **Schedule it**, the dialog lists anything worth a second
+  look (a blank, a link better in the first comment, a picture not on the post, a time far from
+  the plan's, the month's last posts); it never stops you. Once a post's time has passed, the
+  studio asks Publora every few minutes whether it went out (it only reads; nothing is sent) and
+  marks it Published with its LinkedIn link, or Failed in Publora's own words.
 - **Trash.** **Move to Trash…** (the gear) sends a draft, approved, failed or cancelled post to the
   Trash, after Settings in the sidebar. There **Put back** returns it as it was, with its versions,
   chat and pictures; **Delete forever…** and **Empty trash** ask first and name what goes.
@@ -76,16 +86,17 @@ works, a post's four states, and an editor to practise in.
 
 | Page | What it does |
 |---|---|
-| Planner | Posts used this month (x of 15) and the next scheduled post; audience + goal (+ theme, 3-5 posts) → a board of post cards → **Draft this** on any card; comment targets and the inbound-readiness checklist |
+| Planner | This week first: the plan's board of post cards (**Draft this** on any card), comment targets and the inbound-readiness checklist. Then Getting set up (until its steps are done), posts used this month (x of 15), the next scheduled post, the scheduled posts (**Check Publora** asks now), and audience + goal (+ theme, 3-5 posts) for a new week |
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them |
-| Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons. A repurposed post can be saved as a draft |
+| Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons, and each tool's last ten results under **Earlier results**. **Start a post from this** turns a rewrite, an audited draft (its findings with it), a hook's template or a repurposed post into a new post and opens it |
 | Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
-| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-appearance`, `-health`, `-runs`, `-app`) |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview), light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-profile`, `-appearance`, `-health`, `-runs`, `-app`) |
 | Trash | Posts moved there: Put back, Delete forever…, Empty trash |
 
 **Keys.** Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
 Claude; Alt+↑ / Alt+↓ open the previous or next post; ? lists the shortcuts. In Ask Claude, Enter
-sends, Shift+Enter adds a line and ↑ in an empty box brings back your last message. The Guide's
+sends, Shift+Enter adds a line and ↑ in an empty box brings back your last message; on its edge,
+← and → make the panel wider or narrower (Shift for bigger steps). The Guide's
 Keys and limits lists them all.
 
 **Jobs.** Claude runs one job at a time; others wait in line. A running job shows its steps,
@@ -186,6 +197,9 @@ limits, `codex_home`) are explained there.
     upload link, upload the file, schedule it. Each step is recorded, so Retry carries on from the
     one that failed and never makes a second post; Back to draft deletes the Publora draft.
   - Times must be between 2 minutes and 14 days ahead.
+  - Once a post's time has passed, the studio only reads Publora's answer for it (get-post, at
+    most every 3 minutes, never for a post in the Trash). The only link it keeps is a
+    `https://www.linkedin.com/` one.
   - The monthly limit is checked on the server. It counts scheduling, scheduled and published
     posts in the IST calendar month; Publora keeps its own count too.
 - **The web server.** It listens on `127.0.0.1` only, with a random token per launch. The token
@@ -222,6 +236,7 @@ test fails if a tracked file ever looks like one of those or like a real Publora
 | Posts in the Trash, with their versions, chats and pictures | the same `data\studio.db` and `data\images\`, until **Delete forever…** or **Empty trash** |
 | Post pictures (made or attached) | `data\images\` |
 | Files attached in a chat | `data\attachments\<chat>\` |
+| Your name, headline and photo for the preview | `data\profile.json`, `data\profile-photo` |
 | Pictures made per day, Codex's sign-in log | `data\chatgpt.json`, `data\chatgpt.log` |
 | Launcher log, the app window's browser profile | `data\studio.log`, `data\browser-profile\` |
 | Story Bank, voice profile | `linkedin-skills\references\story-bank.md`, `voice-profile.md` |
@@ -240,7 +255,7 @@ $skills = "C:\path\to\linkedin-skills"    # your skills folder
 $dest = "$env:USERPROFILE\Documents\linkedin-studio-backup\$(Get-Date -Format yyyy-MM-dd)"
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item $studio\data\studio.db $dest
-Copy-Item -Recurse $studio\data\images, $studio\data\attachments $dest -ErrorAction SilentlyContinue
+Copy-Item -Recurse $studio\data\images, $studio\data\attachments, $studio\data\profile.json, $studio\data\profile-photo $dest -ErrorAction SilentlyContinue
 Copy-Item $skills\references\story-bank.md, $skills\references\voice-profile.md $dest
 ```
 
@@ -318,16 +333,16 @@ in-between state can be looked at without spending anything (`--empty` starts it
 - The back end is a JSON API on FastAPI: `app\main.py` (the app, its state and jobs),
   `app\api_posts.py` (posts, their chats, versions, pictures, scheduling) and `app\api_pages.py`
   (the other pages). `app\mcp.py` serves the studio's tools to a post's chat; `app\codex.py`
-  makes ChatGPT's pictures.
+  makes ChatGPT's pictures; `app\status_check.py` asks Publora, read-only, whether a post whose
+  time has passed went out; `app\profile.py` keeps You in the preview.
 - The front end is plain HTML, CSS and JavaScript modules with nothing external and no build
   step: `app\static\index.html`, `app.css` (design tokens at the top, light and dark), `app.js`
   and `js\`. The Guide's words live in `app\guide.py`.
 - `app\attachments.py`, `app\static\attach.js` and `attach.css` (and `tests\test_attachments.py`)
   are shared byte for byte with other studios built like this one: change them there, never here
   alone.
-- `tests\test_browser.py`, `test_browser_keys.py` and `test_browser_pages.py` drive the page in
-  Chrome or Edge through Playwright, on the demo server; they are skipped when Playwright or
-  both browsers are missing.
+- `tests\test_browser*.py` drive the page in Chrome or Edge through Playwright, on the demo
+  server; they are skipped when Playwright or both browsers are missing.
 - **The Guide's pictures** (`app\static\guide\`) are taken on the demo, never on your own data:
   `.venv\Scripts\python dev\guide_shots.py` starts the demo in a folder that names no one, uses
   the page as a person would and saves each screen in light and dark, small, as WebP. It never

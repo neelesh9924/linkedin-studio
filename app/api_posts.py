@@ -13,8 +13,8 @@ from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import attached, attachments, images, render, versions
-from .db import dumps, loads, utcnow
-from .flows import add_message, short_title
+from .db import loads, utcnow
+from .flows import add_message
 from .main import ACTIVE, PROBLEM, Studio
 from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MAX_AHEAD, MIN_LEAD, NO_REASON, ScheduleError,
                          placeholder_slots, retry_with_picture, schedule_with_picture)
@@ -597,19 +597,3 @@ def register(app: FastAPI, s: Studio) -> None:
                         (utcnow(), post_id))
             con.execute("UPDATE conversations SET cleared_at=NULL WHERE id=?", (wanted["id"],))
         return {"ok": True}
-
-    # ---- a repurposed post becomes a draft ---------------------------------------------
-    @app.post("/api/tools/repurpose/{job_id}/draft")
-    def tool_to_draft(job_id: int):
-        row = db.one("SELECT * FROM jobs WHERE id=?", (job_id,))
-        data = loads(row["result"], {}) if row and row["kind"] == "repurpose" and row["status"] == "done" else {}
-        text = str((data or {}).get("post") or "").strip()
-        if not text:
-            return fail("There is no post to save.")
-        now = utcnow()
-        first = (data or {}).get("first_comment") or None
-        post_id = db.run("INSERT INTO posts (created_at, updated_at, title, text, first_comment, formula, notes, status) "
-                         "VALUES (?,?,?,?,?,?,?, 'draft')",
-                         (now, now, short_title(text.splitlines()[0]), text, first, (data or {}).get("formula"), dumps([])))
-        versions.record(db, post_id, text, first, "claude", "Repurposed")
-        return {"post": post_id}
