@@ -3,7 +3,8 @@
 Chrome or Edge, except the app window's command, which needs neither.
 
 The post's text read as a paragraph, with an Edit text button; the focus kept through polls and after Use this
-version, Discard, Try again and Dismiss; the Revise menu's keys; a toast clear of Send and a banner said once; the
+version, Discard, Try again and Dismiss; the Revise menu's keys; a toast clear of Send that waits while pointed at,
+and a banner said once; the
 palette (Ctrl+K) and the studio's keys; the layout at 1100 x 800 and at 320 px, light and dark."""
 import json
 import socket
@@ -192,6 +193,13 @@ def test_a_toast_stays_clear_of_send_and_a_banner_is_said_once(studio):
       return !!el && !!el.closest('#sendBtn') && apart;
     }""")
     page.locator("#toasts .toast .btn").click()
+    page.evaluate("() => import('/static/js/core.js').then((m) => m.toast('Copied the text.'))")
+    note = page.locator("#toasts .toast", has_text="Copied the text.")
+    note.hover()
+    page.wait_for_timeout(6500)                                        # past its 6 seconds: it waits while pointed at
+    assert note.count() == 1
+    page.mouse.move(5, 5)
+    note.wait_for(state="detached", timeout=6000)
     heard = page.evaluate("""async () => {
       const m = await import('/static/js/core.js');
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
