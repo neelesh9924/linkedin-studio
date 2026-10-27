@@ -9,12 +9,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
-from conftest import REAL_SKILLS, with_
+from conftest import REAL_SKILLS, TOKEN, with_
+from fastapi.testclient import TestClient
 
 from app import publishing
 from app.db import DB, SCHEMA, loads, utcnow
-from app.publishing import (MEDIA_STEPS, Publisher, ScheduleError, retry_with_picture, schedule_with_picture,
+from app.main import create_app
+from app.publishing import (MEDIA_STEPS, NO_REASON, Publisher, ScheduleError, retry_with_picture, schedule_with_picture,
                             studio_client_class)
+from app.status_check import EVERY
 
 NOW = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc)  # 11:30 IST
 
@@ -555,3 +558,232 @@ def test_no_picture_is_todays_single_request(setup):
     assert client.steps == ["create"] and payload["scheduledTime"] == "2026-10-08T03:30:00Z"
     row = post_row(db, pid)
     assert (row["status"], row["media"], row["media_step"]) == ("scheduled", None, None)
+
+
+# ---- Publora's answer, by itself: Check now and the light check (app/status_check.py) ------------------------
+class Recorder:
+    """Publora that answers get-post with `answer` (or raises it) and records every request by name. Reading a post's
+    status may only ask get-post: any other request (create, update, delete...) is recorded, and fails the test."""
+
+    def __init__(self, answer=None):
+        self.answer = {"status": "scheduled", "posts": []} if answer is None else answer
+        self.asked = []
+
+    def get_post(self, post_group_id):
+        self.asked.append(("get_post", post_group_id))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+
+        def sent(*args, **kwargs):
+            self.asked.append((name, args))
+            raise AssertionError(f"reading the status sent {name}")
+        return sent
+
+    def only_read(self):
+        return all(name == "get_post" for name, _ in self.asked)
+
+
+DUE = "2026-10-07T03:30:00+00:00"       # 9:00 IST, before NOW
+
+
+@pytest.fixture
+def reader(cfg, tmp_path):
+    def make(answer):
+        db = DB(tmp_path / "r.db")
+        recorder = Recorder(answer)
+        pub = Publisher(db, cfg, client_factory=lambda: recorder, now=lambda: NOW)
+        pid = new_post(db, status="scheduled", scheduled_at=DUE)
+        db.run("UPDATE posts SET publora_post_id='pg7' WHERE id=?", (pid,))
+        return db, pub, recorder, pid
+    return make
+
+
+@pytest.mark.parametrize("answer,link", [
+    ({"status": "published", "posts": [{"status": "published", "postedId": "urn:li:share:7101",
+                                        "permalink": "https://www.linkedin.com/posts/demo-author_activity-7101-AbCd"}]},
+     "https://www.linkedin.com/posts/demo-author_activity-7101-AbCd"),                      # its permalink
+    ({"postGroup": {"status": "published", "posts": [{"status": "published", "postedId": "urn:li:activity:7102"}]}},
+     "https://www.linkedin.com/feed/update/urn:li:activity:7102"),                          # no permalink: its urn
+    ({"status": "partially_published", "posts": [{"postedId": "urn:li:ugcPost:7103", "permalink": ""}]},
+     "https://www.linkedin.com/feed/update/urn:li:ugcPost:7103"),
+    ({"status": "published", "posts": [{"status": "published"}]}, None),                     # no link given
+])
+def test_refresh_marks_it_published_with_its_linkedin_link(reader, answer, link):
+    db, pub, recorder, pid = reader(answer)
+    assert pub.refresh(pid) == "published"
+    row = post_row(db, pid)
+    assert (row["status"], row["published_url"], row["error"]) == ("published", link, None)
+    assert recorder.asked == [("get_post", "pg7")] and recorder.only_read()
+
+
+@pytest.mark.parametrize("permalink,posted", [
+    ("javascript:alert(1)", None),
+    ("https://example.com/www.linkedin.com/feed/update/urn:li:share:1", None),
+    ("https://www.linkedin.com.example.com/feed/update/urn:li:share:1", None),
+    ("http://www.linkedin.com/feed/update/urn:li:share:1", None),
+    ('https://www.linkedin.com/feed/update/urn:li:share:1" onmouseover="alert(1)', None),
+    ("https://www.linkedin.com/feed/update/urn:li:share:1" + chr(10) + "javascript:alert(1)", None),
+    (None, "javascript:alert(1)"),
+    (None, "urn:li:share:1/../../logout"),
+    (None, "7104"),
+])
+def test_a_link_that_is_not_linkedins_is_never_stored(reader, permalink, posted):
+    db, pub, recorder, pid = reader({"status": "published", "posts": [{"permalink": permalink, "postedId": posted}]})
+    assert pub.refresh(pid) == "published"
+    assert post_row(db, pid)["published_url"] is None and recorder.only_read()
+
+
+@pytest.mark.parametrize("answer,error", [
+    ({"status": "failed", "error": "The group failed", "posts": [{"status": "failed", "error": "LinkedIn refused the token"}]},
+     "Publora says it failed: LinkedIn refused the token; The group failed"),
+    ({"postGroup": {"status": "failed", "error": {"code": "RATE", "message": "Too many posts today"}}},
+     "Publora says it failed: Too many posts today"),
+    ({"status": "failed", "posts": [{"status": "failed", "error": None}]}, NO_REASON),
+])
+def test_failed_keeps_publoras_own_words(reader, answer, error):
+    db, pub, recorder, pid = reader(answer)
+    assert pub.refresh(pid) == "failed"
+    row = post_row(db, pid)
+    assert (row["status"], row["error"], row["published_url"]) == ("failed", error, None) and recorder.only_read()
+    assert "no reason" in NO_REASON
+
+
+@pytest.mark.parametrize("answer", [{"status": "scheduled"}, {"status": "processing"}, {"status": "draft"}, {},
+                                    {"postGroup": {"status": "something new"}}, "not an object"])
+def test_any_other_answer_leaves_it_scheduled(reader, answer):
+    db, pub, recorder, pid = reader(answer)
+    before = dict(post_row(db, pid))
+    assert pub.refresh(pid) == "scheduled"
+    assert dict(post_row(db, pid)) == before and recorder.only_read()
+
+
+def test_refresh_asks_nothing_about_a_post_that_is_not_scheduled_or_is_in_the_trash(reader):
+    db, pub, recorder, pid = reader({"status": "published"})
+    db.run("UPDATE posts SET trashed_at=? WHERE id=?", (utcnow(), pid))
+    assert pub.refresh(pid) == "scheduled" and post_row(db, pid)["status"] == "scheduled"
+    for status in ("draft", "approved", "published", "failed", "cancelled"):
+        assert pub.refresh(new_post(db, status=status, scheduled_at=DUE)) == status
+    assert recorder.asked == []
+
+
+def test_an_older_database_gains_published_url_and_keeps_its_rows(tmp_path):
+    old_schema = "\n".join(line for line in SCHEMA.splitlines() if not line.strip().startswith("published_url"))
+    assert old_schema != SCHEMA
+    path = tmp_path / "before.db"
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    con.executescript(old_schema)
+    for status in ("scheduled", "published", "draft"):
+        con.execute("INSERT INTO posts (created_at, updated_at, title, text, status, scheduled_at, publora_post_id) "
+                    "VALUES ('t','t','t',?,?,?,?)", (f"A {status} post.", status, DUE, "pg1" if status != "draft" else None))
+    con.commit()
+    before = [dict(r) for r in con.execute("SELECT * FROM posts ORDER BY id")]
+    con.close()
+    db = DB(path)
+    assert db.started["columns"] == ["posts.published_url"] and db.started["tables"] == []
+    after = [dict(r) for r in db.all("SELECT * FROM posts ORDER BY id")]
+    assert [a.pop("published_url") for a in after] == [None, None, None] and after == before
+
+
+@pytest.fixture
+def checked(cfg, tmp_path, fake_runner):
+    """A studio whose Publora is a Recorder, with posts the light check must and must not ask about. `check` is passed
+    as check_publora; None passes nothing, as every other test makes its studio."""
+    made = []
+
+    def make(check, answer=None):
+        path = tmp_path / f"check{len(made)}.db"
+        recorder = Recorder(answer)
+        flag = {} if check is None else {"check_publora": check}
+        app = create_app(cfg, TOKEN, db_path=path, runner=fake_runner, publisher=Publisher(DB(path), cfg, client_factory=lambda: recorder),
+                         **flag)
+        client = TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin})
+        client.__enter__()
+        made.append(client)
+        client.cookies.set("studio_session", TOKEN)
+        db = app.state.db
+        ids = {}
+        for name, at, group in (("due", "2026-10-01T03:30:00+00:00", "pg-due"), ("later", "2099-10-01T03:30:00+00:00", "pg-later"),
+                                ("trashed", "2026-10-01T03:30:00+00:00", "pg-trashed")):
+            ids[name] = new_post(db, status="scheduled", scheduled_at=at)
+            db.run("UPDATE posts SET publora_post_id=? WHERE id=?", (group, ids[name]))
+        db.run("UPDATE posts SET trashed_at=? WHERE id=?", (utcnow(), ids["trashed"]))
+        return client, app, recorder, ids
+
+    yield make
+    for client in made:
+        client.__exit__(None, None, None)
+
+
+def test_the_light_check_is_off_unless_asked_for_and_then_asks_at_most_every_few_minutes(checked):
+    """The guard: a studio made without check_publora (every test's) never asks Publora, however often it is polled
+    with a due post. With it, two polls within 3 minutes make one check, of the due post only: never one not yet due,
+    and never one in the Trash. And it only reads."""
+    client, app, recorder, _ids = checked(check=None)
+    for _ in range(20):
+        assert client.get("/api/state").status_code == 200
+    app.state.checker.wait()
+    assert recorder.asked == [] and app.state.checker._thread is None
+
+    client, app, recorder, ids = checked(check=True)
+    checker = app.state.checker
+    client.get("/api/state")
+    checker.wait()
+    assert recorder.asked == [("get_post", "pg-due")]
+    client.get("/api/state")
+    checker.wait()
+    assert recorder.asked == [("get_post", "pg-due")]                          # within 3 minutes: no second check
+    real = checker.now
+    checker.now = lambda: real() + EVERY + timedelta(seconds=1)
+    client.get("/api/state")
+    checker.wait()
+    assert recorder.asked == [("get_post", "pg-due")] * 2 and recorder.only_read()
+    assert EVERY == timedelta(minutes=3)
+
+
+def test_check_now_answers_in_words_and_a_failed_ask_stays_for_the_notice(checked):
+    client, app, recorder, ids = checked(check=True)
+    assert client.get(f"/api/post/{ids['due']}").json()["waiting"]["text"].startswith("Its time has passed: the studio asks")
+    waiting = client.post(f"/api/post/{ids['due']}/refresh", json={}).json()
+    assert waiting["status"] == "scheduled" and re.fullmatch(
+        r"Not out yet: Publora still has it scheduled \(checked \d{1,2}:\d{2} [ap]m\)\.", waiting["said"])
+    assert waiting["waiting"] == client.get(f"/api/post/{ids['due']}").json()["waiting"]   # the notice as the post says it
+    later = client.post(f"/api/post/{ids['later']}/refresh", json={}).json()["said"]
+    assert re.fullmatch(r"All set: Publora has it scheduled \(checked \d{1,2}:\d{2} [ap]m\)\.", later)
+    assert client.get(f"/api/post/{ids['due']}").json()["waiting"]["text"].startswith("Not out yet as of ")
+    assert client.get(f"/api/post/{ids['later']}").json()["waiting"] is None    # not due: nothing to say yet
+    recorder.answer = requests.ConnectionError("reset")
+    refused = client.post(f"/api/post/{ids['due']}/refresh", json={})
+    assert refused.status_code == 502 and "no answer (ConnectionError)" in refused.json()["error"]
+    notice = client.get(f"/api/post/{ids['due']}").json()["waiting"]
+    assert notice["failed"] and "could not ask Publora" in notice["text"] and "every few minutes" in notice["text"]
+    recorder.answer = {"status": "published", "posts": [{"permalink": "https://www.linkedin.com/feed/update/urn:li:share:7105"}]}
+    said = client.post(f"/api/post/{ids['due']}/refresh", json={}).json()
+    assert said == {"status": "published", "said": "Publora says it is published. Open on LinkedIn shows it.", "waiting": None}
+    shown = client.get(f"/api/post/{ids['due']}").json()
+    assert (shown["status"], shown["link"], shown["waiting"]) == ("published", "https://www.linkedin.com/feed/update/urn:li:share:7105", None)
+    assert [p["link"] for p in client.get("/api/state").json()["posts"] if p["id"] == ids["due"]] == [shown["link"]]
+    app.state.db.run("UPDATE posts SET published_url='javascript:alert(1)' WHERE id=?", (ids["due"],))
+    assert client.get(f"/api/post/{ids['due']}").json()["link"] is None        # a stored address is checked again
+    assert client.post(f"/api/post/{ids['trashed']}/refresh", json={}).status_code == 404
+    assert recorder.only_read() and ("get_post", "pg-trashed") not in recorder.asked
+
+
+def test_the_demos_publora_sends_a_post_at_its_time(cfg, tmp_path):
+    """dev/demo_server.py's stand-in: scheduled until the time it was given, then published with a made-up link."""
+    from dev.demo_server import ScriptedPublora
+    stand_in = ScriptedPublora()
+    stand_in.update_post_once("demo-due", {"status": "scheduled", "scheduledTime": "2026-10-01T03:30:00Z"})
+    stand_in.update_post_once("demo-later", {"status": "scheduled", "scheduledTime": "2099-10-01T03:30:00Z"})
+    db = DB(tmp_path / "demo.db")
+    pub = Publisher(db, cfg, client_factory=lambda: stand_in)
+    due, later, unknown = (new_post(db, status="scheduled", scheduled_at=DUE) for _ in range(3))
+    for pid, group in ((due, "demo-due"), (later, "demo-later"), (unknown, "demo-unknown")):
+        db.run("UPDATE posts SET publora_post_id=? WHERE id=?", (group, pid))
+    assert [pub.refresh(pid) for pid in (due, later, unknown)] == ["published", "scheduled", "scheduled"]
+    assert post_row(db, due)["published_url"] == "https://www.linkedin.com/feed/update/urn:li:share:demo-due"

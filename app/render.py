@@ -63,6 +63,12 @@ def local_time(value: str | None, tz: ZoneInfo, label: str = "", with_year: bool
     return f"{text} {label}".strip()
 
 
+def day_time(value: str | None, tz: ZoneInfo) -> str:
+    """`27 Oct, 10:42 am` in the app's zone (the chat's line for going back to a version)."""
+    full = local_time(value, tz)
+    return full.split(" ", 1)[1] if parse_utc(value or "") and " " in full else full
+
+
 def clock(value: str | None, tz: ZoneInfo) -> str:
     """`8:30 am` in the app's zone."""
     full = local_time(value, tz)

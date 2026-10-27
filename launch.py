@@ -274,7 +274,9 @@ def main() -> int:
         holder["restart"] = True
         holder["server"].should_exit = True
 
-    app = create_app(cfg, token, on_quit=lambda: setattr(holder["server"], "should_exit", True), on_restart=restart)
+    # check_publora: the light check asks Publora whether due posts went out (app/status_check.py)
+    app = create_app(cfg, token, check_publora=True, on_quit=lambda: setattr(holder["server"], "should_exit", True),
+                     on_restart=restart)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=cfg.port, log_config=None,
                                            access_log=False, lifespan="on", timeout_graceful_shutdown=5))
     holder["server"] = server

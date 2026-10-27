@@ -1,11 +1,13 @@
-// A post at the top: its title, where it stands, and the one next step (Approve this text, then Schedule…, then the time
-// it goes out; New draft from this once it is published or cancelled); the gear (its title, its versions to go back to,
-// its earlier chats, Cancel on Publora, New draft from this, Move to Trash…); and the Schedule… dialog (a time, then the
-// final text, picture, time and first comment to confirm).
+// A post at the top: its title, where it stands (the chip, drawn again after each poll), and the one next step (Approve
+// this text, then Schedule…, then Check now, which asks Publora whether it went out; Open on LinkedIn and New draft from
+// this once it is published); the gear (its title, its versions to compare with now and go back to, its earlier chats,
+// Cancel on Publora, New draft from this, Move to Trash…); and the Schedule… dialog (a time, then the final text,
+// picture, time and first comment to confirm).
 import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, drawIfChanged, showDialog,
-  closeDialog, closeButton, setTitle, go, toast } from "./core.js";
+  closeDialog, closeButton, setTitle, go, toast, onPoll, currentPost } from "./core.js";
 import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor.js";
 import { statusOf, renderList, openNew } from "./sidebar.js";
+import { wordDiff } from "./wdiff.js";
 
 let shown = null;      // the post as the studio last said it
 let asking = 0;        // the post being asked for, while its answer is on the way
@@ -70,18 +72,31 @@ function renderTop(p) {
   setTitle(`${p.first.slice(0, 60)} · LinkedIn Studio`);
   $("title").textContent = p.title;
   $("title").title = p.title;
+  drawChip(p);
+  $("postGear").hidden = false;
+  const actions = $("topActions");
+  drawIfChanged(actions, JSON.stringify([p.id, p.status, p.busy, p.when, p.can_retry, p.can_back, p.slots, p.link]), () => {
+    const on = actions.contains(document.activeElement) ? document.activeElement.dataset.act : null;
+    put(actions, ...mainActions(p));
+    if (on) focusFirst(actions.querySelector(`[data-act="${on}"]`), actions.querySelector("button, a"), $("postGear"));
+  });
+}
+
+// Where the post stands, in the sidebar's words (statusOf): from the full post when it is drawn, and from the list after
+// each poll, so the chip moves with the sidebar's line (Claude's working minutes among it).
+function drawChip(p) {
   const status = statusOf(p);
   if (!chip) chip = h("span", { class: "chip" }, h("i", { class: "dot", "aria-hidden": "true" }), h("span", { class: "chip-text" }));
   if (chip.parentNode !== $("status")) $("status").replaceChildren(chip);
-  chip.className = `chip ${status.kind}`.trim();
+  const kind = `chip ${status.kind}`.trim();
+  if (chip.className !== kind) chip.className = kind;
   if (chip.lastChild.textContent !== status.text) chip.lastChild.textContent = status.text;
-  $("postGear").hidden = false;
-  const actions = $("topActions");
-  drawIfChanged(actions, JSON.stringify([p.id, p.status, p.busy, p.when, p.can_retry, p.can_back, p.slots]), () => {
-    const on = actions.contains(document.activeElement) ? document.activeElement.dataset.act : null;
-    put(actions, ...mainActions(p));
-    if (on) focusFirst(actions.querySelector(`[data-act="${on}"]`), actions.querySelector("button"), $("postGear"));
-  });
+}
+
+function chipAfterPoll() {
+  if (state.page !== "post" || !shown || shown.id !== state.postId) return;
+  const p = currentPost();
+  if (p) drawChip(p);
 }
 
 function act(label, kind, name, work, glyph) {
@@ -99,19 +114,48 @@ function mainActions(p) {
         act("Schedule…", "primary", "schedule", () => openSchedule(), "clock")];
     case "scheduling":
       return [h("span", { class: "top-when" }, h("i", { class: "pulse" }), "Sending to Publora…")];
-    case "scheduled":
-      return [h("span", { class: "top-when" }, icon("clock", 15), `Goes out ${p.when}`),
-        act("Check status", "ghost", "refresh", () => change("refresh", "Status read from Publora."), "refresh")];
-    case "failed":
+    case "scheduled": {   // its time is in the chip, once
+      const check = act("Check now", "ghost", "refresh", checkNow, "refresh");
+      check.title = "Ask Publora whether it went out. Nothing is sent.";
+      return [check];
+    }
+    case "failed":   // failed at Publora itself, it can't be sent again: a new draft can
       return [p.can_back ? act("Back to draft", "ghost", "back", () => change("unapprove", "Back in draft.")) : null,
-        p.can_retry ? act("Try again", "primary", "retry", () => change("retry", "Scheduled on Publora."), "refresh") : null].filter(Boolean);
+        p.can_retry ? act("Try again", "primary", "retry", () => change("retry", "Scheduled on Publora."), "refresh") : null,
+        p.can_back || p.can_retry ? null : act("New draft from this", "", "copy", () => copyPost(p), "copy")].filter(Boolean);
     case "published":
       return [h("span", { class: "top-when" }, icon("check-circle", 15), p.when ? `Published ${p.when}` : "Published"),
-        act("New draft from this", "", "copy", () => copyPost(p), "copy")];
+        p.link ? outLink(p.link, "Open on LinkedIn", "", "open") : null,
+        act("New draft from this", "", "copy", () => copyPost(p), "copy")].filter(Boolean);
     default:
       return [h("span", { class: "top-when" }, "Cancelled on Publora. It was never published."),
         act("New draft from this", "", "copy", () => copyPost(p), "copy")];
   }
+}
+
+// A link out of the studio (the post on LinkedIn, the Publora dashboard): a new window, which a screen reader is told.
+function outLink(href, label, size = "", name = null) {
+  return h("a", { class: `btn ${size}`.trim(), href, target: "_blank", rel: "noreferrer", "data-act": name },
+    icon("external", size ? 14 : 15), h("span", null, label), h("span", { class: "sr-only" }, " (opens in a new window)"));
+}
+
+// Check now: Publora's word on it, read at once (nothing is sent). Its answer stays in the notice while the post stands
+// as it was heard: published, failed in Publora's words, or still waiting, with the time it asked.
+let heard = null;
+async function checkNow() {
+  if (!shown) return;
+  const id = shown.id;
+  refused = "";
+  heard = null;
+  const reply = await post(`/api/post/${id}/refresh`, {});
+  if (reply.error) {
+    refuse(reply.error);
+    announce(reply.error, { urgent: true });
+  } else {
+    heard = { id, status: reply.status, words: reply.said, seen: JSON.stringify(reply.waiting || null) };
+    announce(reply.said, { urgent: reply.status === "failed" });
+  }
+  await refresh();
 }
 
 // New draft from this: a draft with its text, first comment and picture, opened at once (this post stays as it is).
@@ -124,16 +168,23 @@ async function copyPost(p) {
 }
 
 // The post's notice above it: Claude at work on it, a send that failed, Publora's warnings, a refusal just now (gone as
-// soon as the text changes: typed here, or rewritten by Claude).
+// soon as the text changes: typed here, or rewritten by Claude), Check now's answer, and a due post's light check.
 let refused = "";
 let refusedText = null;   // the text it was refused for
 function refuse(words) {
   refused = words;
   refusedText = editorState.data ? editorState.data.text : null;
 }
+const HEARD = { published: ["ok", "check-circle"], failed: ["bad", "alert"], scheduled: ["soft", "clock"] };
 function renderNotice(p) {
   const box = noticeBox();
   if (refused && refusedText !== null && p.text !== refusedText) refused = "";
+  // Check now's answer gives way once the post moves on, or the light check has heard something newer. (A post fetched
+  // before the answer still says what it said before: that is not newer.)
+  if (heard && (heard.id !== p.id || heard.status !== p.status)) heard = null;
+  else if (heard && JSON.stringify(p.waiting || null) !== heard.seen) {
+    if (heard.fresh) heard = null;
+  } else if (heard) heard.fresh = true;
   let kind = "";
   let words = null;
   if (refused) {
@@ -143,14 +194,21 @@ function renderNotice(p) {
   } else if (p.busy) {
     kind = "busy";
     words = [h("i", { class: "pulse" }), h("div", null, h("strong", null, "Claude is working on this post."), "Its text waits until Claude is done; the chat on the right shows each step.")];
+  } else if (heard) {
+    const [tone, glyph] = HEARD[heard.status] || HEARD.scheduled;
+    kind = tone;
+    words = [icon(glyph, 16), h("div", null, heard.words)];
   } else if (p.error) {
     kind = p.status === "failed" ? "bad" : "";
     words = [icon("alert", 16), h("div", null, p.error)];
+  } else if (p.waiting) {
+    kind = "soft";
+    words = [icon(p.waiting.failed ? "alert" : "clock", 16), h("div", null, p.waiting.text)];
   } else if (p.status === "approved") {
     kind = "soft";
     words = [icon("lock", 16), h("div", null, "Approved: the text and picture are locked. Back to draft unlocks them.")];
   }
-  drawIfChanged(box, JSON.stringify([refused, p.busy, p.error, p.status, p.slots]), () => {
+  drawIfChanged(box, JSON.stringify([refused, p.busy, p.error, p.status, p.slots, heard && heard.words, p.waiting]), () => {
     box.hidden = !words;
     box.className = `notice ${kind}`.trim();
     if (words) put(box, words);
@@ -283,7 +341,7 @@ async function openGear() {
       gearAct("Cancel on Publora…", () => confirmCancel(p))) : null,
     ["scheduled", "published", "failed", "cancelled"].includes(p.status)
       ? h("div", { class: "danger-row" }, h("span", null, "Its status and history on Publora."),
-        h("a", { class: "btn small", href: p.dashboard, target: "_blank", rel: "noreferrer" }, icon("external", 14), "Publora dashboard")) : null,
+        outLink(p.dashboard, "Publora dashboard", "small")) : null,
     h("div", { class: "danger-row" }, h("span", null, "New draft from this: its text, first comment and picture in a new draft. This post stays as it is."),
       gearAct("New draft from this", (event) => whileBusy(event.currentTarget, () => copyPost(p)))),
     p.deletable ? h("div", { class: "danger-row" }, h("span", null, "Move to Trash: it goes with its versions, chat and pictures. Put it back, or delete it forever, from the Trash."),
@@ -294,7 +352,7 @@ async function openGear() {
     h("div", { class: "form-foot", style: "margin-top:8px" }, keep, h("span", { class: "soft", id: "titleHint" }, "The list shows the post’s first line.")),
     said,
     h("section", { class: "zone", "aria-label": "Versions" }, h("h3", null, "Versions"),
-      h("p", { class: "soft" }, "Each change Claude makes is kept, and your own edits: before Claude’s change, when you leave the text, before a cut of a third or more, and when you approve it. Going back is kept too, so it can be undone."),
+      h("p", { class: "soft" }, "Each change Claude makes is kept, and your own edits: before Claude’s change, when you leave the text, before a cut of a third or more, and when you approve it. Compare with now shows what changed since; going back is kept too, so it can be undone."),
       versions),
     danger,
     h("div", { class: "dialog-foot" }, closeButton("Close")));
@@ -320,11 +378,15 @@ async function drawVersions(p, box, said, bad = false) {
     if (!v.current) back.addEventListener("click", () => whileBusy(back, async () => {
       const done = await post(`/api/post/${p.id}/versions/back`, { version: v.id });
       await refresh();
+      if (done.changed) window.dispatchEvent(new Event("studio:chat"));   // the chat's line saying so
       drawVersions(p, box, done.error || (done.changed ? `Went back to the version of ${v.when}. The post shows it.` : "It already reads like that."), !!done.error);
     }));
-    return h("li", { class: `version${v.current ? " now" : ""}` }, icon(v.author === "claude" ? "sparkle" : v.author === "you" ? "user" : "history", 15),
-      h("div", { class: "version-text" }, h("b", { title: v.first }, v.note || v.first || "A version"),
-        h("small", null, `${v.when} · ${AUTHOR[v.author] || v.author} · ${number(v.chars)} characters`)), back);
+    const [compare, diff] = v.segments ? comparison(v) : [null, null];
+    return h("li", { class: "version-item" },
+      h("div", { class: `version${v.current ? " now" : ""}` }, icon(v.author === "claude" ? "sparkle" : v.author === "you" ? "user" : "history", 15),
+        h("div", { class: "version-text" }, h("b", { title: v.first }, v.note || v.first || "A version"),
+          h("small", null, `${v.when} · ${AUTHOR[v.author] || v.author} · ${number(v.chars)} characters`)), compare, back),
+      diff);
   });
   const earlier = (chat.earlier || []).map((c) => {
     const back = h("button", { class: "btn small", type: "button" }, "Bring the chat back");
@@ -345,6 +407,23 @@ async function drawVersions(p, box, said, bad = false) {
     focusFirst(line);
     announce(said, { urgent: bad });
   }
+}
+
+// Compare with now: an earlier version's words against the post's now, opened under its row (the studio worked them out).
+function comparison(v) {
+  const id = `compare-${v.id}`;
+  const diff = h("div", { class: "version-compare", id, hidden: true },
+    h("p", { class: "soft" }, "Struck words are in this version only; marked words were added since."),
+    h("p", { class: "wdiff" }, wordDiff(v.segments)),
+    v.first_comment_differs ? h("p", { class: "soft" }, "Its first comment differs from now too.") : null);
+  const button = h("button", { class: "btn small", type: "button", "aria-expanded": "false", "aria-controls": id },
+    h("span", null, "Compare with now"), icon("chevron-down", 13));
+  button.addEventListener("click", () => {
+    const open = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(open));
+    diff.hidden = !open;
+  });
+  return [button, diff];
 }
 
 function confirmCancel(p) {
@@ -397,11 +476,13 @@ function moveOn(id) {
 
 export function forgetRefusal() {
   refused = "";
+  heard = null;
 }
 
 export function init() {
   $("postGear").prepend(icon("gear", 17));
   $("postGear").addEventListener("click", openGear);
+  onPoll(chipAfterPoll);
   // A refusal (Approve's blanks, say) goes as soon as the text changes.
   $("postPage").addEventListener("input", (event) => {
     if (!refused || !(event.target instanceof HTMLTextAreaElement)) return;

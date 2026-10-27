@@ -2,6 +2,7 @@
 
 The page asks /api/state every two seconds (the posts, the jobs under way, `rev`, which changes
 whenever something it shows was written) and fetches what it shows again only when that changed.
+With check_publora, each ask also kicks the light check (status_check.py), which never holds it up.
 Each area of the API is its own module: api_posts (a post, its chat, versions and picture),
 api_trash (the posts moved to the Trash), api_pages (Planner, Story Bank & Voice, Tools, Settings,
 setup, the Guide).
@@ -28,16 +29,17 @@ from .config import DATA_DIR, HOST, Config, path_problems
 from .db import DB, loads
 from .health import Health
 from .jobs import JobManager
-from .publishing import POST_MAX, SLOT, Publisher
+from .publishing import POST_MAX, SLOT, Publisher, linkedin_link
 from .security import LocalOnly
 from .skills import ACTIONS
+from .status_check import StatusCheck
 
 HERE = Path(__file__).resolve().parent
 ACTIVE = ("queued", "running")
 PROBLEM = ("failed", "unparsed")
 STATUS_LABEL = {"draft": "Draft", "approved": "Approved", "scheduling": "Sending", "scheduled": "Scheduled",
                 "published": "Published", "failed": "Failed", "cancelled": "Cancelled"}
-STATUS_KIND = {"draft": "", "approved": "ok", "scheduling": "busy", "scheduled": "ok", "published": "ok",
+STATUS_KIND = {"draft": "", "approved": "ready", "scheduling": "busy", "scheduled": "ok", "published": "ok",
                "failed": "bad", "cancelled": "warn"}
 ORDER = {"draft": 0, "approved": 1, "failed": 2, "scheduling": 3, "scheduled": 4, "published": 5, "cancelled": 6}
 TRASHED_LABEL = "In the Trash"
@@ -61,6 +63,7 @@ class Studio:
     protection: privacy.Protection
     needs_setup: bool
     tz_label: str
+    checker: StatusCheck
     instance: str = field(default_factory=lambda: uuid.uuid4().hex)
     on_quit: Callable[[], None] | None = None
     on_restart: Callable[[], None] | None = None
@@ -82,13 +85,17 @@ class Studio:
 
     # ---- rows the page reads ----
     def post_summary(self, row) -> dict:
-        """A post as the list, the Planner and the Trash show it. One in the Trash says so (the Planner's card)."""
+        """A post as the list, the Planner and the Trash show it. One in the Trash says so (the Planner's card). `link`:
+        a published post on LinkedIn, once Publora gave its address (only ever a https://www.linkedin.com/ one)."""
         busy = self.post_busy(row["id"])
-        trashed = bool(row["trashed_at"]) if "trashed_at" in row.keys() else False
+        keys = row.keys()
+        trashed = bool(row["trashed_at"]) if "trashed_at" in keys else False
+        link = linkedin_link(row["published_url"]) if "published_url" in keys and row["status"] == "published" else None
         return {"id": row["id"], "title": row["title"], "first": first_line(row["text"]) or "Nothing written yet",
                 "status": row["status"], "label": TRASHED_LABEL if trashed else STATUS_LABEL.get(row["status"], row["status"]),
                 "kind": "" if trashed else STATUS_KIND.get(row["status"], ""), "when": self.when(row["scheduled_at"]),
-                "scheduled_at": row["scheduled_at"], "picture": bool(row["picture_id"]), "busy": busy, "trashed": trashed}
+                "scheduled_at": row["scheduled_at"], "picture": bool(row["picture_id"]), "busy": busy, "trashed": trashed,
+                "link": link}
 
     def post_busy(self, post_id: int) -> bool:
         """Claude is writing (or waiting to write) this post's chat reply: its text waits until it is done."""
@@ -147,8 +154,10 @@ class Studio:
 
 
 def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: ClaudeRunner | None = None,
-               publisher: Publisher | None = None,
+               publisher: Publisher | None = None, check_publora: bool = False,
                on_quit: Callable[[], None] | None = None, on_restart: Callable[[], None] | None = None) -> FastAPI:
+    """`check_publora`: the light check asks Publora whether due posts went out (status_check.py). Off unless asked
+    for: launch.py, `python -m app` and the demo turn it on; the tests' studios never reach Publora by themselves."""
     if HOST != "127.0.0.1":
         raise RuntimeError("LinkedIn Studio only binds 127.0.0.1.")
     # The config is read once, at start. If its folders are wrong, the page shows the setup screen.
@@ -162,8 +171,9 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
         jobs.chat_note = privacy.CHAT_NOTE
     pub = publisher or Publisher(db, cfg)
     health = Health(db, cfg)
+    checker = StatusCheck(db, pub, enabled=check_publora and not needs_setup)   # never during setup
     studio = Studio(cfg=cfg, db=db, jobs=jobs, pub=pub, health=health, protection=protection,
-                    needs_setup=needs_setup, tz_label=datetime.now(cfg.tz).tzname() or "",
+                    needs_setup=needs_setup, tz_label=datetime.now(cfg.tz).tzname() or "", checker=checker,
                     on_quit=on_quit, on_restart=on_restart)
     tools = mcp.Studio(db=db, cfg=cfg, fetch_post=flows.fetch_post_text)
 
@@ -189,6 +199,7 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.state.studio, app.state.tools = studio, tools
     app.state.db, app.state.jobs, app.state.publisher, app.state.health = db, jobs, pub, health
+    app.state.checker = checker
 
     @app.get("/health")
     def health_check():
@@ -202,6 +213,7 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
     def state():
         studio.seq += 1
         rows = db.all("SELECT * FROM posts WHERE trashed_at IS NULL")   # the Trash's are on its own page
+        checker.kick(rows)   # in the background, when a scheduled post is due: this answer never waits for Publora
         rows.sort(key=lambda r: (ORDER.get(r["status"], 9),
                                  (r["scheduled_at"] or "") if r["status"] in ("scheduling", "scheduled") else "",
                                  -r["id"] if r["status"] not in ("scheduling", "scheduled") else 0))

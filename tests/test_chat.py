@@ -1,6 +1,7 @@
 """A post's Ask Claude chat: what each request carries, the studio's tools Claude changes the post with (over /mcp, on
 its run's own token), the versions each change keeps, pictures, and how a run that did not finish is said."""
 import base64
+import re
 import threading
 import time
 
@@ -9,7 +10,7 @@ from conftest import TOKEN, add_post
 from fastapi.testclient import TestClient
 from support import PNG
 
-from app import codex, mcp, versions
+from app import codex, mcp, render, versions
 from app.claude_runner import RunResult, build_command
 from app.db import loads
 from app.jobs import wait_for
@@ -293,6 +294,30 @@ def test_going_back_to_a_version_keeps_the_text_before_so_it_can_be_undone(studi
     v = client.get(f"/api/post/{other}/versions").json()["versions"][0]
     assert client.post(f"/api/post/{other}/versions/back", json={"version": v["id"]}).status_code == 409
     assert client.post(f"/api/post/{post}/versions/back", json={"version": v["id"]}).status_code == 409  # not its own
+
+
+def test_the_listing_compares_each_earlier_version_with_now_and_going_back_says_so_in_the_chat(studio, cfg):
+    client, app, _runner = studio
+    db = app.state.db
+    post = add_post(db, text="One two three.", first_comment="A link")
+    versions.record(db, post, "One two three.", "A link", "claude", "New hook")
+    client.post(f"/api/post/{post}/save", json={"text": "One four three.", "first_comment": "Another link"})
+    (old,) = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert not old["current"] and old["first_comment_differs"] is True
+    assert ["-", "two"] in old["segments"] and ["+", "four"] in old["segments"]
+    assert "".join(t for op, t in old["segments"] if op != "+") == "One two three."     # that version's words...
+    assert "".join(t for op, t in old["segments"] if op != "-") == "One four three."     # ...to the post's now
+    assert client.get(f"/api/post/{post}/chat").json()["messages"] == []              # no chat yet
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": old["id"]}).json() == {"changed": True}
+    when = render.day_time(db.one("SELECT created_at FROM versions WHERE id=?", (old["id"],))["created_at"], cfg.tz)
+    assert re.fullmatch(r"\d{1,2} [A-Z][a-z]{2}, \d{1,2}:\d{2} [ap]m", when)
+    lines = [(m["role"], m["text"]) for m in client.get(f"/api/post/{post}/chat").json()["messages"]]
+    assert lines == [("info", f"You went back to the version of {when} (New hook).")]   # one line, in a chat it started
+    listed = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert [v["current"] for v in listed] == [True, False, True]                     # gone back to; your edits; New hook
+    assert [("segments" in v, "first_comment_differs" in v) for v in listed] == [(False, False), (True, True), (False, False)]
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": old["id"]}).json() == {"changed": False}
+    assert len(client.get(f"/api/post/{post}/chat").json()["messages"]) == 1          # nothing changed: nothing said
 
 
 # ---- attachments --------------------------------------------------------------------------------

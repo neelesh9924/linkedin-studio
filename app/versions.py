@@ -4,7 +4,8 @@ A version is kept when Claude changes the post (a chat request, a revision used,
 and, just before that, the owner's own edits since the last version, so going back never loses
 what they typed. The owner's own edits are kept by themselves too: when they leave the text
 (checkpoint), before a save that takes away a third or more of it (big_cut), and when they approve
-it. Going back is a change too: it is kept, so it can be undone.
+it. Going back is a change too: it is kept, so it can be undone, and the post's chat says it in one
+line (api_posts). The gear lists each earlier version with its words compared with now (render.wdiff).
 """
 from __future__ import annotations
 

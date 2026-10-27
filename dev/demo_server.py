@@ -6,7 +6,8 @@ Nothing real is touched: no Claude run, no Publora call, no ChatGPT. Everything 
 its own (a temporary one unless --folder names one): the database, a made-up Story Bank and voice
 profile (dev/demo/), a stand-in Claude login folder. Every job "finishes" after a few seconds with
 canned output; a post's chat really calls the studio's own tools (set_post_text, record_audit) over
-/mcp, as Claude would. Without --empty it starts with demo posts in every state, a week plan and an
+/mcp, as Claude would, and replies in plain words of its own. Publora's stand-in sends a post at its
+time, and the light check (app/status_check.py) then finds it published, with a made-up LinkedIn link. Without --empty it starts with demo posts in every state, a week plan and an
 interview. --db opens a copy of a real database instead (for checking that it opens as it is).
 Type FAIL-ME or UNPARSED-ME into a tool to see the two failure cards.
 
@@ -34,7 +35,7 @@ from app.claude_runner import RunResult  # noqa: E402
 from app.config import Config  # noqa: E402
 from app.db import DB, dumps, utcnow  # noqa: E402
 from app.main import create_app  # noqa: E402
-from app.publishing import Publisher  # noqa: E402
+from app.publishing import Publisher, parse_utc, placeholder_slots  # noqa: E402
 
 STEP_SECONDS = 0.8
 DEMO = ROOT / "dev" / "demo"
@@ -93,15 +94,27 @@ INTERVIEW = ["What have you been working on lately that you **can't stop thinkin
              "Got it: 22 minutes down to 9, team of four, Q2 2025. I've written that to **Receipts**.\n\nWhat did you believe a year ago that you no longer believe?"]
 
 
-def call_tool(mcp: dict, name: str, arguments: dict) -> str:
-    """One call of the studio's own tools, over /mcp with this run's token, as Claude makes it."""
+def call_tool(mcp: dict, name: str, arguments: dict) -> bool:
+    """One call of the studio's own tools, over /mcp with this run's token, as Claude makes it. Whether it worked: the
+    reply is written in the stand-in's own words, never the tool's (that text is for Claude, not the owner)."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}).encode()
     request = urllib.request.Request(mcp["url"], data=body, method="POST",
                                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {mcp['token']}"})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(request, timeout=30) as answer:
         result = json.loads(answer.read())["result"]
-    return result["content"][0]["text"]
+    return not result.get("isError")
+
+
+COUNT = {2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+
+
+def blanks_left(text: str) -> str:
+    """The blanks a reply leaves, said as a person would."""
+    n = len(placeholder_slots(text))
+    if not n:
+        return ""
+    return " One blank is still yours to fill." if n == 1 else f" {COUNT.get(n, n)} blanks are still yours to fill."
 
 
 def post_in(prompt: str) -> str:
@@ -171,8 +184,10 @@ class ScriptedRunner:
                 reply = "ChatGPT's pictures are not set up in this studio yet (Settings › ChatGPT), so I made none."
             else:
                 say("Asking ChatGPT for a picture")
-                said = call_tool(req.mcp, "make_image", {"prompt": "A calm desk at night, a closed laptop and a cup of tea, in soft flat shapes", "shape": "landscape"})
-                reply = f"I asked ChatGPT for an illustration: a calm desk at night, a closed laptop and a tea. {said.split('.')[0]}."
+                made = call_tool(req.mcp, "make_image", {"prompt": "A calm desk at night, a closed laptop and a cup of tea, in soft flat shapes", "shape": "landscape"})
+                reply = ("I asked ChatGPT for an illustration: a calm desk at night, a closed laptop and a cup of tea. It is under "
+                         "this reply, and Use as the picture puts it on the post." if made
+                         else "ChatGPT made no picture this time, so nothing changed on the post.")
             return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=4, usage=usage, skill_invoked=True)
         if "audit" in lower:
             say("Saving the audit")
@@ -187,32 +202,42 @@ class ScriptedRunner:
             return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=2, usage=usage, skill_invoked=True)
         if not text or (("write" in lower or "draft" in lower) and "hook" not in lower):
             new, note = POST, "First draft"
+            reply = "I wrote a first draft from your Story Bank: the weeknights you stopped coding after 10 pm, and what that gave back."
         elif "short" in lower:
             parts = text.split("\n\n")
             new, note = "\n\n".join(parts[:2] + parts[-2:]) if len(parts) > 4 else text[: max(200, len(text) // 2)], "Shorter"
+            reply = f"I cut it to the opening and the close: {len(new):,} characters now, from {len(text):,}."
         else:
             lines = text.split("\n")
             new, note = "\n".join(["14 March: the last night I opened my side project after 10 pm."] + lines[1:]), "New hook"
+            reply = "I rewrote the hook: it now opens on 14 March."
         say("Rewriting the post")
-        said = call_tool(req.mcp, "set_post_text", {"text": new, "note": note})
-        reply = f"{note}: done. {said}"
+        if call_tool(req.mcp, "set_post_text", {"text": new, "note": note}):
+            reply += blanks_left(new)
+        else:
+            reply = "The post could not take that change just now, so it stays as it was."
         if not self._steps(say, cancel, ["Rewrote the post, now writing"]):
             return RunResult(outcome="cancelled", error="Stopped.")
         return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=5, usage=usage, skill_invoked=True)
 
 
 class ScriptedPublora:
-    """Publora as the studio's client sees it, kept in memory: a post, and a picture going up with it."""
+    """Publora as the studio's client sees it, kept in memory: a post, and a picture going up with it. A post it was
+    given goes out at its time: asked after that, it answers published, with a made-up LinkedIn address."""
 
     def __init__(self):
         self.media = {}
+        self.times = {}       # post group -> its scheduledTime
 
     def resolve_linkedin_platform_id(self):
         return "linkedin-demo"
 
     def create_post_once(self, payload, key):
         time.sleep(0.4)
-        return {"success": True, "postGroupId": "demo" + key[-6:], "scheduledTime": payload.get("scheduledTime"), "warnings": []}
+        group = "demo" + key[-6:]
+        if payload.get("scheduledTime"):
+            self.times[group] = payload["scheduledTime"]
+        return {"success": True, "postGroupId": group, "scheduledTime": payload.get("scheduledTime"), "warnings": []}
 
     def get_upload_url_once(self, post_group_id, file_name, content_type):
         media_id = f"m{len(self.media) + 1}"
@@ -224,6 +249,8 @@ class ScriptedPublora:
         time.sleep(0.3)
 
     def update_post_once(self, post_group_id, body):
+        if body.get("scheduledTime"):
+            self.times[post_group_id] = body["scheduledTime"]
         return {"success": True, "scheduledTime": body.get("scheduledTime"), "postGroup": {"_id": post_group_id, "status": body.get("status")}}
 
     def delete_media(self, media_id):
@@ -234,7 +261,13 @@ class ScriptedPublora:
         return {"success": True}
 
     def get_post(self, post_group_id):
-        return {"status": "scheduled", "posts": [], "media": [{"mediaId": m, "status": "ready"} for m, g in self.media.items() if g == post_group_id]}
+        media = [{"mediaId": m, "status": "ready"} for m, g in self.media.items() if g == post_group_id]
+        at = self.times.get(post_group_id)
+        if at and parse_utc(at) <= datetime.now(timezone.utc):
+            urn = f"urn:li:share:{post_group_id}"     # made up, as everything here is
+            return {"postGroupId": post_group_id, "status": "published", "media": media,
+                    "posts": [{"status": "published", "postedId": urn, "permalink": f"https://www.linkedin.com/feed/update/{urn}"}]}
+        return {"postGroupId": post_group_id, "status": "scheduled", "posts": [], "media": media}
 
 
 def seed(db: DB) -> None:
@@ -255,7 +288,8 @@ def seed(db: DB) -> None:
              for i, item in enumerate(CANNED["plan"]["items"])]
     when = (now + timedelta(days=3)).replace(hour=2, minute=30, second=0, microsecond=0)
     add("published", "Three years ago I wrote my first line of Rust.\n\nToday it runs the billing for 40,000 people.", "Three years of Rust",
-        scheduled_at=(now - timedelta(days=4)).isoformat(timespec="seconds"), publora_post_id="demo-published")
+        scheduled_at=(now - timedelta(days=4)).isoformat(timespec="seconds"), publora_post_id="demo-published",
+        published_url="https://www.linkedin.com/feed/update/urn:li:share:demo-published")      # made up: Open on LinkedIn
     add("scheduled", "Our deploys used to take 22 minutes. Now they take 9.\n\nHere is what we cut, in order.", "Deploy time",
         scheduled_at=when.isoformat(timespec="seconds"), publora_post_id="demo-scheduled")
     add("approved", "The best code review I ever got was one sentence long.\n\n\"Delete this file.\"", "One-sentence review")
@@ -293,7 +327,8 @@ def main() -> None:
     if fresh and "--empty" not in args and "--db" not in args:
         seed(db)
     publisher = Publisher(db, cfg, client_factory=lambda publora=ScriptedPublora(): publora)
-    app = create_app(cfg, "demo", db_path=db_path, runner=ScriptedRunner(cfg.story_bank), publisher=publisher)
+    app = create_app(cfg, "demo", db_path=db_path, runner=ScriptedRunner(cfg.story_bank), publisher=publisher,
+                     check_publora=True)   # the light check, on the stand-in: a post given a time goes out at it
     publisher.db = app.state.db   # the app's own, as in the real app: Approve, Schedule… and the rest move the page's poll
     print(json.dumps({"url": f"http://127.0.0.1:{port}/auth?token=demo", "folder": str(folder), "started": db.started}), flush=True)
     uvicorn.run(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
