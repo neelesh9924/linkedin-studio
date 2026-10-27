@@ -6,8 +6,12 @@
 //   a numbered line for each step. A screen reader hears the newest step at most every ten seconds.
 // - The box is never disabled: the next message can be written while Claude works, and the focus stays in it through
 //   Enter, Send and Stop. A refusal is said at once. Each conversation keeps its own unsent words.
-// - After a run that did not finish, Try again (the same message) or Carry on (from where it stopped).
-import { $, state, h, icon, api, post, put, plural, clockOf, announce, whileBusy, suggestion, drawIfChanged, onPoll, focusFirst } from "./core.js";
+// - After a run that did not finish, Try again (the same message) or Carry on (from where it stopped); Try again too
+//   for a request no answer ever came to.
+// - A post that is not a draft is locked: the panel says so and what unlocks it, and its ideas work on a locked post.
+// - Copy on each of Claude's replies; ↑ in an empty box brings back the last message sent in this conversation.
+import { $, state, h, icon, api, post, put, plural, clockOf, announce, whileBusy, suggestion, drawIfChanged, onPoll, focusFirst,
+  copyButton } from "./core.js";
 import { markdown } from "./md.js";
 import { choosePicture } from "./editor.js";
 import { attacher, chip } from "../attach.js";
@@ -16,10 +20,20 @@ const SPEAK_EVERY = 10000;   // ms between steps said aloud
 const QUIET = 20;            // s with nothing new: "Still on this step"
 const SHOWN = 12;            // steps shown at once
 const CARRY_ON = "Carry on from where you stopped, and finish the request.";
+const KEYS = "Enter sends · Shift+Enter new line · ↑ brings back your last message";
+// Where a post that is not a draft stands, and what still changes it.
+const LOCKED = {
+  approved: "The text is locked. Back to draft, in the top bar, unlocks it.",
+  scheduling: "It is on its way to Publora, so the text is locked.",
+  scheduled: "The text is locked while it waits at Publora. To change it, cancel it on Publora first (the gear).",
+  published: "It is on LinkedIn, so the text is locked. New draft from this makes an editable copy.",
+  failed: "The text is locked. New draft from this makes an editable copy.",
+  cancelled: "The text is locked. New draft from this makes an editable copy.",
+};
 
 // What the panel is about now: { kind: "post" | "bank" | "voice", id, conversation }, or null (panel hidden).
 let ctx = null;
-let thread = { key: "", messages: [], earlier: [], history: [], started: false };
+let thread = { key: "", messages: [], earlier: [], history: [], started: false, busy: false };
 const drafts = new Map();     // a conversation's key -> what was being written for it: { text, files }
 let draftFor = null;
 let sending = false;
@@ -51,7 +65,7 @@ export function showFor(next) {
   if (!next) return;
   $("assistTitle").textContent = next.kind === "post" ? "Ask Claude" : next.kind === "bank" ? "Interviewer" : "Voice profile";
   if (keyOf(next) !== was) {
-    thread = { key: "", messages: [], earlier: [], history: [], started: false };
+    thread = { key: "", messages: [], earlier: [], history: [], started: false, busy: false };
     forgetLog();
     refresh();
   }
@@ -85,7 +99,7 @@ export async function refresh() {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const changed = JSON.stringify(data.messages) !== JSON.stringify(thread.messages) || thread.key !== keyOf(ctx);
   thread = { key: keyOf(ctx), conversation: data.conversation, messages: data.messages || [], earlier: data.earlier || [],
-    history: data.history || [], started: !!data.started, doc: data.doc };
+    history: data.history || [], started: !!data.started, doc: data.doc, busy: !!data.busy };
   if (ctx.kind !== "post" && data.conversation) ctx.conversation = data.conversation;
   renderMessages();
   renderTools();
@@ -105,8 +119,13 @@ function messageEl(m) {
   if (m.role === "info") return h("div", { class: "msg info", "data-id": m.id }, m.text);
   if (m.role === "error") return h("div", { class: "msg error", "data-id": m.id }, icon("alert", 16), h("div", null, m.text));
   const who = ctx && ctx.kind === "bank" ? "Interviewer" : "Claude";
+  const copy = m.text ? copyButton(m.text) : null;
+  if (copy) {
+    copy.classList.add("ghost");
+    copy.setAttribute("aria-label", `Copy this reply from ${who === "Claude" ? "Claude" : "the interviewer"}`);
+  }
   return h("div", { class: "msg claude", "data-id": m.id },
-    h("div", { class: "msg-who" }, icon("sparkle", 14), who, h("time", null, m.at)),
+    h("div", { class: "msg-who" }, icon("sparkle", 14), who, h("time", null, m.at), copy),
     m.text ? h("div", { class: "prose" }, markdown(m.text, { breaks: true })) : null,
     m.versions ? h("div", { class: "msg-note" }, icon("check", 13), "Rewrote the post · the gear’s Versions can go back") : null,
     m.diff ? h("details", { class: "file-change" },
@@ -158,26 +177,37 @@ function renderMessages() {
   Object.assign(drawn, { key: thread.key, ids, keys });
 }
 
-// What an empty conversation offers: for a post with no text yet, what to write it about; for a post, ideas; for the
-// interviews, how they work and Start.
+// What an empty conversation offers: for a post with no text yet, what to write it about; for a draft, ideas that are not
+// the Audit and Revise buttons' jobs; for a locked post, where it stands and what still works; for the interviews, how
+// they work and Start.
+const postHere = () => (ctx && ctx.kind === "post" ? state.posts.find((p) => p.id === ctx.id) || null : null);
+const lockedWords = () => {
+  const p = postHere();
+  return p && p.status !== "draft" ? LOCKED[p.status] || "The text is locked." : "";
+};
+
 function renderEmpty() {
   const box = $("assistEmpty");
-  const post_ = ctx.kind === "post" ? state.posts.find((p) => p.id === ctx.id) : null;
+  const post_ = postHere();
   const empty = post_ && post_.first === "Nothing written yet";
-  drawIfChanged(box, `${keyOf(ctx)} ${empty}`, () => {
+  const locked = lockedWords();
+  drawIfChanged(box, `${keyOf(ctx)} ${empty} ${locked}`, () => {
     if (ctx.kind === "post") {
       const fill = (text) => () => {
         $("askText").value = text;
         $("askText").focus();
       };
-      const ideas = empty
-        ? ["Write a post about what we learned cutting our deploy time, for engineering managers. Goal: comments.",
-          "Draft a receipt post from my Story Bank: one real number, what it measures, and what it changed."]
-        : ["Write a sharper hook", "Make it shorter, about 1,000 characters", "Audit it before I approve", "Make an illustration for this post"];
+      const ideas = locked ? ["Audit this post", "What would make the next one stronger?"]
+        : empty
+          ? ["Write a post about what we learned cutting our deploy time, for engineering managers. Goal: comments.",
+            "Draft a receipt post from my Story Bank: one real number, what it measures, and what it changed."]
+          : ["Use a real number from my Story Bank", "Add a first comment with the link", "Make an illustration for this post", "End on a question"];
+      const head = locked ? `This post is ${post_.label.toLowerCase()}` : empty ? "What should this post say?" : "Ask for a change";
+      const words = locked ? `${locked} Claude can still audit it, or talk through what would make the next one stronger.`
+        : empty ? "Tell Claude the topic, the angle or a rough idea, and what the post should earn (comments, reposts, likes, saves). It drafts it with the post writer, in your voice, and leaves a [blank] wherever a real fact is missing."
+          : "Say what should be different. Claude rewrites the post in place (each change is a version you can go back to), or asks ChatGPT for an illustration. For a check or a quick rewrite, Audit and Revise sit beside the post.";
       put(box, h("div", { class: "assist-empty" },
-        h("b", null, empty ? "What should this post say?" : "Ask for a change"),
-        empty ? "Tell Claude the topic, the angle or a rough idea, and what the post should earn (comments, reposts, likes, saves). It drafts it with the post writer, in your voice, and leaves a [blank] wherever a real fact is missing."
-          : "Say what should be different. Claude rewrites the post in place (each change is a version you can go back to), runs your audit, finds a hook, or asks ChatGPT for an illustration.",
+        h("b", null, head), words,
         h("div", { class: "suggests" }, h("div", { class: "suggest-label" }, "Try"), ideas.map((t) => suggestion(t, fill(t))))));
     } else {
       const bank = ctx.kind === "bank";
@@ -200,7 +230,7 @@ function renderTools() {
     if (ctx.kind === "post") {
       const fresh = thread.messages.length && !jobHere()
         ? h("button", { class: "btn ghost small square", type: "button", "aria-label": "Start this chat afresh",
-          title: "Start this chat afresh. The post is not changed; the gear can bring this chat back." }, icon("trash", 15)) : null;
+          title: "Start this chat afresh. The post is not changed; the gear can bring this chat back." }, icon("plus", 15)) : null;
       if (fresh) fresh.addEventListener("click", () => whileBusy(fresh, async () => {
         const reply = await post(`/api/post/${ctx.id}/chat/clear`, {});
         if (reply.error) return refuse(reply.error);
@@ -233,12 +263,26 @@ function renderTools() {
 // ---------- after a run that did not finish ----------
 
 function offerOf() {
-  if (!ctx || jobHere()) return null;
+  if (!ctx || jobHere() || sending) return null;
   const last = thread.messages[thread.messages.length - 1];
+  if (last && last.role === "user") return unanswered(last);
   if (!last || !last.offer) return null;
   const asked = thread.messages.find((m) => m.id === last.request);
   const text = last.offer === "carry" ? CARRY_ON : asked ? asked.text : "";
-  return text ? { kind: last.offer, text } : null;
+  if (!text) return null;
+  return { kind: last.offer, text,
+    words: last.offer === "carry" ? "It stopped part-way. What it changed so far stays; Versions can undo it." : "Send the same message again." };
+}
+
+// The conversation ends with the owner's message and nothing for it runs or waits: no answer came (the app was closed
+// while Claude worked, or the job ended without one). A job newer than any the last poll knew has simply not been seen yet.
+function unanswered(last) {
+  if (thread.busy) return null;
+  const ended = last.job ? state.ended.find((j) => j.id === last.job) : null;
+  const known = Math.max(0, ...state.jobs.map((j) => j.id), ...state.ended.map((j) => j.id));
+  if (last.job && !ended && last.job > known) return null;
+  const why = ended && ended.error ? ` ${ended.error}` : "";
+  return { kind: "again", text: last.text, words: `No answer came to this request.${why}` };
 }
 
 function renderOffer() {
@@ -250,9 +294,7 @@ function renderOffer() {
     const carry = offer.kind === "carry";
     const button = h("button", { class: "btn small", type: "button" }, icon(carry ? "send" : "refresh", 14), h("span", null, carry ? "Carry on" : "Try again"));
     button.addEventListener("click", () => whileBusy(button, () => send(null, offer.text)));
-    put(box, h("div", { class: "offer-row" },
-      h("span", { class: "offer-words" }, carry ? "It stopped part-way. What it changed so far stays; Versions can undo it." : "Send the same message again."),
-      button));
+    put(box, h("div", { class: "offer-row" }, h("span", { class: "offer-words" }, offer.words), button));
   });
 }
 
@@ -314,11 +356,14 @@ function renderComposer() {
   box.readOnly = state.offline || sending;
   $("sendBtn").setAttribute("aria-disabled", String(!!job || state.offline || sending));
   $("stopBtn").hidden = !job;
+  const locked = lockedWords();
   box.placeholder = job ? "Write your next message: it can be sent once Claude is done…"
-    : ctx && ctx.kind === "post" ? "Ask for a change to this post…" : "Your answer. Enter sends, Shift+Enter adds a line.";
+    : locked ? "Ask about this post…" : ctx && ctx.kind === "post" ? "Ask for a change to this post…" : "Your answer. Enter sends, Shift+Enter adds a line.";
   let hint = "";
-  if (job) hint = job.status === "queued" ? "Waiting for the job under way." : `${job.doing}.`;
+  if (state.offline) hint = "LinkedIn Studio is not running, so nothing can be sent.";
+  else if (job) hint = job.status === "queued" ? "Waiting for the job under way." : `${job.doing}.`;
   else if (any) hint = `Claude is busy with ${any.title.toLowerCase()}; this waits its turn.`;
+  else if (locked) hint = "The text is locked: Claude can audit it or advise, not rewrite it.";
   else if (ctx && ctx.kind === "post") hint = "Claude rewrites the post in place.";
   if ($("askHint").textContent !== hint) $("askHint").textContent = hint;
   const p = ctx && ctx.kind === "post" ? state.posts.find((x) => x.id === ctx.id) : null;
@@ -415,7 +460,23 @@ export function init() {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       $("askForm").requestSubmit();
+    } else if (event.key === "ArrowUp" && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.isComposing
+      && !$("askText").value && !$("askText").readOnly) {
+      // ↑ in an empty box: the last message sent in this conversation, to send again or change.
+      const mine = thread.messages.filter((m) => m.role === "user" && m.text).pop();
+      if (!mine) return;
+      event.preventDefault();
+      $("askText").value = mine.text;
+      $("askText").setSelectionRange(mine.text.length, mine.text.length);
+      unrefuse();
     }
+  });
+  const keys = h("div", { class: "field-hint", id: "askKeys", style: "margin-top:6px" }, KEYS);
+  $("askForm").append(keys);
+  $("askText").setAttribute("aria-describedby", "askHint askRefused askKeys");
+  window.addEventListener("studio:offline", () => {      // the poll failed: the box says so at once, not on the next draw
+    state.offline = true;
+    if (ctx) renderComposer();
   });
   $("askText").addEventListener("input", unrefuse);
   $("stopBtn").addEventListener("click", async () => {

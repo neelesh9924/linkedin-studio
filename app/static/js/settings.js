@@ -1,27 +1,47 @@
-// Settings (Claude, publishing, ChatGPT, appearance, the health checks, recent runs, quitting) and the setup screen
-// (the three folders: found on this PC, Browse…, or pasted; Save checks them, writes config.local.toml and restarts).
+// Settings (Claude and who it is signed in as, publishing, ChatGPT, appearance, the health checks, recent runs,
+// quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder with the
+// account it is signed in to; Save checks them, writes config.local.toml and restarts).
+// Each panel has an address, #~settings-<id>: the jump links at the top use it, and it opens with that panel's heading
+// focused. The focus stays where it was through every redraw (data-keep), and a health check says how it ended.
 import { state, h, icon, api, post, put, number, announce, whileBusy, focusFirst, go } from "./core.js";
 import { setTheme } from "./sidebar.js";
 
 let box = null;
 let polling = 0;
+const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["appearance", "Appearance"],
+  ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
+const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
+const running = {};       // check -> running at the last draw, so its end is said once
 
-export async function render(container, { page } = {}) {
+export async function render(container, { page, sub } = {}) {
   box = container;
   clearTimeout(polling);
   put(box, h("p", { class: "lede" }, "Loading…"));
   if (page === "setup") return setup();
   await settings();
+  if (sub) jumpTo(sub);
 }
+
+// A panel by its id: scrolled to, its heading focused (a screen reader then reads where it landed).
+function jumpTo(id) {
+  const panel = box && PANELS.some(([key]) => key === id) ? box.querySelector(`#settings-${id}`) : null;
+  if (!panel) return;
+  panel.scrollIntoView({ block: "start" });
+  focusFirst(panel.querySelector("h2"));
+}
+
+const planOf = (s) => (s && s.plan ? ` (${s.plan[0].toUpperCase()}${s.plan.slice(1)})` : "");
+const accountWords = (s) => (!s ? "" : s.ok ? `signed in as ${s.account || "an account with no email"}${planOf(s)}`
+  : s.signed_in === false ? "not signed in" : "who is signed in could not be read");
 
 export async function refresh() {
   if (state.page === "settings" && box) await settings(true);
 }
 
-function section(glyph, title, lede, ...body) {
-  return h("section", { class: "panel" },
+function section(id, glyph, title, lede, ...body) {
+  return h("section", { class: "panel", id: `settings-${id}`, "aria-labelledby": `settings-${id}-title` },
     h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon(glyph, 17)),
-      h("div", null, h("h2", null, title), lede ? h("p", null, lede) : null)),
+      h("div", null, h("h2", { id: `settings-${id}-title` }, title), lede ? h("p", null, lede) : null)),
     h("div", { class: "panel-body" }, ...body));
 }
 
@@ -35,6 +55,13 @@ let last = "";
 async function settings(quiet = false) {
   const [data, codex] = await Promise.all([api("/api/settings"), api("/api/codex")]);
   if (data.error || state.page !== "settings") return;
+  for (const [name, title] of Object.entries(CHECKS)) {        // a check that was running has ended: say how
+    const check = data.checks[name];
+    if (running[name] && !check.running && check.row) {
+      announce(check.row.ok ? `${title}: all good` : `${title} found a problem: see What it reported`, { urgent: !check.row.ok });
+    }
+    running[name] = check.running;
+  }
   const key = JSON.stringify([data, codex]);
   if (quiet && key === last) return;
   last = key;
@@ -54,27 +81,48 @@ async function settings(quiet = false) {
     put(document.body, h("main", { class: "stopped" }, h("div", { class: "panel stopped-card" }, h("h1", null, "LinkedIn Studio has stopped"),
       h("p", null, "Your posts are saved. This window closes by itself in a moment; if it stays, close it."))));
   }));
+  const sign = c.sign_in || {};
+  const version = (c.version.match(/\d+(?:\.\d+)+/) || [""])[0];
+  const signedNote = !c.ready ? note("bad", `Not found: ${c.version}`)
+    : sign.ok ? note("ok", `Claude Code ${version}, ${accountWords(sign)}`)
+      : note(sign.signed_in === false ? "bad" : "warn", sign.error || "Who is signed in could not be read.", `Claude Code ${version}`);
+  const check = h("button", { class: "btn small", type: "button", "data-keep": "sign-in",
+    title: "Asks Claude Code who this login folder is signed in to. It sends Claude no request." }, icon("refresh", 14), h("span", null, "Check the sign-in"));
+  check.addEventListener("click", () => whileBusy(check, async () => {
+    const reply = await post("/api/settings/claude/check", {});
+    if (reply.error) return announce(reply.error, { urgent: true });
+    const s = reply.sign_in;
+    announce(s.ok ? `Claude Code is ${accountWords(s)}.` : s.error, { urgent: !s.ok });
+    await settings(true);
+  }));
+  const jump = h("nav", { class: "jump", "aria-label": "On this page" }, PANELS.map(([id, label]) => h("a", { href: `#~settings-${id}`,
+    onclick: (event) => {
+      event.preventDefault();
+      history.replaceState(null, "", `#~settings-${id}`);
+      jumpTo(id);
+    } }, label)));
   put(box, h("div", { class: "settings" },
+    jump,
     data.problems.map((p) => h("div", { class: "notice bad" }, icon("alert", 16), h("div", null, p))),
-    section("sparkle", "Claude", "Every run uses the login in the folder below, whatever started the app.",
-      note(c.ready ? "ok" : "bad", c.ready ? c.version : `Not found: ${c.version}`),
+    section("claude", "sparkle", "Claude", "Every run uses the login in the folder below, whatever started the app.",
+      signedNote,
       facts(["Login folder", h("code", null, c.login)], ["Model", c.model], ["Per run", `up to ${c.turns} turns and ${c.seconds} seconds`],
         ["Ask Claude", `up to ${c.chat_turns} turns and ${c.chat_seconds} seconds a request`], ["Program", h("code", null, c.program)],
         ["Skills", h("code", null, c.skills)]),
-      h("div", { class: "form-foot" }, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
+      h("div", { class: "form-foot" }, check, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
         icon("folder", 14), h("span", null, "Change folders")))),
-    section("plane", "Publishing", "Keys live in linkedin-skills\\.env. The app reads them and never shows them.",
+    section("publishing", "plane", "Publishing", "Keys live in linkedin-skills\\.env. The app reads them and never shows them.",
       facts(["Publora key", data.publora.key ? "Set" : "Missing"],
         ["LinkedIn channel", data.publora.platform_id ? "Set" : "Worked out from the key when you schedule"],
         ["Apify token", data.publora.apify ? "Set: post links can be fetched" : "Not set: paste post text instead of links"],
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
         ["Monthly limit", `${data.limit} posts`], ["Times shown in", `${data.timezone} (${data.tz})`])),
     chatgpt(codex),
-    section("moon", "Appearance", "Match Windows follows its light or dark setting.", theme),
-    section("activity", "Health checks", "The skills repo’s own scripts, run with this app’s Python.",
+    section("appearance", "moon", "Appearance", "Match Windows follows its light or dark setting.", theme),
+    section("health", "activity", "Health checks", "The skills repo’s own scripts, run with this app’s Python.",
       health("check_config", "Connections", "Checks the Publora, Apify and Pixfaro keys against free endpoints. Shows key prefixes, never keys.", data.checks.check_config),
       health("selftest", "Full self-test", "Install, tests and coverage, offline. Takes a few minutes, and regenerates linkedin-skills\\.codex-marketplace (normally to identical files).", data.checks.selftest)),
-    section("list", "Recent runs", `Every Claude run and how long it took. Stored in ${data.data_dir}.`,
+    section("runs", "list", "Recent runs", `Every Claude run and how long it took. Stored in ${data.data_dir}.`,
       data.runs.length ? h("div", { class: "table-scroll" }, h("table", { class: "table" },
         h("thead", null, h("tr", null, ["When", "What", "Result", "Took", "Turns", "Tokens in / out"].map((t) => h("th", null, t)))),
         h("tbody", null, data.runs.map((r) => {
@@ -84,7 +132,7 @@ async function settings(quiet = false) {
               r.denials ? h("small", null, `${r.denials} blocked tool call${r.denials === 1 ? "" : "s"}`) : null),
             h("td", null, `${r.seconds} s`), h("td", null, String(r.turns)), h("td", null, `${number(r.tokens_in)} / ${number(r.tokens_out)}`));
         })))) : h("p", { class: "soft" }, "No runs yet. Every Claude call the app makes is listed here.")),
-    section("power", "The app", "Closing the window stops LinkedIn Studio too. A job under way is stopped.", h("div", { class: "form-foot" }, quit))));
+    section("app", "power", "The app", "Closing the window stops LinkedIn Studio too. A job under way is stopped.", h("div", { class: "form-foot" }, quit))));
   if (on) focusFirst(box.querySelector(`[data-keep="${on}"]`));
   for (const name of ["check_config", "selftest"]) if (data.checks[name].running) watchHealth();
 }
@@ -121,7 +169,7 @@ function chatgpt(c) {
     : c.ok ? note("ok", `Signed in to ChatGPT as ${c.account}${c.plan ? ` (${c.plan[0].toUpperCase()}${c.plan.slice(1)})` : ""}.`)
       : note("warn", c.error || "Not set up.", c.login && c.login.state === "failed" ? c.login.error : null);
   if (waiting) watchHealth();   // the card follows the sign-in as it happens
-  return section("image", "ChatGPT", "Claude asks ChatGPT for an illustration when you ask for one, through OpenAI’s Codex CLI signed in as your ChatGPT account. Each picture spends your ChatGPT allowance.",
+  return section("chatgpt", "image", "ChatGPT", "Claude asks ChatGPT for an illustration when you ask for one, through OpenAI’s Codex CLI signed in as your ChatGPT account. Each picture spends your ChatGPT allowance.",
     status,
     facts(c.found ? ["Codex CLI", c.path || "Found"] : null, ["Codex home", c.home || "Not set: pictures are off"],
       ["Pictures today", `${c.today || 0} made, at most ${c.per_request || 0} in one request`]),
@@ -140,7 +188,8 @@ function health(name, title, blurb, check) {
   }));
   return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h3", null, title), h("code", null, `${name}.py`)),
     h("div", { class: "card-body" }, h("p", { class: "soft" }, blurb),
-      h("div", { class: "form-foot" }, check.running ? [h("i", { class: "pulse" }), h("span", { class: "soft" }, "Running…")] : run,
+      // "Running…" takes the Run button's place and its data-keep, so the focus stays on it and lands on Run again.
+      h("div", { class: "form-foot" }, check.running ? [h("i", { class: "pulse" }), h("span", { class: "soft", "data-keep": `health-${name}` }, "Running…")] : run,
         check.row && !check.running ? [h("span", { class: `chip ${check.row.ok ? "ok" : "bad"}` }, check.row.ok ? "All good" : "Found a problem"),
           h("span", { class: "soft" }, check.row.when)] : null),
       check.row && !check.running ? h("details", { class: "fold", open: !check.row.ok }, h("summary", null, "What it reported"),
@@ -172,19 +221,36 @@ function drawSetup(data) {
       if (reply.error) return announce(reply.error, { urgent: true });
       if (reply.path) input.value = reply.path;
     }));
+    // A login folder: who it is signed in to, beside each one found and under the box for the one chosen.
+    const accounts = f.key === "claude_config_dir" ? data.accounts || {} : null;
+    const who = accounts ? h("div", { class: "field-hint", "aria-live": "polite" }) : null;
+    const showWho = (place) => {
+      if (!who) return;
+      const s = accounts[place];
+      who.className = s && s.signed_in === false ? "field-error" : "field-hint";
+      who.textContent = !s ? (place ? "Save checks who this folder is signed in to." : "")
+        : s.ok ? `Claude Code is ${accountWords(s)} in this folder.`
+          : s.signed_in === false ? "Not signed in: run claude once in a terminal and sign in, or choose the folder you signed in with."
+            : `Who is signed in here could not be read (${s.error}). Save still works.`;
+    };
+    if (who) input.addEventListener("input", () => showWho(input.value.trim()));
     const found = (data.found[f.key] || []).length && !data.saved ? h("div", { class: "picks" }, h("span", { class: "field-hint" }, "Found on this PC:"),
       data.found[f.key].map((place) => {
-        const pick = h("button", { class: "pick path", type: "button", "aria-pressed": String(place === input.value) }, place);
+        const pick = h("button", { class: "pick path", type: "button", "aria-pressed": String(place === input.value) }, place,
+          accounts && accounts[place] ? h("span", { class: "field-hint" }, ` · ${accountWords(accounts[place])}`) : null);
         pick.addEventListener("click", () => {
           input.value = place;
           pick.parentElement.querySelectorAll(".pick").forEach((p) => p.setAttribute("aria-pressed", String(p === pick)));
+          showWho(place);
         });
         return pick;
       })) : null;
+    showWho(input.value);
     return h("div", { class: "field" }, h("label", { class: "field-label", for: `path-${f.key}` }, f.label),
       h("div", { class: "path-row" }, input, browse),
       data.errors[f.key] ? h("div", { class: "field-error" }, data.errors[f.key])
         : data.values[f.key] ? h("div", { class: "field-hint good" }, icon("check", 13), data.saved ? "Saved" : "Found") : null,
+      data.errors[f.key] ? null : who,
       found, h("div", { class: "field-hint" }, `${f.what} For example `, h("code", null, data.examples[f.key])));
   }), data.errors[""] ? h("div", { class: "field-error" }, data.errors[""]) : null);
   const save = h("button", { class: "btn primary", type: "submit" }, icon("check", 15),

@@ -1,11 +1,29 @@
 // The Guide: the routine as steps to click through, what happens while Claude works, a post's four states, an editor
-// to practise in, each screen in words, and the keys and limits. Its words come from app/guide.py, with the figures the
-// code enforces.
-import { state, h, icon, api, put, go, focusFirst } from "./core.js";
+// to practise in, each screen with its picture, and the keys and limits. Its words come from app/guide.py, with the
+// figures the code enforces; its pictures (static/guide/, taken on the demo by dev/guide_shots.py) follow the theme,
+// and a click shows one large.
+import { $, state, h, icon, api, put, go, focusFirst, showDialog, closeButton } from "./core.js";
 import { foldOf, withBlanks, meter, autosize } from "./editor.js";
 
 let box = null;
 let data = null;
+let fitPractice = () => {};    // the practice editor measures its text once it is in the page
+
+// A screen's picture, in the current theme (both are in the page; the theme shows one), as a button that enlarges it.
+function picture(shot) {
+  const frame = h("button", { class: "shot-frame", type: "button", "aria-label": `${shot.alt}. Show it larger` },
+    h("img", { class: "when-light", src: shot.light, alt: "", loading: "lazy", width: 1200, height: 750 }),
+    h("img", { class: "when-dark", src: shot.dark, alt: "", loading: "lazy", width: 1200, height: 750 }));
+  frame.addEventListener("click", () => {
+    showDialog(h("h2", null, shot.alt),
+      h("div", { class: "shot-frame", style: "cursor:auto" },
+        h("img", { class: "when-light", src: shot.light, alt: shot.alt }), h("img", { class: "when-dark", src: shot.dark, alt: shot.alt })),
+      h("div", { class: "dialog-foot" }, closeButton()));
+    $("dialog").classList.add("wide");
+  });
+  return frame;
+}
+const shotOf = (name) => (name && data.shots && data.shots[name]) || null;
 
 export async function render(container) {
   box = container;
@@ -42,8 +60,8 @@ function draw() {
         h("div", null, h("div", { class: "field-label" }, "What you get"), h("p", null, s.gives)),
         h("div", { class: "form-foot" }, h("button", { class: "btn primary", type: "button", onclick: () => go(s.href) }, icon(s.icon, 15),
           h("span", null, `Open ${s.where.split(",")[0]}`)), s.where.includes(",") ? h("span", { class: "soft" }, s.where) : null)),
-      h("div", { class: "step-demo", "aria-hidden": "true" }, h("span", { class: "demo-tag" }, "Where it happens"), h("b", null, s.where),
-        h("p", { class: "soft" }, s.gives))),
+      h("div", { class: "step-demo" }, h("span", { class: "demo-tag" }, "Where it happens"), h("b", null, s.where),
+        shotOf(s.shot) ? picture(shotOf(s.shot)) : null)),
     h("div", { class: "seg-row", style: "margin-top:14px;justify-content:space-between" }, prev, next));
     if (focus) focusFirst(nodes[at]);
   };
@@ -80,6 +98,7 @@ function draw() {
     h("section", { class: "panel", id: "guide-screens" }, h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("eye", 17)),
       h("div", null, h("h2", null, "Screen by screen"))),
       h("div", { class: "panel-body grid cols-2" }, data.screens.map((s) => h("div", { class: "card" },
+        shotOf(s.shot) ? picture(shotOf(s.shot)) : null,
         h("div", { class: "card-head" }, h("h3", null, icon(s.icon, 15), s.title)),
         h("div", { class: "card-body" }, h("p", { class: "soft" }, s.purpose), h("ul", { class: "list" }, s.points.map((p) => h("li", null, p))),
           h("div", null, h("button", { class: "btn small", type: "button", onclick: () => go(s.href) }, `Open ${s.title}`))))))),
@@ -95,6 +114,7 @@ function draw() {
           h("dt", null, "Claude"), h("dd", null, `one job at a time, up to ${n.timeout} seconds each (a post’s chat gets longer)`),
           h("dt", null, "Your files"), h("dd", null, `stay on this computer${data.private ? "; the Story Bank and voice profile are kept out of git" : ""}`))))));
   showStep(0);
+  fitPractice();
 }
 
 function working() {
@@ -156,6 +176,7 @@ function sandbox() {
     blanks.textContent = count ? `${count} blank${count === 1 ? "" : "s"} to fill` : "No blanks left";
   };
   ta.addEventListener("input", draw);
+  fitPractice = () => autosize(ta);       // measured once it is in the page: detached, its text has no height
   const nextBlank = h("button", { class: "btn small", type: "button" }, "Next blank", icon("arrow-right", 14));
   nextBlank.addEventListener("click", () => {
     const re = new RegExp(state.slot, "g");
