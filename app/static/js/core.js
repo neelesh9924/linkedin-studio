@@ -1,7 +1,7 @@
 // The page's shared parts, one definition each for every area (as in the owner's other studios): its state (as the
 // studio last said it), making elements and icons, asking the studio, words and numbers, the dialog, and the helpers at
 // the end (speaking to a screen reader, a busy button, moving the focus, drawing only what changed, after each poll, the
-// window's title, a banner, a toast).
+// window's title, a banner, a toast, a remembered choice).
 
 export const $ = (id) => document.getElementById(id);
 
@@ -193,18 +193,18 @@ export function showDialog(...content) {
 }
 
 // A screen reader names the dialog by its first heading, and describes it by the paragraph right after that heading
-// when there is one. Done again whenever the dialog's content changes, however it changed.
+// when there is one, and by what is marked data-describe (with an id: Before you confirm's warnings). Done again
+// whenever the dialog's content changes, however it changed.
 function nameDialog() {
   const dialog = $("dialog");
   const title = dialog.querySelector("h2");
   const said = title && title.nextElementSibling && title.nextElementSibling.tagName === "P" ? title.nextElementSibling : null;
-  for (const [attribute, el, id] of [["aria-labelledby", title, "dialog-title"], ["aria-describedby", said, "dialog-said"]]) {
-    if (!el) {
-      dialog.removeAttribute(attribute);
-      continue;
-    }
-    if (!el.id) el.id = id;
-    dialog.setAttribute(attribute, el.id);
+  if (title && !title.id) title.id = "dialog-title";
+  if (said && !said.id) said.id = "dialog-said";
+  const described = [said, ...dialog.querySelectorAll("[data-describe][id]")].filter(Boolean).map((el) => el.id);
+  for (const [attribute, ids] of [["aria-labelledby", title ? [title.id] : []], ["aria-describedby", described]]) {
+    if (ids.length) dialog.setAttribute(attribute, ids.join(" "));
+    else dialog.removeAttribute(attribute);
   }
 }
 new MutationObserver(nameDialog).observe($("dialog"), { childList: true });
@@ -394,4 +394,22 @@ export function toast(text, href = "", label = "Open") {
   while (box.children.length > 3) box.firstElementChild.remove();
   run();
   announce(text);
+}
+
+// A choice this window keeps for next time (the panel shown, its width, the Earlier fold), and never relies on: storage
+// that is blocked or empty gives the fallback, and a write that fails is let go. null forgets it.
+export function recall(key, fallback = null) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
+
+export function keep(key, value) {
+  try {
+    if (value === null || value === undefined) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(value));
+  } catch {}
 }
