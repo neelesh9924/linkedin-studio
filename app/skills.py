@@ -182,7 +182,20 @@ def _attached(p: dict) -> str:
     return ("\n\nThe owner attached these files with this message (read the ones that help):\n" + "\n".join(lines)) if lines else ""
 
 
+def _about_entry(focus: dict) -> str:
+    """Ask me about this: the first run of a short interview about one Story Bank entry (app/ask_about.py checked it)."""
+    return ("Run the linkedin-interviewer skill in --mode bank. Read references/story-bank.md first. This is a short "
+            "interview about one entry of the Story Bank that the owner picked, and nothing else:\n"
+            f"Entry: \"{focus['entry']}\"\nSection: {focus['section']}\n"
+            "Ask about that entry only, one question at a time: what it still lacks (the number and what it measures, "
+            "when, who was involved, what it changed). Save what the owner tells you into that section, the way the "
+            "skill keeps the Story Bank. Do not move on to other entries or sections; when this one is as full as the "
+            "owner can make it, say so and stop. Start with one question about it.")
+
+
 def _interview(p: dict) -> str:
+    if p.get("first") and isinstance(p.get("focus"), dict):
+        return _about_entry(p["focus"]) + _attached(p)
     if p.get("first"):
         return ("Run the linkedin-interviewer skill in --mode bank. Read references/story-bank.md first and "
                 "interview only the thin sections. Start with one broad question.\n\n"

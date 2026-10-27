@@ -109,7 +109,7 @@ def doc_sections(text: str) -> list[dict]:
         line = raw.strip()
         m = re.match(r"^##\s+(\d+\.\s+.*)$", line)
         if m:
-            current = {"title": m.group(1).strip(), "anchor": f"doc-{slug(m.group(1))}", "filled": 0, "items": 0}
+            current = {"title": m.group(1).strip(), "anchor": f"doc-{slug(m.group(1))}", "filled": 0, "items": 0, "entries": []}
             sections.append(current)
             continue
         if line.startswith("## "):
@@ -123,4 +123,5 @@ def doc_sections(text: str) -> list[dict]:
             current["items"] += 1
             if body and not body.startswith("("):
                 current["filled"] += 1
+                current["entries"].append(item)   # the filled ones, as the file has them (Ask me about this)
     return sections

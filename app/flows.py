@@ -5,7 +5,7 @@ import difflib
 import re
 from pathlib import Path
 
-from . import attached, codex, versions
+from . import attached, codex, draft_all, versions
 from .claude_runner import RunResult
 from .config import Config
 from .db import DB, dumps, loads, utcnow
@@ -156,6 +156,7 @@ def register(jobs: JobManager, db: DB, cfg: Config) -> None:
         if params.get("plan_item_id"):
             db.run("UPDATE plan_items SET post_id=? WHERE id=?", (post_id, params["plan_item_id"]))
         db.run("UPDATE jobs SET params=? WHERE id=?", (dumps({**params, "post_id": post_id}), job_id))
+        draft_all.chain(jobs, db, job_id, params)   # a Draft all step: the next planned post, unless it was stopped
 
     jobs.finish["draft"] = draft_done
 

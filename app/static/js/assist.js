@@ -485,6 +485,25 @@ async function send(event, given) {
   if (kept) box.focus();
 }
 
+// Ask me about this (bank.js, on a Story Bank entry): a new interview about that entry, started at once, no dialog. The
+// studio writes its first message from the entry; the conversation before it stays under Earlier conversations. The
+// panel shows the new one (shown again if it was hidden), with the focus in the Ask box.
+export async function askAbout(focus) {
+  if (!ctx || ctx.kind !== "bank") return;
+  const target = ctx;
+  const reply = await post("/api/chat/bank/send", { focus });
+  if (target !== ctx) return;
+  if (reply.error) return refuse(reply.error);
+  unrefuse();
+  if ($("app").classList.contains("no-assist")) showPanel(true, false);
+  ctx.conversation = reply.conversation;
+  forgetLog();
+  window.dispatchEvent(new Event("studio:poll"));
+  await refresh();
+  focusFirst($("askText"));
+  announce("A new interview about this entry has started. Its first question comes in the chat.");
+}
+
 // ---------- what a run says of itself, aloud ----------
 
 const heard = { job: null, at: 0, step: 0 };
