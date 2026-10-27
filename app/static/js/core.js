@@ -80,6 +80,8 @@ export const ICONS = {
   "chevron-down": ["M6 9l6 6 6-6"],
   plane: ["M22 2L11 13", "M22 2l-7 20-4-9-9-4 20-7z"],
   like: ["M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3z", "M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"],
+  search: ["M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z", "M20 20l-4.2-4.2"],
+  keyboard: ["M3 6h18v12H3z", "M7 10h.01", "M11 10h.01", "M15 10h.01", "M7 14h10"],
 };
 
 export function icon(name, size = 16) {
@@ -183,7 +185,7 @@ export function closeDialog() {
 }
 
 export function showDialog(...content) {
-  $("dialog").classList.remove("wide");
+  $("dialog").classList.remove("wide", "palette");
   $("dialog").replaceChildren(...content.flat().filter(Boolean));
   if (!$("dialog").open) $("dialog").showModal();
   const first = $("dialog").querySelector("[autofocus], input:not([type=hidden]), textarea, select, button");
@@ -316,6 +318,7 @@ export function setTitle(base) {
 export const title = () => titleBase;
 
 // A notice across the top of the page, kept by its key in #banners: content puts it up or changes it; null takes it down.
+// Its words (not its buttons) are said once when it goes up and again only when they change: urgently for "bad".
 export function banner(key, content, kind = "") {
   const box = $("banners");
   let note = [...box.children].find((child) => child.dataset.banner === key) || null;
@@ -328,18 +331,67 @@ export function banner(key, content, kind = "") {
     put(note, content);
   }
   box.hidden = !box.children.length;
+  if (note) {
+    const words = wordsOf(note);
+    if (words && note.dataset.said !== words) {
+      note.dataset.said = words;
+      announce(words, { urgent: kind === "bad" });
+    }
+  }
   return note;
 }
 
-// A short note in the corner, with a link to where its news is: said aloud as well, politely.
+function wordsOf(el) {
+  return [...el.childNodes].map((node) => (node.nodeType === Node.TEXT_NODE ? node.nodeValue
+    : node instanceof HTMLElement && !node.matches("button, .btn") ? node.innerText : ""))
+    .join(" ").replace(/\s+/g, " ").trim();
+}
+
+// A short note at the foot of the main column, beside the sidebar and never over Ask Claude's box, with a link to where
+// its news is: said aloud as well, politely. Its time stops while the pointer or the focus is on it. When it goes with
+// the focus in it, the focus goes back to where it came from.
 export function toast(text, href = "", label = "Open") {
   const box = $("toasts");
   const close = h("button", { class: "btn small square", type: "button", "aria-label": "Dismiss" }, icon("x", 14));
   const el = h("div", { class: "toast" }, h("span", null, text),
-    href ? h("a", { href, onclick: () => el.remove() }, label) : null, close);
-  close.addEventListener("click", () => el.remove());
+    href ? h("a", { href, onclick: () => remove() }, label) : null, close);
+  let left = href ? 12000 : 6000;
+  let since = 0;
+  let timer = 0;
+  let hovered = false;
+  let focused = false;
+  let cameFrom = null;
+  const run = () => {
+    since = Date.now();
+    timer = setTimeout(remove, left);
+  };
+  const hold = () => {
+    if ((hovered || focused) && timer) {
+      clearTimeout(timer);
+      timer = 0;
+      left = Math.max(left - (Date.now() - since), 2500);
+    } else if (!hovered && !focused && !timer && el.isConnected) run();
+  };
+  function remove() {
+    clearTimeout(timer);
+    const had = el.contains(document.activeElement);
+    el.remove();
+    if (had) focusFirst(cameFrom, box.querySelector(".toast .btn"), $("title"));
+  }
+  el.addEventListener("pointerenter", () => { hovered = true; hold(); });
+  el.addEventListener("pointerleave", () => { hovered = false; hold(); });
+  el.addEventListener("focusin", (event) => {
+    if (!el.contains(event.relatedTarget)) cameFrom = event.relatedTarget;
+    focused = true;
+    hold();
+  });
+  el.addEventListener("focusout", (event) => {
+    focused = el.contains(event.relatedTarget);
+    hold();
+  });
+  close.addEventListener("click", remove);
   box.append(el);
   while (box.children.length > 3) box.firstElementChild.remove();
-  setTimeout(() => el.remove(), href ? 12000 : 6000);
+  run();
   announce(text);
 }

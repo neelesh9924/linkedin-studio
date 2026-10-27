@@ -155,8 +155,13 @@ def find_browser(override: str) -> str | None:
 
 
 def open_window(browser: str, url: str) -> subprocess.Popen:
-    return subprocess.Popen([browser, f"--app={url}", f"--user-data-dir={PROFILE}",
-                             "--no-first-run", "--no-default-browser-check"], cwd=str(ROOT))
+    """The studio's app window, opened maximized as the owner's other studios open theirs."""
+    return subprocess.Popen(window_command(browser, url), cwd=str(ROOT))
+
+
+def window_command(browser: str, url: str) -> list[str]:
+    return [browser, f"--app={url}", f"--user-data-dir={PROFILE}", "--start-maximized",
+            "--no-first-run", "--no-default-browser-check"]
 
 
 def kill_tree(pid: int) -> None:
