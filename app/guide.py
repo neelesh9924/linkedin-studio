@@ -112,7 +112,7 @@ SCREENS = [
                 "sweet spot.",
                 "The top bar says where it stands and holds the next step: Approve, then Schedule…",
                 "The gear holds the title, Versions to go back to (your own edits are kept too), New draft from "
-                "this and Move to Trash…. Scheduled and published posts cannot be moved to the Trash."]},
+                "this and Move to Trash…; scheduled and published posts stay out of the Trash."]},
     {"key": "chat", "title": "Ask Claude", "href": "#~posts", "icon": "sparkle", "shot": "chat",
      "purpose": "A conversation beside each post, kept with it.",
      "points": ["Ask for any change; Claude rewrites the post and keeps a version.",
