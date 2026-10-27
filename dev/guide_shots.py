@@ -25,8 +25,10 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from playwright.sync_api import Page, sync_playwright
+if TYPE_CHECKING:
+    from playwright.sync_api import Page
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "app" / "static" / "guide"
@@ -214,6 +216,8 @@ def main() -> None:
     try:
         info = json.loads(server.stdout.readline())
         OUT.mkdir(parents=True, exist_ok=True)
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415 - only for taking pictures
+
         with sync_playwright() as p:
             try:
                 browser = p.chromium.launch(channel="chrome", headless=True)

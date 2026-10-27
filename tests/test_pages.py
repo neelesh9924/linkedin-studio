@@ -2,6 +2,7 @@
 pictures, and Story Bank headings that can never take one of the page's own ids."""
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -102,3 +103,41 @@ def test_story_bank_anchors_never_take_a_page_id():
     assert not set(anchors) & page_ids and not any(i.startswith("doc-") for i in page_ids)
     md = (STATIC / "js" / "md.js").read_text(encoding="utf-8")
     assert "anchors ? { id: anchorOf(title) }" in md and "export const anchorOf = (text) => `doc-${slug(text)}`" in md
+
+
+# ---- dev/guide_shots.py never saves a picture that names this PC's user ------------------------
+class FakePage:
+    """What Camera.shoot asks of a page: where it is and its visible text."""
+
+    def __init__(self, text, where="#post-1", claude_card=False):
+        self.text, self.where, self.claude_card = text, where, claude_card
+        self.context = self
+
+    def new_cdp_session(self, _page):
+        return self
+
+    def send(self, _method, _params):
+        return {"data": "UklGRg=="}
+
+    def evaluate(self, script, *_args):
+        if script == "location.hash":
+            return self.where
+        return self.claude_card if "Login folder" in script else self.text
+
+
+def test_the_picture_taker_refuses_the_user_name_settings_and_the_claude_card(tmp_path, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dev"))
+    import guide_shots  # noqa: PLC0415
+
+    monkeypatch.setattr(guide_shots, "OUT", tmp_path)
+    monkeypatch.setattr(guide_shots, "private_words", lambda: ["someone", r"C:\Users\someone"])
+    for page in (FakePage(r"Story Bank at C:\USERS\SOMEONE\linkedin-skills"), FakePage("Hello Someone,"),
+                 FakePage("all made up", where="#~settings"), FakePage("all made up", where="#~setup"),
+                 FakePage("all made up", claude_card=True)):
+        with pytest.raises(SystemExit):
+            guide_shots.Camera(page).shoot("post", "light")
+    assert list(tmp_path.iterdir()) == []                                  # nothing was saved
+    assert guide_shots.shows_private("handsomeone and Someones", ["someone"]) == ""   # the name as a word only
+    guide_shots.Camera(FakePage("all made up")).shoot("post", "light")
+    assert [p.name for p in tmp_path.iterdir()] == ["post-light.webp"]
+    assert "Public" in str(guide_shots.neutral_folder())
