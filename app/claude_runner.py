@@ -3,12 +3,18 @@
 The command is always a list (no shell), the prompt never appears in argv, the tool
 set comes from a backend-chosen policy, and CLAUDE_CONFIG_DIR is asserted before
 every run. Timeouts and cancels kill the whole process tree.
+
+A post's chat also gets the studio's own tools (set_post_text, make_image, …) as an MCP
+server over HTTP: its address and a token good for that one run only, in a config file in
+a folder of its own, never among the skills' files.
 """
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -24,6 +30,7 @@ MARK_START = "<<<STUDIO_JSON"
 MARK_END = "STUDIO_JSON>>>"
 UNTRUSTED_START = "<<<UNTRUSTED"
 UNTRUSTED_END = "END UNTRUSTED"
+MCP_SERVER = "studio"
 
 # Never handed to Claude: secrets the backend uses itself, and variables that would
 # switch Claude off the subscription login or make it think it is nested in a session.
@@ -31,7 +38,11 @@ BLOCKED_ENV = {
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_SSE_PORT", "PUBLORA_API_KEY", "LINKEDIN_PLATFORM_ID", "APIFY_TOKEN",
     "PIXFARO_TOKEN", "PIXFARO_API_KEY", "LINKEDIN_SKILLS_CUSTOM_POSTER", "STUDIO_TOKEN",
+    "OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME",
 }
+# A studio tool may take minutes (ChatGPT makes a picture in about two): one call may run ten, and is never moved to
+# the background, where a headless run would not wait for it.
+MCP_ENV = {"MCP_TOOL_TIMEOUT": "600000", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS": "0"}
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -65,8 +76,12 @@ class RunRequest:
     system: str
     resume_session: str | None = None
     persist_session: bool = False
-    expect_json: bool = True     # chat turns (interviewer) are plain text
+    expect_json: bool = True     # chat turns (interviewer, a post's chat) are plain text
     kind: str = ""               # the app action (humanize, plan, ...), for logs and test doubles
+    mcp: dict | None = None      # {"url", "token"}: the studio's own tools for this run only
+    max_turns: int | None = None  # None: the config's
+    timeout: float | None = None  # None: the config's
+    add_dirs: tuple[str, ...] = ()  # folders the run may also Read: a chat's own attachments, never wider
 
 
 @dataclass
@@ -88,7 +103,8 @@ class RunResult:
     error: str | None = None
 
 
-def build_command(cfg: Config, req: RunRequest, prefix: list[str] | None = None) -> list[str]:
+def build_command(cfg: Config, req: RunRequest, prefix: list[str] | None = None,
+                  mcp_config: Path | None = None) -> list[str]:
     cmd = list(prefix) if prefix else [str(cfg.claude_bin)]
     cmd += [
         "-p",
@@ -98,8 +114,14 @@ def build_command(cfg: Config, req: RunRequest, prefix: list[str] | None = None)
         "--disallowedTools", ",".join(req.policy.deny),
         "--permission-mode", "dontAsk",
         "--strict-mcp-config",
+    ]
+    if mcp_config is not None:
+        cmd += ["--mcp-config", str(mcp_config)]
+    for folder in req.add_dirs:
+        cmd += ["--add-dir", str(folder)]
+    cmd += [
         "--setting-sources", "project,local",
-        "--max-turns", str(cfg.max_turns),
+        "--max-turns", str(req.max_turns or cfg.max_turns),
         "--append-system-prompt", req.system,
     ]
     if cfg.model:
@@ -123,11 +145,13 @@ def secret_names(cfg: Config) -> set[str]:
     return names
 
 
-def build_env(cfg: Config) -> dict[str, str]:
+def build_env(cfg: Config, mcp: bool = False) -> dict[str, str]:
     check_config_dir(cfg)
     blocked = secret_names(cfg)
     env = {k: v for k, v in os.environ.items() if k not in blocked}
     env["CLAUDE_CONFIG_DIR"] = str(cfg.claude_config_dir)
+    if mcp:
+        env.update(MCP_ENV)
     return env
 
 
@@ -203,9 +227,18 @@ def kill_tree(proc: subprocess.Popen, job: Job | None) -> None:
         pass
 
 
+# The studio's own tools, in words: (while it happens, once it is done).
+STUDIO_TOOLS = {
+    "set_post_text": ("Rewriting the post", "Rewrote the post"),
+    "make_image": ("Asking ChatGPT for a picture", "ChatGPT's picture is in"),
+    "record_audit": ("Saving the audit", "Saved the audit"),
+    "fetch_post": ("Fetching the post through Apify", "Fetched the post"),
+}
+
+
 def _describe_tool(block: dict) -> tuple[str, str]:
     """One tool call in words: (while it happens, once it is done)."""
-    name, args = block.get("name", "?"), block.get("input") or {}
+    name, args = str(block.get("name", "?")), block.get("input") or {}
     target = Path(str(args.get("file_path", ""))).name
     if name == "Skill":
         return "Loading the skill", "Loaded the skill"
@@ -213,6 +246,9 @@ def _describe_tool(block: dict) -> tuple[str, str]:
         return f"Reading {target}", f"Read {target}"
     if name in ("Edit", "Write"):
         return f"Updating {target}", f"Updated {target}"
+    if name.startswith(f"mcp__{MCP_SERVER}__"):
+        short = name.split("__")[-1]
+        return STUDIO_TOOLS.get(short, (f"Using {short}", f"Used {short}"))
     return f"Using {name}", f"Used {name}"
 
 
@@ -224,11 +260,25 @@ class ClaudeRunner:
     def run(self, req: RunRequest, cancel: threading.Event | None = None,
             on_progress: Callable[[str], None] | None = None,
             timeout: float | None = None) -> RunResult:
-        env = build_env(self.cfg)  # raises ClaudeRefused before anything starts
-        cmd = build_command(self.cfg, req, self.prefix)
+        env = build_env(self.cfg, mcp=req.mcp is not None)  # raises ClaudeRefused before anything starts
+        if req.mcp is None:
+            return self._run(req, build_command(self.cfg, req, self.prefix), env, cancel, on_progress, timeout)
+        # The studio's tool server: its address and this run's token, in a folder of its own.
+        holder = tempfile.mkdtemp(prefix="linkedin-studio-claude-")
+        config = Path(holder) / "mcp.json"
+        config.write_text(json.dumps({"mcpServers": {MCP_SERVER: {
+            "type": "http", "url": req.mcp["url"],
+            "headers": {"Authorization": f"Bearer {req.mcp['token']}"}}}}), encoding="utf-8")
+        try:
+            return self._run(req, build_command(self.cfg, req, self.prefix, config), env, cancel, on_progress, timeout)
+        finally:
+            shutil.rmtree(holder, ignore_errors=True)
+
+    def _run(self, req: RunRequest, cmd: list[str], env: dict[str, str], cancel: threading.Event | None,
+             on_progress: Callable[[str], None] | None, timeout: float | None) -> RunResult:
         cancel = cancel or threading.Event()
         progress = on_progress or (lambda _msg: None)
-        timeout = timeout or self.cfg.timeout_seconds
+        timeout = timeout or req.timeout or self.cfg.timeout_seconds
         started = time.monotonic()
         result = RunResult(outcome="error")
         events: list[dict] = []

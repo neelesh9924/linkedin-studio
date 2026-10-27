@@ -1,6 +1,7 @@
-# Runtime dependencies, pinned (pip freeze, Python 3.14, 7 Oct 2026).
+# Runtime dependencies, pinned (pip freeze, Python 3.14, 27 Oct 2026).
 # requests / python-dotenv are what linkedin-skills\lib needs; PyYAML lets
-# linkedin-skills\scripts\selftest.py run its frontmatter check.
+# linkedin-skills\scripts\selftest.py run its frontmatter check. The launcher
+# installs this file again whenever it changes.
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
@@ -11,14 +12,11 @@ colorama==0.4.6
 fastapi==0.142.2
 h11==0.16.0
 idna==3.20
-Jinja2==3.1.6
-MarkupSafe==3.0.4
 opentelemetry-api==1.45.1
 psutil==7.2.2
 pydantic==2.13.5
 pydantic_core==2.46.5
 python-dotenv==1.2.4
-python-multipart==0.0.32
 PyYAML==6.0.3
 requests==2.34.2
 starlette==1.7.0

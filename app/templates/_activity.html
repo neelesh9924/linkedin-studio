@@ -1,8 +1,0 @@
-{% if active %}
-{% set first = active[0] %}
-<span class="activity" data-ids="{{ active|map(attribute='id')|join(',') }}" title="Claude runs one job at a time">
-  <span class="orb"></span>
-  <span class="activity-text">{{ actions[first.kind].doing }}{% if first.status == 'running' and first.progress %} · {{ first.progress }}{% endif %}</span>
-  {% if active|length > 1 %}<span class="activity-more">+{{ active|length - 1 }} waiting</span>{% endif %}
-</span>
-{% endif %}

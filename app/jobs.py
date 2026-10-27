@@ -1,10 +1,19 @@
-"""One Claude job at a time: a queue, one worker thread, cancel, and a run log in SQLite."""
+"""One Claude job at a time: a queue, one worker thread, cancel, and a run log in SQLite.
+
+A job's progress is kept as numbered steps (`jobs.activity`): each new thing Claude does, or a
+studio tool says, is a step, with the time it came. A job that offers the studio's own tools (a
+post's chat) gets a token good for that run only; /mcp finds the run by it.
+"""
 from __future__ import annotations
 
+import hmac
 import logging
 import queue
+import secrets
 import threading
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from .claude_runner import ClaudeRefused, ClaudeRunner, RunResult
@@ -17,19 +26,40 @@ log = logging.getLogger("studio.jobs")
 # snapshot a file; `finish` stores side effects (plans, posts, chat messages).
 Prepare = Callable[[int, dict, Callable[[str], None]], dict]
 Finish = Callable[[int, dict, RunResult, dict], None]
+SHOWN_STEPS = 60      # the steps a job keeps: the page shows the newest
+
+
+@dataclass
+class Run:
+    """A job that is running with the studio's own tools: what /mcp needs to serve it."""
+    job_id: int
+    kind: str
+    params: dict
+    token: str
+    tools: tuple
+    cancel: threading.Event
+    note: Callable[[str, str], None]
+    images_left: int = 0
+    images: list = field(default_factory=list)     # ids of the pictures made in this run
+    versions: list = field(default_factory=list)   # ids of the versions this run wrote
 
 
 class JobManager:
-    def __init__(self, db: DB, runner: ClaudeRunner):
+    def __init__(self, db: DB, runner: ClaudeRunner, mcp_url: str = ""):
         self.db = db
         self.runner = runner
+        self.mcp_url = mcp_url
         self.q: queue.Queue[int | None] = queue.Queue()
         self.prepare: dict[str, Prepare] = {}
         self.finish: dict[str, Finish] = {}
         self.session_for: dict[str, Callable[[dict], str | None]] = {}
+        self.tools_for: dict[str, Callable[[dict], tuple]] = {}   # kind -> the studio tools a run of it gets
+        self.limits: dict[str, tuple[int, int]] = {}             # kind -> (max turns, timeout seconds)
+        self.images_per_request = 0     # pictures one chat request may ask ChatGPT for (config: images_per_request)
         self.chat_note = ""   # extra rule for the chat skills (see privacy.CHAT_NOTE)
         self._lock = threading.Lock()
         self._current: tuple[int, threading.Event] | None = None
+        self._run: Run | None = None
         self._stopping = False
         self._worker = threading.Thread(target=self._loop, name="claude-worker", daemon=True)
         self._worker.start()
@@ -60,8 +90,15 @@ class JobManager:
         self.db.run("UPDATE jobs SET acked=1 WHERE id=?", (job_id,))
 
     def active(self) -> list[Any]:
-        return self.db.all("SELECT id, kind, status, progress, started_at, created_at FROM jobs "
-                           "WHERE status IN ('queued','running') ORDER BY id")
+        return self.db.all("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id")
+
+    def run_for_token(self, token: str) -> Run | None:
+        """The running job this token was made for, or None. Only while it runs."""
+        with self._lock:
+            run = self._run
+        if run and token and hmac.compare_digest(token.encode(), run.token.encode()):
+            return run
+        return None
 
     def shutdown(self, timeout: float = 15) -> None:
         """Cancel the running job (killing its process tree) and drop the queue."""
@@ -75,9 +112,6 @@ class JobManager:
         self._worker.join(timeout=timeout)
 
     # ---- worker ------------------------------------------------------------
-    def _set_progress(self, job_id: int, text: str) -> None:
-        self.db.run("UPDATE jobs SET progress=? WHERE id=?", (text[:200], job_id))
-
     def _loop(self) -> None:
         while True:
             job_id = self.q.get()
@@ -98,16 +132,34 @@ class JobManager:
             finally:
                 with self._lock:
                     self._current = None
+                    self._run = None
+
+    def _steps(self, job_id: int) -> Callable[[str, str], None]:
+        """A job's steps: each new thing it does, numbered, with the time it came (written quietly)."""
+        state = {"steps": [], "last": None}
+        lock = threading.Lock()
+
+        def step(text: str, detail: str = "") -> None:
+            text, detail = str(text)[:200], str(detail)[:200]
+            with lock:
+                if state["last"] == (text, detail):   # the stream repeats itself; write only real changes
+                    return
+                state["last"] = (text, detail)
+                n = len(state["steps"]) + 1 if not state["steps"] else state["steps"][-1]["n"] + 1
+                state["steps"].append({"n": n, "at": datetime.now().strftime("%H:%M:%S"), "text": text, "detail": detail})
+                del state["steps"][:-SHOWN_STEPS]
+                self.db.run("UPDATE jobs SET progress=?, activity=?, steps=?, last_step_at=? WHERE id=?",
+                            (text, dumps(state["steps"]), n, utcnow(), job_id), quiet=True)
+
+        return step
 
     def _run_one(self, job_id: int, kind: str, params: dict, cancel: threading.Event) -> None:
-        self.db.run("UPDATE jobs SET status='running', started_at=?, progress='Starting' WHERE id=?",
-                    (utcnow(), job_id))
-        last = {"text": "Starting"}
+        self.db.run("UPDATE jobs SET status='running', started_at=? WHERE id=?", (utcnow(), job_id))
+        step = self._steps(job_id)
+        step("Starting")
 
         def progress(text: str) -> None:
-            if text != last["text"]:  # the stream repeats itself; write only real changes
-                last["text"] = text
-                self._set_progress(job_id, text)
+            step(text)
 
         ctx: dict = {}
         if kind in self.prepare:
@@ -121,20 +173,40 @@ class JobManager:
         if cancel.is_set():
             self._close(job_id, "cancelled", None, None, "Cancelled.")
             return
+        action = ACTIONS[kind]
         session = self.session_for[kind](params) if kind in self.session_for else None
-        req = build_request(kind, params, resume_session=session)
-        if ACTIONS[kind].chat:
+        mcp = None
+        if action.mcp:
+            tools = tuple(self.tools_for[kind](params)) if kind in self.tools_for else ()
+            run = Run(job_id=job_id, kind=kind, params=params, token=secrets.token_urlsafe(32), tools=tools,
+                      cancel=cancel, note=step, images_left=self.images_per_request if "make_image" in tools else 0)
+            with self._lock:
+                self._run = run
+            ctx["run"] = run
+            mcp = {"url": self.mcp_url, "token": run.token, "tools": tools}
+        req = build_request(kind, params, resume_session=session, mcp=mcp)
+        if kind in self.limits:
+            req.max_turns, req.timeout = self.limits[kind]
+        if action.chat:
             req.system += self.chat_note
         started = utcnow()
         try:
             result = self.runner.run(req, cancel=cancel, on_progress=progress)
         except ClaudeRefused as exc:
             self._log_run(job_id, req.skill, started, RunResult(outcome="refused", error=str(exc)))
+            if kind in self.finish:   # a chat says in its thread that the reply did not come
+                try:
+                    self.finish[kind](job_id, params, RunResult(outcome="refused", error=str(exc)), ctx)
+                except Exception:
+                    log.exception("finish hook for refused job %s failed", job_id)
             self._close(job_id, "failed", None, None, str(exc))
             return
+        finally:
+            with self._lock:
+                self._run = None
         self._log_run(job_id, req.skill, started, result)
         status = {"ok": "done", "unparsed": "unparsed", "cancelled": "cancelled"}.get(result.outcome, "failed")
-        if status in ("done", "unparsed") and kind in self.finish:
+        if kind in self.finish and (status in ("done", "unparsed") or action.chat):
             try:
                 self.finish[kind](job_id, params, result, ctx)
             except Exception as exc:

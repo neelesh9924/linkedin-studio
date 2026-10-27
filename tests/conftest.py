@@ -9,9 +9,11 @@ sys.path.insert(0, str(ROOT))
 
 from app.claude_runner import ClaudeRunner  # noqa: E402
 from app.config import Config  # noqa: E402
+from app.db import dumps, utcnow  # noqa: E402
 
 FAKE = Path(__file__).with_name("fake_claude.py")
 REAL_SKILLS = ROOT.parent / "linkedin-skills"    # the real clone, next to this folder; tests that need it skip without it
+TOKEN = "t0ken-for-tests"
 
 
 def make_skills(folder: Path) -> Path:
@@ -42,3 +44,15 @@ def fake_runner(cfg):
 
 def with_(cfg: Config, **kw) -> Config:
     return dataclasses.replace(cfg, **kw)
+
+
+def add_post(db, status="draft", text="A finished post.", **extra) -> int:
+    now = utcnow()
+    cols = {"created_at": now, "updated_at": now, "title": "A post", "text": text, "status": status, **extra}
+    return db.run(f"INSERT INTO posts ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", tuple(cols.values()))
+
+
+def add_job(db, kind, status="done", params=None, result=None, **extra) -> int:
+    cols = {"kind": kind, "status": status, "params": dumps(params or {}), "created_at": utcnow(),
+            "result": dumps(result) if result is not None else None, **extra}
+    return db.run(f"INSERT INTO jobs ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", tuple(cols.values()))

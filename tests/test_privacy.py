@@ -140,7 +140,7 @@ def test_the_app_protects_the_files_when_it_starts_and_the_bank_page_says_so(cfg
     app = create_app(dataclasses.replace(cfg, skills_dir=repo), "tok", db_path=tmp_path / "p.db", runner=fake_runner)
     with TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin}) as client:
         client.cookies.set("studio_session", "tok")
-        body = client.get("/bank").text
+        body = client.get("/api/bank").json()
     assert git(repo, "status", "--porcelain") == ""             # the filled file is invisible to git
-    assert "Already private" in body and "Not protected" not in body
-    assert "Updated (date)" not in body                         # a template hint is not a date
+    assert body["protection"]["ok"] is True and body["protection"]["state"] == "protected"
+    assert body["files"]["bank"]["status"]["updated"] == ""     # a template hint is not a date

@@ -1,11 +1,11 @@
 # Third-party notices
 
-LinkedIn Studio includes the work of two other projects. Their licences follow, as published
-by each project.
+LinkedIn Studio includes the work of one other project. Its licence follows, as published by
+that project.
 
 ## Feather icons
 
-The icon shapes in `app/icons.py` come from Feather (https://feathericons.com,
+Some of the icon shapes in `app/static/js/core.js` come from Feather (https://feathericons.com,
 https://github.com/feathericons/feather).
 
 ```
@@ -30,27 +30,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
-
-## htmx
-
-`app/static/htmx.min.js` is htmx 2.0.4 (https://htmx.org, https://github.com/bigskysoftware/htmx),
-unmodified.
-
-```
-Zero-Clause BSD
-=============
-
-Permission to use, copy, modify, and/or distribute this software for
-any purpose with or without fee is hereby granted.
-
-THE SOFTWARE IS PROVIDED “AS IS” AND THE AUTHOR DISCLAIMS ALL
-WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES
-OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE
-FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY
-DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
-AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
-OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 ## Not included, but used

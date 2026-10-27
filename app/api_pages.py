@@ -1,0 +1,399 @@
+"""The API of the pages beside the posts: Planner, Story Bank & Voice (with its two chats), Tools, Settings
+(with ChatGPT and the health checks), the setup screen and the Guide."""
+from __future__ import annotations
+
+import re
+import subprocess
+import threading
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import Body, FastAPI
+from fastapi.responses import FileResponse
+
+from . import attached, attachments, codex, flows, guide, paths, render
+from .api_posts import fail
+from .config import ConfigError, path_problems, problems
+from .db import loads, utcnow
+from .health import claude_version
+from .main import ACTIVE, PROBLEM, TARGET, Studio
+from .publishing import MAX_AHEAD, MIN_LEAD, POST_MAX
+from .skills import ACTIONS, TOOL_KINDS
+
+GOALS = ("comments", "reposts", "likes", "saves")
+MODES = {"bank": "interview", "voice": "voice"}
+MODE_TITLE = {"bank": "Story Bank", "voice": "Voice profile"}
+HUMANIZE_MODES = ("default", "forensic", "strict", "aesthetic", "all")
+REACTIONS = {"LIKE": "Like", "PRAISE": "Celebrate", "EMPATHY": "Love", "INTEREST": "Insightful",
+             "APPRECIATION": "Support", "ENTERTAINMENT": "Funny"}
+VERSION_TTL = 60   # seconds the Claude version is kept between Settings visits
+
+
+def doc_status(text: str) -> dict:
+    found = dict(re.findall(r"^-\s*(filled|updated|sessions|source):\s*(.*)$", text, flags=re.M))
+    # A value still in (parentheses) is the template's own hint, not something a skill wrote.
+    status = {k: "" if v.strip().startswith("(") else v.strip() for k, v in found.items()}
+    status["is_filled"] = status.get("filled", "").lower().startswith("yes")
+    return status
+
+
+def register(app: FastAPI, s: Studio) -> None:
+    db, jobs, pub, cfg = s.db, s.jobs, s.pub, s.cfg
+    version_cache: dict[str, Any] = {"at": 0.0, "said": ""}
+
+    def visible(job) -> bool:
+        return job["status"] in ACTIVE or (job["status"] in PROBLEM and not job["acked"])
+
+    def jobs_for(field: str, value: int, kinds: tuple[str, ...]) -> list:
+        marks = ",".join("?" * len(kinds))
+        return db.all(f"SELECT * FROM jobs WHERE kind IN ({marks}) AND json_extract(params, '$.{field}')=? "
+                      "ORDER BY id DESC", (*kinds, value))
+
+    def posts_by_id(ids: list) -> dict[int, Any]:
+        ids = [i for i in ids if i]
+        if not ids:
+            return {}
+        rows = db.all(f"SELECT * FROM posts WHERE id IN ({','.join('?' * len(ids))})", tuple(ids))
+        return {r["id"]: r for r in rows}
+
+    def claude_said() -> str:
+        if time.monotonic() - version_cache["at"] > VERSION_TTL or not version_cache["said"]:
+            version_cache.update(at=time.monotonic(), said=claude_version(cfg))
+        return version_cache["said"]
+
+    # ---- planner (and this month) ---------------------------------------------------------
+    @app.get("/api/planner")
+    def planner():
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat(timespec="seconds")
+        upcoming = db.all("SELECT * FROM posts WHERE status IN ('scheduling','scheduled') ORDER BY scheduled_at")
+        next_post = next((p for p in upcoming if (p["scheduled_at"] or "") >= now_iso), None)
+        bank, voice = doc_status(flows.read_text(cfg.story_bank)), doc_status(flows.read_text(cfg.voice_profile))
+        publora = pub.status()
+        plans = db.all("SELECT * FROM plans ORDER BY id DESC LIMIT 6")
+        boards = []
+        item_jobs: dict[int, Any] = {}
+        for r in db.all("SELECT * FROM jobs WHERE kind='draft' AND json_extract(params,'$.plan_item_id') IS NOT NULL ORDER BY id"):
+            item_jobs[(loads(r["params"], {}) or {}).get("plan_item_id")] = r   # later rows win: the latest per item
+        for plan in plans:
+            items = flows.plan_items(db, plan["id"])
+            linked = posts_by_id([i.get("post_id") for i in items])
+            out_items = []
+            for item in items:
+                post = linked.get(item.get("post_id"))
+                job = item_jobs.get(item["id"])
+                out_items.append({**{k: v for k, v in item.items() if isinstance(v, (str, int, float, type(None)))},
+                                  "post": s.post_summary(post) if post else None,
+                                  "job": s.job_public(job) if job is not None and visible(job) else None})
+            result = loads(plan["result"], {}) or {}
+            boards.append({"id": plan["id"], "planned": s.ago(plan["created_at"]), "inputs": loads(plan["inputs"], {}) or {},
+                           "items": out_items, "comment_targets": result.get("comment_targets") or [],
+                           "readiness": result.get("readiness") or [], "notes": result.get("notes") or []})
+        plan_job = db.one("SELECT * FROM jobs WHERE kind='plan' ORDER BY id DESC LIMIT 1")
+        last_run = db.one("SELECT r.*, j.kind FROM runs r LEFT JOIN jobs j ON j.id = r.job_id ORDER BY r.id DESC LIMIT 1")
+        last_health = s.health.latest()
+        active = jobs.active()
+        steps = [
+            {"done": bank["is_filled"], "title": "Fill your Story Bank", "href": "#~bank",
+             "text": "A 20-40 minute interview. Drafts then draw on real numbers and stories."},
+            {"done": voice["is_filled"], "title": "Teach it your voice", "href": "#~voice",
+             "text": "Paste 3-6 of your own posts so drafts sound like you."},
+            {"done": publora["key"] and publora["platform_id"], "title": "Connect Publora", "href": "#~settings",
+             "text": "Add your key to linkedin-skills\\.env to schedule from here."},
+            {"done": bool(plans), "title": "Plan your week", "href": "#~planner",
+             "text": "Three to five posts, each with a formula and an angle."},
+        ]
+        return {
+            "month": now.astimezone(cfg.tz).strftime("%B"), "used": pub.quota_used(now), "limit": cfg.monthly_post_limit,
+            "tz": s.tz_label,
+            "next": {**s.post_summary(next_post)} if next_post else None,
+            "upcoming": [s.post_summary(p) for p in upcoming],
+            "claude": {"working": ACTIONS[active[0]["kind"]].doing if active else "",
+                       "login": str(cfg.claude_config_dir), "model": cfg.model or "Account default",
+                       "last_run": (f"{ACTIONS[last_run['kind']].title if last_run['kind'] in ACTIONS else last_run['skill']}, "
+                                    f"{s.ago(last_run['started_at'])}") if last_run else "",
+                       "health": ({"ok": last_health["exit_code"] == 0, "when": s.ago(last_health["ran_at"])}
+                                  if last_health else None)},
+            "steps": steps, "problems": problems(cfg), "bank_filled": bank["is_filled"],
+            "last": boards[0]["inputs"] if boards else {},
+            "plan_job": s.job_public(plan_job) if plan_job is not None and visible(plan_job) else None,
+            "boards": boards, "goals": GOALS,
+        }
+
+    @app.post("/api/planner")
+    def planner_run(data: dict = Body(default={})):
+        audience, goal = str(data.get("audience") or "").strip(), str(data.get("goal") or "").strip()
+        if not audience or not goal:
+            return fail("Say who you are writing for and what the week should achieve.")
+        if db.one("SELECT 1 FROM jobs WHERE kind='plan' AND status IN ('queued','running')"):
+            return fail("A plan is already being made.")
+        try:
+            posts = max(3, min(5, int(data.get("max_posts") or 4)))
+        except (TypeError, ValueError):
+            posts = 4
+        return {"job": jobs.submit("plan", {"audience": audience, "goal": goal, "theme": str(data.get("theme") or "").strip(),
+                                            "max_posts": posts, "founder": bool(data.get("founder"))})}
+
+    @app.post("/api/planner/items/{item_id}/draft")
+    def planner_draft(item_id: int):
+        row = db.one("SELECT * FROM plan_items WHERE id=?", (item_id,))
+        if row is None:
+            return fail("That plan item no longer exists.", 404)
+        if row["post_id"]:
+            return fail("This item already has a draft.")
+        if any(j["status"] in ACTIVE for j in jobs_for("plan_item_id", item_id, ("draft",))):
+            return fail("This item is already being drafted.")
+        plan = db.one("SELECT inputs FROM plans WHERE id=?", (row["plan_id"],))
+        item, inputs = loads(row["data"], {}) or {}, (loads(plan["inputs"], {}) or {}) if plan else {}
+        params = {k: item.get(k) for k in ("angle", "formula", "pillar", "goal", "cta", "format", "bank_section")}
+        params.update(plan_item_id=item_id, audience=inputs.get("audience"))
+        return {"job": jobs.submit("draft", params)}
+
+    # ---- story bank & voice ------------------------------------------------------------
+    @app.get("/api/bank")
+    def bank():
+        files = {}
+        for mode, path in s.mode_file.items():
+            text = flows.read_text(path)
+            sections = render.doc_sections(text)
+            files[mode] = {"mode": mode, "title": MODE_TITLE[mode], "path": str(path), "name": path.name, "text": text,
+                           "status": doc_status(text), "sections": sections,
+                           "filled": sum(1 for sec in sections if sec["filled"])}
+        p = s.protection
+        return {"files": files, "protection": {"ok": p.ok, "state": p.state, "detail": p.detail}}
+
+    def conversation(mode: str, conv_id: int | None):
+        if conv_id:
+            return db.one("SELECT * FROM conversations WHERE id=? AND mode=?", (conv_id, mode))
+        return db.one("SELECT * FROM conversations WHERE mode=? ORDER BY id DESC LIMIT 1", (mode,))
+
+    def chat_message(m) -> dict:
+        meta = loads(m["meta"], {}) or {}
+        out: dict[str, Any] = {"id": m["id"], "role": "claude" if m["role"] == "assistant" else m["role"],
+                               "text": m["text"], "at": s.clock(m["created_at"]), "job": m["job_id"]}
+        if m["diff"]:
+            added, removed = render.diffstat(m["diff"])
+            out["diff"] = {"text": m["diff"], "added": added, "removed": removed}
+        if meta.get("offer"):
+            out["offer"], out["request"] = meta["offer"], meta.get("request")
+        if meta.get("files"):
+            out["files"] = attached.public(meta["files"], f"/api/chat/{mode_of_conv(m['conversation_id'])}/{m['conversation_id']}/file")
+        return out
+
+    def mode_of_conv(conv_id: int) -> str:
+        row = db.one("SELECT mode FROM conversations WHERE id=?", (conv_id,))
+        return row["mode"] if row else "bank"
+
+    @app.get("/api/chat/{mode}/{conv_id}/file/{name}")
+    def chat_file(mode: str, conv_id: int, name: str):
+        if mode not in MODES:
+            return fail("Unknown mode.", 404)
+        found = attached.served(db, f"{mode}-{conv_id}", name)
+        if found is None:
+            return fail("That file is not here.", 404)
+        path, headers = found
+        return FileResponse(path, headers=headers)
+
+    @app.get("/api/chat/{mode}")
+    def chat(mode: str, c: int = 0):
+        if mode not in MODES:
+            return fail("Unknown mode.", 404)
+        conv = conversation(mode, c or None)
+        msgs = db.all("SELECT * FROM messages WHERE conversation_id=? ORDER BY id", (conv["id"],)) if conv else []
+        history = db.all("SELECT c.id, c.created_at, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS n "
+                         "FROM conversations c WHERE c.mode=? ORDER BY c.id DESC LIMIT 20", (mode,))
+        busy = bool(conv) and any(j["status"] in ACTIVE for j in jobs_for("conversation_id", conv["id"], (MODES[mode],)))
+        return {"mode": mode, "conversation": conv["id"] if conv else None, "started": bool(conv and conv["session_id"]),
+                "messages": [chat_message(m) for m in msgs], "busy": busy,
+                "history": [{"id": h["id"], "when": s.when(h["created_at"]), "count": h["n"]} for h in history if h["n"]],
+                "doc": {"name": s.mode_file[mode].name, **doc_status(flows.read_text(s.mode_file[mode]))}}
+
+    @app.post("/api/chat/{mode}/new")
+    def chat_new(mode: str):
+        if mode not in MODES:
+            return fail("Unknown mode.", 404)
+        return {"conversation": db.run("INSERT INTO conversations (mode, created_at) VALUES (?,?)", (mode, utcnow()))}
+
+    @app.post("/api/chat/{mode}/send")
+    def chat_send(mode: str, data: dict = Body(default={})):
+        if mode not in MODES:
+            return fail("Unknown mode.", 404)
+        text = str(data.get("text") or "").strip()
+        conv = conversation(mode, int(data.get("conversation") or 0)) if data.get("conversation") else None
+        if conv is None:
+            conv_id = db.run("INSERT INTO conversations (mode, created_at) VALUES (?,?)", (mode, utcnow()))
+            conv = db.one("SELECT * FROM conversations WHERE id=?", (conv_id,))
+        first = not conv["session_id"]
+        if not text and not first:
+            return fail("Type your answer first.")
+        if any(j["status"] in ACTIVE for j in jobs_for("conversation_id", conv["id"], (MODES[mode],))):
+            return fail("Wait for the reply first.", 409)
+        try:
+            files = attached.save_all(db, f"{mode}-{conv['id']}", data.get("files"))
+        except attachments.Refused as exc:
+            return fail(str(exc))
+        message = flows.add_message(db, conv["id"], "user", text or "Let's start.", meta={"files": files} if files else None)
+        job = jobs.submit(MODES[mode], {"conversation_id": conv["id"], "text": text, "first": first, "message_id": message,
+                                        "files": [r["path"] for r in files]})
+        db.run("UPDATE messages SET job_id=? WHERE id=?", (job, message))
+        return {"conversation": conv["id"], "job": job, "message": message}
+
+    # ---- tools -------------------------------------------------------------------------
+    def tool_job(kind: str):
+        # The newest job worth showing: skip cancelled ones and problems the user already dismissed.
+        return db.one("SELECT * FROM jobs WHERE kind=? AND json_extract(params,'$.source')='tools' "
+                      "AND status != 'cancelled' AND NOT (status IN ('failed','unparsed') AND acked=1) "
+                      "ORDER BY id DESC LIMIT 1", (kind,))
+
+    def tool_public(kind: str) -> dict:
+        job = tool_job(kind)
+        out = s.job_public(job) if job is not None else None
+        if out is not None and job["status"] == "done":
+            out["result"] = loads(job["result"], {}) or {}
+            out["params"] = {k: v for k, v in (loads(job["params"], {}) or {}).items() if k in ("text", "url", "mode", "goal", "angle")}
+            if kind == "humanize":
+                out["compare"] = render.wdiff(out["params"].get("text", ""), str(out["result"].get("rewritten") or ""))
+            out["finished_ago"] = s.ago(job["finished_at"])
+        return {"kind": kind, "title": ACTIONS[kind].title, "blurb": ACTIONS[kind].blurb, "icon": ACTIONS[kind].icon,
+                "job": out}
+
+    @app.get("/api/tools")
+    def tools():
+        return {"tools": [tool_public(k) for k in TOOL_KINDS], "apify": pub.status()["apify"], "goals": GOALS,
+                "modes": HUMANIZE_MODES, "reactions": REACTIONS}
+
+    @app.post("/api/tools/{kind}")
+    def tool_run(kind: str, data: dict = Body(default={})):
+        if kind not in TOOL_KINDS:
+            return fail("Unknown tool.", 404)
+        text, url = str(data.get("text") or "").strip(), str(data.get("url") or "").strip()
+        if not text and not (url and kind in ("hook", "comment")):
+            return fail("Paste some text first." if kind not in ("hook", "comment")
+                        else "Paste the post text, or give its URL (that needs an Apify token).")
+        mode = str(data.get("mode") or "")
+        if mode and mode not in HUMANIZE_MODES:
+            return fail("Unknown mode.")
+        return {"job": jobs.submit(kind, {"source": "tools", "text": text, "url": url, "mode": mode,
+                                          "goal": str(data.get("goal") or ""), "angle": str(data.get("angle") or "").strip()})}
+
+    # ---- settings ----------------------------------------------------------------------
+    @app.get("/api/settings")
+    def settings():
+        said = claude_said()
+        runs = db.all("SELECT r.*, j.kind FROM runs r LEFT JOIN jobs j ON j.id = r.job_id ORDER BY r.id DESC LIMIT 50")
+        checks = {}
+        for name in ("check_config", "selftest"):
+            row = s.health.latest(name)
+            checks[name] = {"running": bool(s.health.running.get(name)),
+                            "row": {"ok": row["exit_code"] == 0, "when": s.ago(row["ran_at"]), "output": row["output"] or ""}
+                            if row else None}
+        p = s.protection
+        return {
+            "claude": {"version": said, "ready": "Claude Code" in said, "login": str(cfg.claude_config_dir),
+                       "model": cfg.model or "Account default", "turns": cfg.max_turns, "seconds": cfg.timeout_seconds,
+                       "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
+                       "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},
+            "publora": pub.status(), "limit": cfg.monthly_post_limit, "timezone": cfg.timezone, "tz": s.tz_label,
+            "protection": {"ok": p.ok, "state": p.state, "detail": p.detail},
+            "problems": problems(cfg), "data_dir": str(s.db.path.parent), "checks": checks,
+            "runs": [{"when": s.ago(r["started_at"]), "what": ACTIONS[r["kind"]].title if r["kind"] in ACTIONS else r["skill"],
+                      "skill": r["skill"], "outcome": r["outcome"], "error": (r["error"] or "")[:140],
+                      "denials": r["denials"] or 0, "seconds": round((r["duration_ms"] or 0) / 1000, 1),
+                      "turns": r["num_turns"] or "",
+                      "tokens_in": (r["input_tokens"] or 0) + (r["cache_read_tokens"] or 0) + (r["cache_creation_tokens"] or 0),
+                      "tokens_out": r["output_tokens"] or 0} for r in runs],
+        }
+
+    # Settings › ChatGPT (codex.py): who is signed in (email and plan only, never a token), Sign in, the Codex home.
+    @app.get("/api/codex")
+    def codex_card():
+        return codex.chatgpt_status()
+
+    @app.post("/api/codex/login")
+    def codex_login():
+        said = codex.chatgpt_sign_in()
+        return fail(said, 409) if said else {"ok": True}
+
+    @app.post("/api/codex/stop")
+    def codex_stop():
+        codex.chatgpt_stop_sign_in()
+        return {"ok": True}
+
+    @app.post("/api/codex/home")
+    def codex_home(data: dict = Body(default={})):
+        text = str(data.get("home") or "").strip().strip('"').strip()
+        try:
+            codex.set_codex_home(text)
+        except codex.CodexError as exc:
+            return fail(str(exc))
+        return {"ok": True, "home": text}
+
+    @app.post("/api/settings/health/{name}")
+    def settings_health(name: str):
+        if not s.health.start(name):
+            return fail("That check is already running.", 409)
+        return {"ok": True}
+
+    # ---- the setup screen: three folders ---------------------------------------------------
+    def setup_ctx(values: dict | None = None, errors: dict | None = None, saved: bool = False) -> dict:
+        places = paths.usual_places()
+        found = paths.found(places)
+        if values is None:
+            # First showing: keep each configured place that works, otherwise offer the first one found.
+            wrong = path_problems(cfg)
+            values = {f.key: str(getattr(cfg, f.key)) if f.key not in wrong else (found[f.key] or [""])[0]
+                      for f in paths.FIELDS}
+            _chosen, errors = paths.check(values, cfg, probe=False)
+            errors = {key: why for key, why in errors.items() if values[key]}   # an empty box is not a mistake yet
+        return {"fields": [{"key": f.key, "label": f.label, "kind": f.kind, "what": f.what} for f in paths.FIELDS],
+                "values": values, "errors": errors or {}, "found": found,
+                "examples": {key: str(where[0]) for key, where in places.items()}, "first_run": s.needs_setup,
+                "saved": saved, "restarts": s.on_restart is not None}
+
+    @app.get("/api/setup")
+    def setup_page():
+        return setup_ctx()
+
+    @app.post("/api/setup")
+    def setup_save(data: dict = Body(default={})):
+        values = {f.key: str(data.get(f.key) or "") for f in paths.FIELDS}
+        chosen, errors = paths.check(values, cfg)
+        if not errors:
+            try:
+                paths.save(chosen)
+            except ConfigError as exc:
+                errors = {"": str(exc)}
+        if errors:
+            return setup_ctx(values, errors)
+        if s.on_restart:
+            threading.Timer(0.8, s.on_restart).start()     # after this answer has reached the window
+        return setup_ctx({k: str(v) for k, v in chosen.items()}, {}, saved=True)
+
+    @app.post("/api/setup/browse")
+    def setup_browse(data: dict = Body(default={})):
+        spec = next((f for f in paths.FIELDS if f.key == data.get("field")), None)
+        if spec is None:
+            return fail("Unknown setting.", 404)
+        try:
+            return {"path": paths.browse(spec, str(data.get("start") or ""))}
+        except paths.PickerBusy:
+            return fail("A file window is already open. Look for it behind this window.", 409)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return fail(f"Windows could not open the file window ({exc}). Type or paste the path instead.", 500)
+
+    # ---- the guide -------------------------------------------------------------------
+    @app.get("/api/guide")
+    def guide_page():
+        # The figures the guide quotes come from the code that enforces them.
+        numbers = {"limit": cfg.monthly_post_limit, "post_max": f"{POST_MAX:,}",
+                   "min_lead": int(MIN_LEAD.total_seconds() // 60), "max_days": MAX_AHEAD.days,
+                   "target_min": f"{TARGET['min']:,}", "target_max": f"{TARGET['max']:,}", "fold": TARGET["fold"],
+                   "timeout": cfg.timeout_seconds, "tz": s.tz_label, "per_request": jobs.images_per_request}
+        screens = guide.fill(guide.SCREENS, numbers)
+        for screen in screens:
+            if screen["key"] == "tools":    # one line per tool, from the same descriptions the Tools page shows
+                screen["points"] = [f"{ACTIONS[k].title}: {ACTIONS[k].blurb}" for k in TOOL_KINDS] + screen["points"]
+        return {"lanes": guide.fill(guide.LANES, numbers), "states": guide.fill(guide.STATES, numbers),
+                "screens": screens, "shortcuts": guide.SHORTCUTS, "sample": guide.SAMPLE_POST, "numbers": numbers,
+                "private": s.protection.ok, "target": TARGET}

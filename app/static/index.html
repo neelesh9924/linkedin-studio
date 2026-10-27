@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>LinkedIn Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/attach.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="LinkedIn Studio">
+      <div class="brand">
+        <img class="logo" src="/static/icon.svg" width="30" height="30" alt="">
+        <span class="brand-text"><span>LinkedIn Studio</span><small>posts in your own voice</small></span>
+      </div>
+      <button id="newPost" class="btn soft wide" type="button"><span>New post</span></button>
+      <div class="side-label" id="postsLabel">Posts</div>
+      <nav id="list" class="nav" aria-labelledby="postsLabel"></nav>
+      <nav class="side-links" aria-label="The studio">
+        <button id="goPlanner" class="nav-item" type="button" data-page="planner"><span class="nav-text"><span class="name">Planner</span></span></button>
+        <button id="goBank" class="nav-item" type="button" data-page="bank"><span class="nav-text"><span class="name">Story Bank &amp; Voice</span></span></button>
+        <button id="goTools" class="nav-item" type="button" data-page="tools"><span class="nav-text"><span class="name">Tools</span></span></button>
+        <button id="goGuide" class="nav-item" type="button" data-page="guide"><span class="nav-text"><span class="name">Guide</span></span></button>
+        <div class="side-row">
+          <button id="goSettings" class="nav-item" type="button" data-page="settings"><span class="nav-text"><span class="name">Settings</span></span></button>
+          <button id="themeBtn" class="btn ghost small square" type="button" aria-label="Switch between light and dark" title="Light or dark"></button>
+        </div>
+      </nav>
+      <p id="sideFoot" class="side-foot"><span>Runs on this PC. A post goes out only when you schedule it.</span></p>
+    </aside>
+
+    <main class="main">
+      <div id="banners" class="banners" hidden></div>
+      <header id="top" class="topbar">
+        <div class="titles">
+          <h1 id="title"></h1>
+          <span id="status" role="status"></span>
+        </div>
+        <div id="topActions" class="top-actions"></div>
+        <button id="postGear" class="btn ghost square" type="button" aria-label="This post’s settings"
+                title="Its title, its versions, Delete" hidden></button>
+        <button id="showAssist" class="btn ghost" type="button" hidden><span>Ask Claude</span></button>
+      </header>
+
+      <div id="postPage" class="content" hidden></div>
+      <div id="emptyPage" class="page" hidden></div>
+      <div id="plannerPage" class="page" hidden></div>
+      <div id="bankPage" class="page" hidden></div>
+      <div id="toolsPage" class="page" hidden></div>
+      <div id="guidePage" class="page" hidden></div>
+      <div id="settingsPage" class="page" hidden></div>
+      <div id="setupPage" class="page" hidden></div>
+    </main>
+
+    <aside class="assist" id="assist" aria-labelledby="assistTitle">
+      <header class="assist-head">
+        <div id="assistMark" class="assist-mark"></div>
+        <div class="assist-heading">
+          <h2 class="assist-title" id="assistTitle">Ask Claude</h2>
+          <div class="assist-context" id="assistContext"></div>
+        </div>
+        <div id="assistTools" class="assist-tools"></div>
+        <button id="hideAssist" class="btn ghost small square" type="button" aria-label="Hide this panel" title="Hide this panel"></button>
+      </header>
+      <div class="assist-thread" id="thread">
+        <div id="assistEmpty" hidden></div>
+        <div id="messages" role="log" aria-label="The conversation"></div>
+        <div id="assistOffer" class="assist-offer" hidden></div>
+        <div id="activity"></div>
+      </div>
+      <form class="assist-form" id="askForm">
+        <div class="composer" id="composer">
+          <div id="askFiles" class="composer-files"></div>
+          <label class="sr-only" for="askText">Your request</label>
+          <textarea id="askText" rows="2" aria-describedby="askHint askRefused"></textarea>
+          <div class="composer-foot">
+            <span id="attachSlot" class="attach-slot"></span>
+            <span class="assist-hint" id="askHint" role="status"></span>
+            <span class="assist-hint refused" id="askRefused" hidden></span>
+            <button id="stopBtn" class="btn small danger" type="button" hidden><span>Stop</span></button>
+            <button id="sendBtn" class="btn primary small square" type="submit" aria-label="Send" title="Send (Enter)"></button>
+          </div>
+        </div>
+      </form>
+    </aside>
+  </div>
+  <dialog id="dialog" class="modal"></dialog>
+  <div id="toasts" class="toasts"></div>
+  <div id="announce" class="sr-only" role="status"></div>
+  <div id="alarm" class="sr-only" role="alert"></div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

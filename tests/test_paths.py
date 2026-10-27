@@ -2,8 +2,6 @@
 import dataclasses
 import shutil
 import threading
-from pathlib import Path
-
 import pytest
 from conftest import make_skills
 from fastapi.testclient import TestClient
@@ -164,38 +162,37 @@ def test_a_file_laid_out_another_way_is_left_exactly_as_it_was(pc, config_files)
 
 
 # ---- the screen ------------------------------------------------------------------------
-def test_with_wrong_folders_every_page_leads_to_the_setup_screen(cfg, tmp_path, fake_runner, looks_in_pc):
+def test_with_wrong_folders_nothing_but_the_setup_screen_works(cfg, tmp_path, fake_runner, looks_in_pc):
     pc = looks_in_pc
     broken = dataclasses.replace(cfg, skills_dir=tmp_path / "not-there", claude_config_dir=tmp_path / "no-login")
     with client_for(broken, tmp_path, fake_runner) as client:
-        for page in ("/", "/settings", "/guide", "/drafts", "/tools", "/planner", "/interviewer", "/bank"):
-            answer = client.get(page)
-            assert (answer.status_code, answer.headers["location"]) == (303, "/setup"), page
-        body = client.get("/setup").text
-    assert "Set up LinkedIn Studio" in body and 'class="app bare"' in body
-    assert "/jobs/active" not in body and 'href="/guide"' not in body       # nothing that would bounce back here
-    for field in paths.FIELDS:
-        assert field.label in body and f'name="{field.key}"' in body
-    assert body.count("For example") == len(paths.FIELDS) and "Found on this PC" in body
+        assert client.get("/api/state").json()["setup"] is True          # the page opens its setup screen
+        for path in ("/api/settings", "/api/planner", "/api/bank", "/api/tools", "/api/post/1", "/api/chat/bank"):
+            answer = client.get(path)
+            assert (answer.status_code, answer.json().get("setup")) == (409, True), path
+        assert client.post("/api/posts/new", json={}).status_code == 409
+        body = client.get("/api/setup").json()
+    assert body["first_run"] is True and [f["key"] for f in body["fields"]] == KEYS
+    assert all(body["examples"][key] for key in KEYS) and body["found"]["claude_bin"] == [str(pc["claude_bin"])]
     # A place that works is offered in the box already; what is configured but wrong is not kept.
-    assert f'value="{pc["skills_dir"]}"' in body and f'value="{pc["claude_config_dir"]}"' in body
-    assert "not-there" not in body and f'data-fill="{pc["claude_bin"]}"' in body
+    assert body["values"]["skills_dir"] == str(pc["skills_dir"]) and body["values"]["claude_config_dir"] == str(pc["claude_config_dir"])
+    assert "not-there" not in str(body)
 
 
 def test_with_working_folders_the_screen_is_reached_from_settings(cfg, tmp_path, fake_runner):
     with client_for(cfg, tmp_path, fake_runner) as client:
-        assert 'href="/setup"' in client.get("/settings").text
-        body = client.get("/setup").text
-    assert "Set up LinkedIn Studio" not in body and 'class="app"' in body
-    assert f'value="{cfg.skills_dir}"' in body and "Save and restart" not in body     # no launcher here, so no restart
+        assert client.get("/api/state").json()["setup"] is False
+        body = client.get("/api/setup").json()
+    assert body["first_run"] is False and body["values"]["skills_dir"] == str(cfg.skills_dir)
+    assert body["restarts"] is False                                         # no launcher here, so no restart
 
 
 def test_a_wrong_choice_is_shown_and_nothing_is_written(cfg, pc, tmp_path, fake_runner, config_files):
     local, _example = config_files
     with client_for(cfg, tmp_path, fake_runner) as client:
-        answer = client.post("/setup", data={**chosen_from(pc), "claude_config_dir": r"C:\nowhere\.claude"})
-    assert answer.status_code == 200 and "does not exist" in answer.text and 'id="paths-form"' in answer.text
-    assert r'value="C:\nowhere\.claude"' in answer.text and not local.exists()
+        answer = client.post("/api/setup", json={**chosen_from(pc), "claude_config_dir": r"C:\nowhere\.claude"})
+    assert answer.status_code == 200 and "does not exist" in answer.json()["errors"]["claude_config_dir"]
+    assert answer.json()["values"]["claude_config_dir"] == r"C:\nowhere\.claude" and not local.exists()
 
 
 def test_a_good_choice_is_saved_and_the_app_restarts(cfg, pc, tmp_path, fake_runner, config_files, monkeypatch):
@@ -203,24 +200,24 @@ def test_a_good_choice_is_saved_and_the_app_restarts(cfg, pc, tmp_path, fake_run
     monkeypatch.setattr(paths, "claude_version", lambda _cfg: "2.1.292 (Claude Code)")
     restarted = threading.Event()
     with client_for(cfg, tmp_path, fake_runner, on_restart=restarted.set) as client:
-        answer = client.post("/setup", data=chosen_from(pc))
-        assert answer.status_code == 200 and "is restarting" in answer.text
+        answer = client.post("/api/setup", json=chosen_from(pc)).json()
+        assert answer["saved"] is True and answer["restarts"] is True
         assert restarted.wait(5), "the launcher was not asked to restart"
     assert load_config(local).claude_config_dir == pc["claude_config_dir"]
 
 
-def test_without_a_launcher_it_says_to_reopen_the_app(cfg, pc, tmp_path, fake_runner, config_files, monkeypatch):
+def test_without_a_launcher_it_saves_and_asks_for_a_reopen(cfg, pc, tmp_path, fake_runner, config_files, monkeypatch):
     monkeypatch.setattr(paths, "claude_version", lambda _cfg: "2.1.292 (Claude Code)")
     with client_for(cfg, tmp_path, fake_runner) as client:
-        answer = client.post("/setup", data=chosen_from(pc))
-    assert "Close LinkedIn Studio and open it again" in answer.text and config_files[0].is_file()
+        answer = client.post("/api/setup", json=chosen_from(pc)).json()
+    assert answer["saved"] is True and answer["restarts"] is False and config_files[0].is_file()
 
 
 def test_another_site_cannot_change_the_folders(cfg, pc, tmp_path, fake_runner, config_files):
     with client_for(cfg, tmp_path, fake_runner) as client:
-        answer = client.post("/setup", data=chosen_from(pc), headers={"Origin": "http://evil.example"})
+        answer = client.post("/api/setup", json=chosen_from(pc), headers={"Origin": "http://evil.example"})
         assert answer.status_code == 403 and not config_files[0].exists()
-        assert client.post("/setup/browse", data={"field": "skills_dir"}, headers={"Origin": "http://evil.example"}).status_code == 403
+        assert client.post("/api/setup/browse", json={"field": "skills_dir"}, headers={"Origin": "http://evil.example"}).status_code == 403
 
 
 # ---- browse ----------------------------------------------------------------------------
@@ -230,11 +227,11 @@ def test_browse_returns_what_the_file_window_chose(cfg, tmp_path, fake_runner, m
     start = tmp_path / "start-here" / "claude.exe"
     start.parent.mkdir()
     with client_for(cfg, tmp_path, fake_runner) as client:
-        folder = client.post("/setup/browse", data={"field": "skills_dir", "start": str(tmp_path / "start-here")})
-        program = client.post("/setup/browse", data={"field": "claude_bin", "start": f'"{start}"'})
-        assert client.post("/setup/browse", data={"field": "port"}).status_code == 404
+        folder = client.post("/api/setup/browse", json={"field": "skills_dir", "start": str(tmp_path / "start-here")})
+        program = client.post("/api/setup/browse", json={"field": "claude_bin", "start": f'"{start}"'})
+        assert client.post("/api/setup/browse", json={"field": "port"}).status_code == 404
         with paths._picker:                                    # one is already open
-            assert client.post("/setup/browse", data={"field": "skills_dir"}).status_code == 409
+            assert client.post("/api/setup/browse", json={"field": "skills_dir"}).status_code == 409
     assert folder.json() == {"path": r"C:\picked\folder\t-here"}
     assert program.json() == {"path": r"C:\picked\file\t-here"}       # a file's folder is where the window opens
 
@@ -242,7 +239,7 @@ def test_browse_returns_what_the_file_window_chose(cfg, tmp_path, fake_runner, m
 def test_closing_the_file_window_chooses_nothing_and_a_failure_is_explained(cfg, tmp_path, fake_runner, monkeypatch):
     with client_for(cfg, tmp_path, fake_runner) as client:
         monkeypatch.setattr(paths, "PICKER", "pass")
-        assert client.post("/setup/browse", data={"field": "skills_dir"}).json() == {"path": ""}
+        assert client.post("/api/setup/browse", json={"field": "skills_dir"}).json() == {"path": ""}
         monkeypatch.setattr(paths, "PICKER", "raise SystemExit('no display')")
-        failed = client.post("/setup/browse", data={"field": "skills_dir"})
+        failed = client.post("/api/setup/browse", json={"field": "skills_dir"})
     assert failed.status_code == 500 and "Type or paste the path instead" in failed.json()["error"]

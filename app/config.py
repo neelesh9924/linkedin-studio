@@ -24,9 +24,16 @@ class Config:
     monthly_post_limit: int = 15
     timezone: str = "Asia/Kolkata"
     browser_path: str = ""
+    # ChatGPT's pictures (codex.py). codex_home has no default: empty = pictures off.
+    codex_home: str = ""
+    codex_bin: str = ""
+    images_per_request: int = 4
     model: str = "sonnet"
     max_turns: int = 12
     timeout_seconds: int = 180
+    # Ask Claude, a post's own chat: a run may write, audit and ask for a picture, so it gets more room.
+    chat_max_turns: int = 30
+    chat_timeout_seconds: int = 600
 
     @property
     def tz(self) -> ZoneInfo:
@@ -69,9 +76,14 @@ def load_config(path: Path | None = None) -> Config:
             monthly_post_limit=int(raw.get("monthly_post_limit", 15)),
             timezone=str(raw.get("timezone", "Asia/Kolkata")),
             browser_path=str(raw.get("browser_path", "")),
+            codex_home=str(raw.get("codex_home", "")),
+            codex_bin=str(raw.get("codex_bin", "")),
+            images_per_request=int(raw.get("images_per_request", 4)),
             model=str(raw.get("model", "sonnet")),
             max_turns=int(raw.get("max_turns", 12)),
             timeout_seconds=int(raw.get("timeout_seconds", 180)),
+            chat_max_turns=int(raw.get("chat_max_turns", 30)),
+            chat_timeout_seconds=int(raw.get("chat_timeout_seconds", 600)),
         )
     except KeyError as exc:
         raise ConfigError(f"{path.name} is missing {exc.args[0]!r}") from exc

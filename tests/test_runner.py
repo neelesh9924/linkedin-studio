@@ -7,8 +7,8 @@ import psutil
 import pytest
 from conftest import with_
 
-from app.claude_runner import (MARK_END, MARK_START, ClaudeRefused, RunRequest, STATELESS, build_command,
-                               extract_marked_json, untrusted)
+from app.claude_runner import (MARK_END, MARK_START, ClaudeRefused, STATELESS, build_command, extract_marked_json,
+                               untrusted)
 from app.skills import ACTIONS, build_request
 
 SECRET_PROMPT = "Rewrite this; --dangerously-skip-permissions && del C:\\ \"quoted\" $(whoami)"
@@ -201,3 +201,19 @@ def test_untrusted_content_cannot_close_its_own_fence():
     wrapped = untrusted("POST", evil)
     assert wrapped.count("END UNTRUSTED") == 1 and wrapped.rstrip().endswith("<<<END UNTRUSTED POST>>>")
     assert MARK_START not in wrapped and MARK_END not in wrapped
+
+
+def test_a_post_chat_run_gets_the_studio_tools_in_a_config_of_its_own(cfg, fake_runner, monkeypatch):
+    """The MCP address and token go in a file in a temporary folder, never among the skills, and it is gone after."""
+    monkeypatch.setenv("FAKE_MODE", "echo")
+    params = {"text": "Shorter", "history": [], "post": {"status": "draft", "text": "A post.", "first_comment": None, "chars": 7,
+                                                         "blanks": 0, "picture": "none chosen", "audit": "", "planned": ""}}
+    req = build_request("post_chat", params, mcp={"url": "http://127.0.0.1:8799/mcp", "token": "run-token", "tools": ("set_post_text",)})
+    res = fake_runner.run(req)
+    assert res.outcome == "ok", res.error
+    argv = res.data["argv"]
+    config = Path(argv[argv.index("--mcp-config") + 1])
+    assert not config.exists() and cfg.skills_dir not in config.parents
+    assert arg_after(argv, "--allowedTools") == "Skill,mcp__studio__set_post_text" and "--no-session-persistence" in argv
+    assert "run-token" not in " ".join(argv)                        # the token is in the file, never on the command line
+    assert {"MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS"} <= set(res.data["env_keys"])

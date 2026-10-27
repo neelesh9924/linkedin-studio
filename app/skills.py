@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from .claude_runner import (MARK_END, MARK_START, STATELESS, RunRequest, ToolPolicy,
+from .claude_runner import (MARK_END, MARK_START, MCP_SERVER, STATELESS, RunRequest, ToolPolicy,
                             owned_file_policy, untrusted)
 
 BASE_RULES = (
@@ -30,6 +30,25 @@ CHAT_RULES = BASE_RULES + (
     "4. This is a conversation shown in a chat window. Ask one question at a time and wait for the "
     "answer. Keep each message short. Only edit the one file the skill owns.\n"
 )
+POST_CHAT_RULES = BASE_RULES + (
+    "4. This is Ask Claude, the chat beside one LinkedIn post in the studio. The request holds the post as it "
+    "stands now and the conversation so far. Answer the owner's newest message.\n"
+    "5. The post changes only through the studio's set_post_text tool: call it with the whole new text (and the "
+    "first comment when that changes) and a short note of what changed. Each call keeps a version the owner can go "
+    "back to. Never put a rewritten post only in your reply. A post that is not a draft is locked: say so and "
+    "change nothing.\n"
+    "6. Work through the skills: linkedin-post-writer to write or rewrite a post (it runs the humanizer pass), "
+    "linkedin-humanizer to take out AI tells, linkedin-humanizer --mode audit to audit the post (then call "
+    "record_audit with its findings, so they show beside the post), linkedin-hook-extractor to learn from someone "
+    "else's post (fetch_post reads a LinkedIn post from its link, when that tool is offered).\n"
+    "7. Never invent figures, names or dates. Where a real fact is missing, leave a blank such as [N] or "
+    "[DD Month YYYY], and say which.\n"
+    "8. Pictures: call make_image only when the owner asks for a picture or an illustration. Make it for this post: "
+    "an illustration, never a photo or anything that claims to be a real photo; landscape (1200 x 627) unless the "
+    "owner wants it square (1080 x 1080); no text-heavy images (a word or two at most); no real people's faces. "
+    "Describe it fully. Then say in your reply what you made; the owner chooses whether it goes out with the post.\n"
+    "9. Keep your reply short: what you did, and what the owner should check or fill in.\n"
+)
 
 
 def _json_spec(shape: str) -> str:
@@ -47,6 +66,8 @@ class Action:
     doing: str = "Working"   # shown while the job runs
     icon: str = "sparkle"
     blurb: str = ""          # one line under the tool's name
+    mcp: bool = False        # gets the studio's own tools (a post's chat)
+    rules: str = ""          # the system rules, when not the one-shot or chat ones
 
 
 def _humanize(p: dict) -> str:
@@ -154,12 +175,18 @@ def _revise(p: dict) -> str:
             + "\n\nCurrent draft:\n" + untrusted("DRAFT", p["text"]))
 
 
+def _attached(p: dict) -> str:
+    """The files the owner attached to this message, as the run Reads them (attachments.for_claude)."""
+    lines = p.get("attached") or []
+    return ("\n\nThe owner attached these files with this message (read the ones that help):\n" + "\n".join(lines)) if lines else ""
+
+
 def _interview(p: dict) -> str:
     if p.get("first"):
         return ("Run the linkedin-interviewer skill in --mode bank. Read references/story-bank.md first and "
                 "interview only the thin sections. Start with one broad question.\n\n"
-                + (f"The user opened with: {p['text']}" if p.get("text") else ""))
-    return p["text"]
+                + (f"The user opened with: {p['text']}" if p.get("text") else "") + _attached(p))
+    return p["text"] + _attached(p)
 
 
 def _voice(p: dict) -> str:
@@ -167,8 +194,32 @@ def _voice(p: dict) -> str:
         return ("Run the linkedin-humanizer skill with --mode profile (sub-skills/voice-profile.md) to build or "
                 "update references/voice-profile.md. Ask for 3-6 of the user's real posts, then show the "
                 "filled profile and save it only after the user approves.\n\n"
-                + (f"The user opened with: {p['text']}" if p.get("text") else ""))
-    return p["text"]
+                + (f"The user opened with: {p['text']}" if p.get("text") else "") + _attached(p))
+    return p["text"] + _attached(p)
+
+
+WHO = {"user": "The owner", "assistant": "You (Claude)", "info": "The studio", "error": "The studio"}
+
+
+def _post_chat(p: dict) -> str:
+    """The post as it stands, the conversation so far and the owner's new message (flows.post_chat_context)."""
+    post = p["post"]
+    lines = [f"The post is a {post['status']} ({post['chars']:,} characters"
+             + (f", {post['blanks']} blank(s) still to fill" if post["blanks"] else "") + ").",
+             "Its text:", untrusted("POST", post["text"] or "(empty: nothing written yet)")]
+    if post.get("first_comment"):
+        lines += ["Its first comment:", untrusted("FIRST COMMENT", post["first_comment"])]
+    lines.append(f"Its picture: {post['picture']}")
+    if post.get("audit"):
+        lines.append(f"Its last audit: {post['audit']}")
+    if post.get("planned"):
+        lines.append(f"From the week plan: {post['planned']}")
+    history = p.get("history") or []
+    if history:
+        lines.append("\nThe conversation so far:")
+        lines += [f"{WHO.get(m['role'], m['role'])}: {m['text']}" for m in history]
+    lines += ["\nThe owner's new message:", p["text"]]
+    return "\n".join(lines) + _attached(p)
 
 
 ACTIONS: dict[str, Action] = {a.kind: a for a in [
@@ -194,20 +245,32 @@ ACTIONS: dict[str, Action] = {a.kind: a for a in [
     Action("voice", "linkedin-humanizer", "Voice profile",
            owned_file_policy("references/voice-profile.md"), _voice, chat=True, doing="Working on your voice profile",
            icon="chat"),
+    # A post's own chat: the skills to read and run, and the studio's tools (set_post_text, make_image, …) for the
+    # rest. No session is kept: each request carries the post and the conversation as they are now.
+    Action("post_chat", "linkedin-post-writer", "Ask Claude", STATELESS, _post_chat, chat=True,
+           doing="Claude is working", icon="sparkle", mcp=True, rules=POST_CHAT_RULES),
 ]}
 
 TOOL_KINDS = ("humanize", "audit", "hook", "comment", "repurpose", "profile")
 
 
-def build_request(kind: str, params: dict, resume_session: str | None = None) -> RunRequest:
+def build_request(kind: str, params: dict, resume_session: str | None = None, mcp: dict | None = None) -> RunRequest:
     action = ACTIONS[kind]
+    policy = action.policy
+    if action.mcp and mcp:
+        # The studio's tools this run is offered, and nothing else of any MCP server.
+        policy = ToolPolicy(tools=policy.tools, deny=policy.deny,
+                            allow=policy.allow + tuple(f"mcp__{MCP_SERVER}__{name}" for name in mcp["tools"]))
     return RunRequest(
         skill=action.skill,
         prompt=action.build(params),
-        policy=action.policy,
-        system=CHAT_RULES if action.chat else ONE_SHOT_RULES,
+        policy=policy,
+        system=action.rules or (CHAT_RULES if action.chat else ONE_SHOT_RULES),
         resume_session=resume_session,
-        persist_session=action.chat,
+        persist_session=action.chat and not action.mcp,
         expect_json=not action.chat,
         kind=kind,
+        mcp={"url": mcp["url"], "token": mcp["token"]} if action.mcp and mcp else None,
+        # a chat message's attachments: that one chat's folder, Read only (no tool here writes there), never wider
+        add_dirs=(params["attach_dir"],) if action.chat and params.get("attach_dir") else (),
     )

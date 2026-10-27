@@ -1,7 +1,9 @@
 """Start LinkedIn Studio: check config, start the server, open an app window, stop when it closes.
 
 Run by "Launch LinkedIn Studio.vbs" with .venv\\Scripts\\pythonw.exe (no console). With --setup
-(first run, visible console) it creates the venv and installs requirements.txt first.
+(first run, visible console) it creates the venv and installs requirements.txt first. After an
+update that changed requirements.txt, the next start installs it again (no console; the log says
+how it went) before the app starts.
 
 If the folders in the config are missing or wrong (always the case on a new PC), the app still
 starts and shows its setup screen. Saving there ends this process and starts a fresh one, which
@@ -9,6 +11,7 @@ reads the new config.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import os
@@ -25,12 +28,43 @@ ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 VENV_PY = VENV / "Scripts" / "python.exe"
 VENV_PYW = VENV / "Scripts" / "pythonw.exe"
+REQUIREMENTS = ROOT / "requirements.txt"
+STAMP = VENV / "requirements.sha256"     # the requirements.txt the venv was last installed from
 DATA = ROOT / "data"
 SESSION = DATA / "session.json"
 LOG = DATA / "studio.log"
 PROFILE = DATA / "browser-profile"
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_NO_WINDOW = 0x08000000
+
+
+def requirements_hash() -> str:
+    return hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+
+
+def install_requirements(console: bool) -> bool:
+    """pip install -r requirements.txt into the venv; the stamp is written once it worked."""
+    want = requirements_hash()
+    cmd = [str(VENV_PY), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(REQUIREMENTS)]
+    if console:
+        done = subprocess.run(cmd)
+    else:
+        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0)
+        log("pip: " + (done.stdout or "").strip()[-1500:].replace("\n", " | "))
+        if done.returncode:
+            log("pip failed: " + (done.stderr or "").strip()[-1500:].replace("\n", " | "))
+    if done.returncode == 0:
+        STAMP.write_text(want, encoding="utf-8")
+    return done.returncode == 0
+
+
+def requirements_changed() -> bool:
+    try:
+        return STAMP.read_text(encoding="utf-8").strip() != requirements_hash()
+    except OSError:
+        return True
 
 
 # ---------------------------------------------------------------- first run ----
@@ -43,8 +77,8 @@ def setup() -> int:
             print(f"Creating the virtual environment in {VENV} ...")
             subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
         print("Installing pinned packages from requirements.txt ...\n")
-        subprocess.run([str(VENV_PY), "-m", "pip", "install", "--disable-pip-version-check",
-                        "-r", str(ROOT / "requirements.txt")], check=True)
+        if not install_requirements(console=True):
+            raise RuntimeError("pip could not install requirements.txt (see above).")
         print("\nSetup done. Starting LinkedIn Studio; this window closes in a few seconds.")
         subprocess.Popen([str(VENV_PYW), str(ROOT / "launch.py")], cwd=str(ROOT),
                          creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, close_fds=True)
@@ -190,6 +224,9 @@ def main() -> int:
     if Path(sys.prefix).resolve() != VENV.resolve():
         return setup()  # started with a system Python: build the venv, then relaunch inside it
     quiet_logs()
+    if requirements_changed():
+        log("requirements.txt changed since the last install: installing it")
+        install_requirements(console=False)   # if it fails (offline), the app still starts; the log says why
     sys.path.insert(0, str(ROOT))
     from app.config import ConfigError, load_config, path_problems, problems
 

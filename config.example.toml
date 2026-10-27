@@ -37,3 +37,14 @@ model = 'sonnet'
 # in `claude --help`; the timeout is the hard stop.
 max_turns = 12
 timeout_seconds = 180
+
+# ChatGPT's pictures: an illustration for a post, made by OpenAI's Codex CLI signed in as your
+# ChatGPT account. Each picture spends your ChatGPT allowance.
+# codex_home is the folder Codex keeps that sign-in in (its CODEX_HOME). It has no default: empty
+# means pictures are off. Give it a folder of its own, so a picture never uses whatever account the
+# PC's own .codex folder is signed in to; Settings > ChatGPT > Sign in signs Codex in there.
+codex_home = ''
+# The Codex CLI. Empty = found on PATH (npm's codex.cmd); the studio runs the codex.exe it starts.
+codex_bin = ''
+# Pictures ChatGPT may make in one request. 0 = pictures off.
+images_per_request = 4

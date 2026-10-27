@@ -1,25 +1,47 @@
+import hashlib
+import re
+import sqlite3
+import sys
 import threading
 import time
-from datetime import datetime, timezone
+import types
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
 from conftest import REAL_SKILLS, with_
 
-from app.db import DB, utcnow
-from app.publishing import Publisher, ScheduleError, studio_client_class
+from app import publishing
+from app.db import DB, SCHEMA, loads, utcnow
+from app.publishing import (MEDIA_STEPS, Publisher, ScheduleError, retry_with_picture, schedule_with_picture,
+                            studio_client_class)
 
 NOW = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc)  # 11:30 IST
 
 
 class FakeClient:
-    """Counts create-post calls. One instance is shared, like the one Publora account."""
+    """Counts create-post calls. One instance is shared, like the one Publora account.
+
+    Like Publora, a repeated Idempotency-Key gets the same post group back, and get-upload-url
+    attaches its media record before answering. fail_once[step] makes the next call of that step
+    raise after it reached the fake (the answer lost on the way back)."""
 
     def __init__(self, delay=0.0, fail=None):
         self.calls = []
         self.delay = delay
         self.fail = fail
         self.lock = threading.Lock()
+        self.groups = {}            # idempotency key -> postGroupId
+        self.steps = []             # every request, in order
+        self.fail_once = {}
+        self.media = []             # media ids attached to the post group
+        self.uploads, self.puts, self.updates, self.deleted, self.deleted_groups = [], [], [], [], []
+
+    def _step(self, name):
+        self.steps.append(name)
+        exc = self.fail_once.pop(name, None)
+        if exc:
+            raise exc
 
     def resolve_linkedin_platform_id(self):
         return "linkedin-TEST"
@@ -27,13 +49,46 @@ class FakeClient:
     def create_post_once(self, payload, key):
         with self.lock:
             self.calls.append((payload, key))
+            group = self.groups.setdefault(key, f"pg{len(self.groups) + 1}")
         time.sleep(self.delay)
         if self.fail:
             raise self.fail
-        return {"success": True, "postGroupId": f"pg{len(self.calls)}", "scheduledTime": payload["scheduledTime"],
+        self._step("create")
+        return {"success": True, "postGroupId": group, "scheduledTime": payload.get("scheduledTime"),
                 "warnings": []}
 
+    def get_upload_url_once(self, post_group_id, file_name, content_type):
+        self.uploads.append((post_group_id, file_name, content_type))
+        media_id = f"m{len(self.uploads)}"
+        self.media.append(media_id)
+        self._step("upload_url")
+        return {"success": True, "uploadUrl": f"https://s3.test/up/{media_id}", "fileUrl": f"https://s3.test/{media_id}",
+                "mediaId": media_id}
+
+    def put_upload(self, upload_url, data, content_type):
+        self.puts.append((upload_url, data, content_type))
+        self._step("put")
+
+    def update_post_once(self, post_group_id, body):
+        self.updates.append((post_group_id, body))
+        self._step("update")
+        effective = body["scheduledTime"].replace("Z", ".000Z")
+        return {"success": True, "message": "Post updated successfully", "scheduledTime": effective,
+                "postGroup": {"_id": post_group_id, "status": "scheduled", "scheduledTime": effective}}
+
+    def get_post(self, post_group_id):
+        self.steps.append("get_post")
+        return {"postGroupId": post_group_id, "status": "draft",
+                "media": [{"mediaId": m, "status": "uploading"} for m in self.media]}
+
+    def delete_media(self, media_id):
+        self.steps.append("delete_media")
+        self.media.remove(media_id)
+        self.deleted.append(media_id)
+        return {"success": True}
+
     def delete_post(self, post_group_id):
+        self.deleted_groups.append(post_group_id)
         return {"success": True}
 
 
@@ -214,3 +269,275 @@ def test_other_month_is_not_blocked(setup):
         new_post(db, status="scheduled", scheduled_at="2026-09-20T03:30:00+00:00")
     pid = new_post(db)
     assert pub.schedule(pid, "2026-10-08T09:00", None)["ok"]
+
+
+# ---- a post with one picture -----------------------------------------------------------
+PNG = b"\x89PNG\r\n\x1a\n" + bytes(64)
+
+
+@pytest.fixture
+def picture(tmp_path):
+    f = tmp_path / "chart.png"
+    f.write_bytes(PNG)
+    return {"path": str(f), "name": "chart.png", "mime": "image/png",
+            "sha256": hashlib.sha256(PNG).hexdigest()}
+
+
+def post_row(db, pid):
+    return db.one("SELECT * FROM posts WHERE id=?", (pid,))
+
+
+def test_picture_post_takes_publora_four_steps_in_order(setup, picture):
+    db, pub, client = setup
+    pid = new_post(db)
+    out = schedule_with_picture(pub, pid, "2026-10-08T09:00", "Link: https://example.com", picture)
+    assert out == {"ok": True, "postGroupId": "pg1", "warnings": []}
+    assert client.steps == ["create", "upload_url", "put", "update"]
+    (payload, key), = client.calls
+    assert "scheduledTime" not in payload                                   # created as a draft
+    assert payload["firstComment"] == {"text": "Link: https://example.com", "platforms": ["linkedin"]}
+    assert client.uploads == [("pg1", "chart.png", "image/png")]
+    assert client.puts == [("https://s3.test/up/m1", PNG, "image/png")]
+    assert client.updates == [("pg1", {"status": "scheduled", "scheduledTime": "2026-10-08T03:30:00Z"})]
+    row = post_row(db, pid)
+    assert (row["status"], row["publora_post_id"], row["media_step"], row["idempotency_key"]) == \
+        ("scheduled", "pg1", "done", key)
+    assert row["scheduled_at"] == "2026-10-08T03:30:00+00:00"
+    media = loads(row["media"])
+    assert (media["postGroupId"], media["mediaId"], media["name"]) == ("pg1", "m1", "chart.png")
+    assert "uploadUrl" not in media                                         # the spent write link is dropped
+
+
+@pytest.mark.parametrize("step", MEDIA_STEPS)
+def test_each_step_failing_once_then_retry_resumes_from_it(setup, picture, step):
+    db, pub, client = setup
+    client.fail_once[step] = requests.ConnectionError("connection reset")
+    pid = new_post(db)
+    out = schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    assert not out["ok"] and out["step"] == step
+    row = post_row(db, pid)
+    assert (row["status"], row["media_step"], row["publora_post_id"]) == ("failed", step, None)
+    if step != "create":  # the owner is told a Publora draft exists; Retry is on offer (failed, no publora_post_id)
+        assert "unscheduled draft" in row["error"] and "Retry" in row["error"]
+        assert loads(row["media"])["postGroupId"] == "pg1"
+    before = len(client.steps)
+    assert retry_with_picture(pub, pid, picture)["ok"]
+    resumed = [s for s in client.steps[before:] if s in MEDIA_STEPS]
+    assert resumed == list(MEDIA_STEPS[MEDIA_STEPS.index(step):])           # from the failed step, nothing earlier
+    assert len(client.groups) == 1                                          # one post group, ever
+    if step == "create":
+        (p1, k1), (p2, k2) = client.calls
+        assert p1 == p2 and k1 == k2                                        # the identical request, replayed
+    else:
+        assert len(client.calls) == 1                                       # create-post is never sent again
+    row = post_row(db, pid)
+    assert (row["status"], row["publora_post_id"], row["media_step"]) == ("scheduled", "pg1", "done")
+    assert client.media == [loads(row["media"])["mediaId"]]                 # exactly one picture on the post
+    if step == "upload_url":
+        assert client.deleted == ["m1"]                                     # the record whose answer was lost
+
+
+def test_picture_post_never_sends_create_post_twice(setup, picture):
+    db, pub, client = setup
+    client.fail_once["put"] = requests.Timeout("slow")
+    pid = new_post(db)
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    client.fail_once["update"] = requests.Timeout("slow")
+    assert not retry_with_picture(pub, pid, picture)["ok"]
+    with pytest.raises(ScheduleError):
+        schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)                # a second click finds it taken
+    assert retry_with_picture(pub, pid, picture)["ok"]
+    assert len(client.calls) == 1 and client.steps.count("create") == 1
+    with pytest.raises(ScheduleError):
+        retry_with_picture(pub, pid, picture)                                                      # scheduled: nothing left to retry
+    assert len(client.calls) == 1
+
+
+def test_expired_upload_link_is_replaced_not_reused(setup, picture):
+    db, pub, client = setup
+    client.fail_once["put"] = requests.Timeout("slow")
+    pid = new_post(db)
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    pub.now = lambda: NOW + timedelta(hours=2)                              # Publora's links last 1 hour
+    assert retry_with_picture(pub, pid, picture)["ok"]
+    assert client.deleted == ["m1"] and client.media == ["m2"] and len(client.calls) == 1
+    assert client.puts[-1][0] == "https://s3.test/up/m2"
+
+
+def test_picture_post_keeps_the_time_window_and_the_quota(setup, picture):
+    db, pub, client = setup
+    pid = new_post(db)
+    with pytest.raises(ScheduleError, match="past"):
+        schedule_with_picture(pub, pid, "2026-10-07T11:00", None, picture)
+    with pytest.raises(ScheduleError, match="14 days"):
+        schedule_with_picture(pub, pid, "2026-10-21T12:00", None, picture)
+    for _ in range(3):
+        new_post(db, status="scheduled", scheduled_at="2026-10-03T03:30:00+00:00")
+    with pytest.raises(ScheduleError, match="Monthly limit reached: 3/3"):
+        schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    assert client.steps == [] and post_row(db, pid)["status"] == "approved"
+
+
+def test_retry_of_a_picture_post_rechecks_the_quota_and_the_time(setup, picture):
+    db, pub, client = setup
+    client.fail_once["update"] = requests.Timeout("slow")
+    pid = new_post(db)
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    sent = list(client.steps)
+    others = [new_post(db, status="scheduled", scheduled_at="2026-10-03T03:30:00+00:00") for _ in range(3)]
+    with pytest.raises(ScheduleError, match="Monthly limit"):
+        retry_with_picture(pub, pid, picture)
+    db.run("DELETE FROM posts WHERE id IN (?,?,?)", tuple(others))
+    pub.now = lambda: datetime(2026, 10, 8, 3, 29, tzinfo=timezone.utc)    # 1 minute before it was due
+    with pytest.raises(ScheduleError, match="passed"):
+        retry_with_picture(pub, pid, picture)
+    assert client.steps == sent and post_row(db, pid)["status"] == "failed"
+
+
+def test_back_to_draft_deletes_the_publora_draft_first(setup, picture):
+    db, pub, client = setup
+    client.fail_once["put"] = requests.ConnectionError("reset")
+    pid = new_post(db)
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    pub.back_to_draft(pid)
+    assert client.deleted_groups == ["pg1"]
+    row = post_row(db, pid)
+    assert (row["status"], row["media"], row["media_step"], row["idempotency_key"]) == ("draft", None, None, None)
+
+
+def test_app_stopped_between_steps_offers_retry_on_the_next_start(setup, picture):
+    db, pub, client = setup
+    client.fail_once["put"] = requests.ConnectionError("reset")
+    pid = new_post(db)
+    text_only = new_post(db, status="scheduling", scheduled_at="2026-10-08T03:30:00+00:00")
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    db.run("UPDATE posts SET status='scheduling' WHERE id=?", (pid,))      # as if the app died mid-upload
+    DB(db.path)                                                             # the next start
+    row = post_row(db, pid)
+    assert row["status"] == "failed" and "Retry" in row["error"]
+    assert post_row(db, text_only)["status"] == "scheduling"               # a text post: as before
+    assert pub.retry(pid)["ok"] and len(client.calls) == 1                  # none passed: the recorded picture
+
+
+def test_an_older_database_gains_the_two_columns_and_keeps_its_rows(tmp_path):
+    old_schema, n = re.subn(r"error TEXT,\n\s*media TEXT,[^\n]*\n\s*media_step TEXT[^\n]*", "error TEXT", SCHEMA)
+    assert n == 1
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript(old_schema)
+    con.execute("INSERT INTO posts (created_at, updated_at, title, text, status, scheduled_at, publora_post_id) "
+                "VALUES ('t','t','t','A post.','scheduling','2026-10-08T03:30:00+00:00',NULL)")
+    con.commit()
+    before = dict(zip(*[[c[0] for c in con.execute("SELECT * FROM posts").description],
+                        con.execute("SELECT * FROM posts").fetchone()]))
+    con.close()
+    db = DB(path)
+    after = dict(post_row(db, 1))
+    assert (after.pop("media"), after.pop("media_step")) == (None, None) and after == before
+
+
+@pytest.mark.parametrize("mime,content,needle", [
+    ("image/bmp", PNG, "PNG, JPEG, WebP or GIF"),
+    ("image/jpeg", PNG, "not the JPEG"),
+    ("image/png", None, "cannot be read"),
+])
+def test_a_bad_picture_is_refused_before_anything_is_sent(setup, tmp_path, mime, content, needle):
+    db, pub, client = setup
+    f = tmp_path / "pic.png"
+    if content is not None:
+        f.write_bytes(content)
+    pid = new_post(db)
+    with pytest.raises(ScheduleError, match=needle):
+        schedule_with_picture(pub, pid, "2026-10-08T09:00", None, {"path": str(f), "name": "pic.png", "mime": mime})
+    assert client.steps == [] and post_row(db, pid)["status"] == "approved"
+
+
+def test_studio_client_media_requests_match_the_docs(monkeypatch, cfg):
+    """The new single requests, on a stand-in base class: the real lib loads .env when imported."""
+    sent = []
+
+    class Resp:
+        def __init__(self, status_code=200):
+            self.status_code = status_code
+
+        def json(self):
+            return {"success": True}
+
+    class Session:
+        def __getattr__(self, method):
+            return lambda url, json=None, headers=None, timeout=None: sent.append((method, url, json, headers)) or Resp()
+
+    class PubloraClient:
+        BASE_URL = "https://api.publora.com/api/v1"
+
+        def __init__(self, api_key):
+            self.timeout, self._session = 30.0, Session()
+
+        @staticmethod
+        def _handle(r):
+            return r.json()
+
+    lib, mod = types.ModuleType("lib"), types.ModuleType("lib.publora_client")
+    mod.PubloraClient, mod.PubloraError, lib.publora_client = PubloraClient, RuntimeError, mod
+    monkeypatch.setitem(sys.modules, "lib", lib)
+    monkeypatch.setitem(sys.modules, "lib.publora_client", mod)
+    monkeypatch.setattr(publishing, "_CLIENT_CLASS", None)
+    storage = {"code": 200}
+    monkeypatch.setattr(requests, "put", lambda url, data=None, headers=None, timeout=None:
+                        sent.append(("storage", url, data, headers)) or Resp(storage["code"]))
+    client = studio_client_class(cfg)(api_key="sk_test")
+    client.get_upload_url_once("pg1", "chart.png", "image/png")
+    client.put_upload("https://s3.test/up/m1", PNG, "image/png")
+    client.update_post_once("pg1", {"status": "scheduled", "scheduledTime": "2026-10-08T03:30:00Z"})
+    client.delete_media("m1")
+    base = PubloraClient.BASE_URL
+    assert sent == [
+        ("post", base + "/get-upload-url", {"postGroupId": "pg1", "fileName": "chart.png", "contentType": "image/png"},
+         None),
+        ("storage", "https://s3.test/up/m1", PNG, {"Content-Type": "image/png"}),   # no Publora key to storage
+        ("put", base + "/update-post/pg1", {"status": "scheduled", "scheduledTime": "2026-10-08T03:30:00Z"}, None),
+        ("delete", base + "/media/m1", None, None),
+    ]
+    storage["code"] = 403
+    with pytest.raises(RuntimeError, match="HTTP 403"):
+        client.put_upload("https://s3.test/up/m1", PNG, "image/png")
+
+
+def test_the_checksum_keeps_the_upload_to_the_chosen_picture(setup, picture, tmp_path):
+    db, pub, client = setup
+    pid = new_post(db)
+    with pytest.raises(ScheduleError, match="not the one chosen"):
+        schedule_with_picture(pub, pid, "2026-10-08T09:00", None, {**picture, "sha256": "0" * 64})
+    client.fail_once["put"] = requests.ConnectionError("reset")
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    with open(picture["path"], "ab") as f:
+        f.write(b"edited")                                                  # the file changes before Retry
+    out = retry_with_picture(pub, pid, picture)
+    assert not out["ok"] and out["step"] == "put" and "changed since it was chosen" in out["error"]
+    assert len(client.puts) == 1                                            # the changed bytes never went up
+    other = tmp_path / "other.png"
+    other.write_bytes(PNG + b"other")
+    with pytest.raises(ScheduleError, match="another picture"):
+        retry_with_picture(pub, pid, {"path": str(other), "name": "other.png", "mime": "image/png",
+                                      "sha256": hashlib.sha256(PNG + b"other").hexdigest()})
+
+
+def test_retry_follows_the_same_picture_to_its_new_path(setup, picture, tmp_path):
+    db, pub, client = setup
+    client.fail_once["put"] = requests.ConnectionError("reset")
+    pid = new_post(db)
+    schedule_with_picture(pub, pid, "2026-10-08T09:00", None, picture)
+    moved = tmp_path / "moved.png"
+    moved.write_bytes(PNG)
+    assert retry_with_picture(pub, pid, {**picture, "path": str(moved)})["ok"]
+    assert loads(post_row(db, pid)["media"])["path"] == str(moved.resolve()) and len(client.calls) == 1
+
+
+def test_no_picture_is_todays_single_request(setup):
+    db, pub, client = setup
+    pid = new_post(db)
+    assert schedule_with_picture(pub, pid, "2026-10-08T09:00", None, None)["ok"]
+    (payload, _key), = client.calls
+    assert client.steps == ["create"] and payload["scheduledTime"] == "2026-10-08T03:30:00Z"
+    row = post_row(db, pid)
+    assert (row["status"], row["media"], row["media_step"]) == ("scheduled", None, None)
