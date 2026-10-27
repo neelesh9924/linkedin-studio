@@ -348,16 +348,18 @@ def register(app: FastAPI, s: Studio) -> None:
         except Exception as exc:
             return fail(f"Could not ask Publora just now ({failure_words(exc)}). Try again in a minute.", 502)
         row = get_post(post_id)
+        due = due_now(row, datetime.now(timezone.utc))
         if status == "published":
             said = ("Publora says it is published. Open on LinkedIn shows it." if s.post_summary(row)["link"]
                     else "Publora says it is published. It gave no link to the post.")
         elif status == "failed":
             said = row["error"] or NO_REASON
-        elif due_now(row, datetime.now(timezone.utc)):
+        elif due:
             said = f"Not out yet: Publora still has it scheduled (checked {s.clock(utcnow())})."
-        else:
-            said = f"Publora has it scheduled for {s.when(row['scheduled_at'])} (checked {s.clock(utcnow())})."
-        return {"status": status, "said": said}
+        else:   # its time is in the top bar's chip already
+            said = f"All set: Publora has it scheduled (checked {s.clock(utcnow())})."
+        # `waiting` as the post now says it: the page keeps these words until the light check hears something newer
+        return {"status": status, "said": said, "waiting": s.checker.notice(post_id, s.clock) if due else None}
 
     # ---- Move to Trash…, the title, your own edits, New draft from this --------------------
     @app.post("/api/post/{post_id}/trash")

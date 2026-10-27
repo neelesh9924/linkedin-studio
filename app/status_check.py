@@ -107,16 +107,19 @@ class StatusCheck:
             failed = self._failed.get(post_id)
         return failed[1] if failed else ""
 
-    def notice(self, post_id: int, clock: Callable[[str], str]) -> dict | None:
+    def notice(self, post_id: int, clock: Callable[[str], str]) -> dict:
         """What a due scheduled post's notice says about the light check: its last ask failed (when, and Publora's or
-        the network's words), or when Publora last said it was still waiting, or that it will be asked."""
+        the network's words), or when Publora last said it was still waiting, or that it will be asked. Without the
+        light check (a studio made without check_publora), only Check now asks, and the words say so."""
         with self._lock:
             failed, asked = self._failed.get(post_id), self._asked.get(post_id)
+        again = "It tries again every few minutes; Check now asks at once." if self.enabled else "Check now asks again."
         if failed:
             return {"failed": True, "text": f"The studio could not ask Publora at {clock(failed[0].isoformat())} "
-                                            f"({failed[1]}). It tries again every few minutes; Check now asks at once."}
+                                            f"({failed[1]}). {again}"}
         if asked:
             return {"failed": False, "text": f"Not out yet as of {clock(asked.isoformat())}: Publora still has it "
-                                             "scheduled. The studio asks again every few minutes."}
-        return {"failed": False, "text": "Its time has passed: the studio asks Publora every few minutes whether it went "
-                                         "out. Check now asks at once."}
+                                             "scheduled." + (" The studio asks again every few minutes." if self.enabled else "")}
+        return {"failed": False, "text": ("Its time has passed: the studio asks Publora every few minutes whether it went "
+                                          "out. Check now asks at once." if self.enabled
+                                          else "Its time has passed: Check now asks Publora whether it went out.")}

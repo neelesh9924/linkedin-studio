@@ -747,11 +747,14 @@ def test_the_light_check_is_off_unless_asked_for_and_then_asks_at_most_every_few
 
 
 def test_check_now_answers_in_words_and_a_failed_ask_stays_for_the_notice(checked):
-    client, app, recorder, ids = checked(check=False)
+    client, app, recorder, ids = checked(check=True)
+    assert client.get(f"/api/post/{ids['due']}").json()["waiting"]["text"].startswith("Its time has passed: the studio asks")
     waiting = client.post(f"/api/post/{ids['due']}/refresh", json={}).json()
-    assert waiting["status"] == "scheduled" and waiting["said"].startswith("Not out yet: Publora still has it scheduled (checked ")
+    assert waiting["status"] == "scheduled" and re.fullmatch(
+        r"Not out yet: Publora still has it scheduled \(checked \d{1,2}:\d{2} [ap]m\)\.", waiting["said"])
+    assert waiting["waiting"] == client.get(f"/api/post/{ids['due']}").json()["waiting"]   # the notice as the post says it
     later = client.post(f"/api/post/{ids['later']}/refresh", json={}).json()["said"]
-    assert later.startswith("Publora has it scheduled for Thu 1 Oct, 9:00 am IST (checked ")
+    assert re.fullmatch(r"All set: Publora has it scheduled \(checked \d{1,2}:\d{2} [ap]m\)\.", later)
     assert client.get(f"/api/post/{ids['due']}").json()["waiting"]["text"].startswith("Not out yet as of ")
     assert client.get(f"/api/post/{ids['later']}").json()["waiting"] is None    # not due: nothing to say yet
     recorder.answer = requests.ConnectionError("reset")
@@ -761,7 +764,7 @@ def test_check_now_answers_in_words_and_a_failed_ask_stays_for_the_notice(checke
     assert notice["failed"] and "could not ask Publora" in notice["text"] and "every few minutes" in notice["text"]
     recorder.answer = {"status": "published", "posts": [{"permalink": "https://www.linkedin.com/feed/update/urn:li:share:7105"}]}
     said = client.post(f"/api/post/{ids['due']}/refresh", json={}).json()
-    assert said == {"status": "published", "said": "Publora says it is published. Open on LinkedIn shows it."}
+    assert said == {"status": "published", "said": "Publora says it is published. Open on LinkedIn shows it.", "waiting": None}
     shown = client.get(f"/api/post/{ids['due']}").json()
     assert (shown["status"], shown["link"], shown["waiting"]) == ("published", "https://www.linkedin.com/feed/update/urn:li:share:7105", None)
     assert [p["link"] for p in client.get("/api/state").json()["posts"] if p["id"] == ids["due"]] == [shown["link"]]
