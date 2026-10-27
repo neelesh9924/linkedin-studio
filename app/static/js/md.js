@@ -10,6 +10,9 @@ const TABLE_RULE = /^\|?[\s:|-]+\|[\s:|-]*$/;
 const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|((?<![*\w])\*[^*\n]+\*(?![*\w]))/g;
 
 export const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+// A heading's id inside a document: "doc-" first, so no heading can take one of the page's own ids (#status, #title…);
+// render.doc_sections gives the table of contents the same anchors.
+export const anchorOf = (text) => `doc-${slug(text)}`;
 
 // **bold**, *italic* and `code` inside one line, as elements holding text.
 export function inline(text) {
@@ -74,7 +77,7 @@ export function markdown(text, { anchors = false, breaks = false } = {}) {
       closeAll();
       const level = Math.min(heading[1].length + 2, 6);   // '#' is the document title inside a page: h3
       const title = heading[2].trim();
-      out.push(h(`h${level}`, anchors ? { id: slug(title) } : null, inline(title)));
+      out.push(h(`h${level}`, anchors ? { id: anchorOf(title) } : null, inline(title)));
       continue;
     }
     if (/^[-*_]{3,}$/.test(stripped)) {

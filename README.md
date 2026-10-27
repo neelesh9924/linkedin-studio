@@ -16,20 +16,25 @@ You double-click a shortcut and an app window opens. Closing the window stops ev
 ## The studio
 
 One window in three columns. **New to it? Open Guide in the sidebar**: it shows the routine as
-steps you can click through, what happens while Claude works, a post's four states, and an
-editor to practise in.
+steps you can click through, each with a picture of where it happens, what happens while Claude
+works, a post's four states, and an editor to practise in.
 
 - **The sidebar** lists your posts, each with its first line and its state: drafts first, then
   approved, scheduled (soonest first) and published. **New post** starts one. Below the list:
-  Planner, Story Bank & Voice, Tools, Guide, Settings, and the light/dark switch.
+  Planner, Story Bank & Voice, Tools, Guide, Settings, Trash, and the light/dark switch.
 - **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
   "…more" fold at about 210 characters and its picture). The top bar has its title, its state
   and the next step: **Approve this text**, then **Schedule…**, then the time it goes out. The
-  gear holds its versions, earlier chats and Delete.
+  gear holds its versions (your own edits are kept as versions too), earlier chats, **New draft
+  from this** (an editable copy of any post) and **Move to Trash…**.
 - **Ask Claude**, on the right, is a chat kept with each post. Ask for a draft, a sharper hook,
   a shorter take, an audit or a picture: Claude works through the skills and changes the post
   itself, and each change is kept as a version you can go back to. You can attach files (notes,
-  a PDF, a chart) for Claude to read; an attached picture can be put on the post.
+  a PDF, a chart) for Claude to read; an attached picture can be put on the post. On a post that
+  is not a draft the text is locked: the panel says what unlocks it (Back to draft, cancelling on
+  Publora, or New draft from this), and Claude can still audit it, but its run gets no tool that
+  rewrites the post or makes a picture, so none is spent on it. A request that never got an
+  answer (the app closed meanwhile) offers **Try again**.
 
 **Editing a post**
 
@@ -45,8 +50,10 @@ editor to practise in.
 - **Publish.** Draft → Approved → Scheduled → Published. Approved text is locked. Scheduling asks
   for a time (the skills' recommended slots one click away), then confirms the final text, time,
   first comment and picture.
-- **Delete.** Drafts can be deleted. Scheduled and published posts cannot; cancel them on Publora
-  first.
+- **Trash.** **Move to Trash…** (the gear) sends a draft, approved, failed or cancelled post to the
+  Trash, after Settings in the sidebar. There **Put back** returns it as it was, with its versions,
+  chat and pictures; **Delete forever…** and **Empty trash** ask first and name what goes.
+  Scheduled and published posts stay protected: cancel one on Publora first.
 
 **The pages**
 
@@ -55,8 +62,14 @@ editor to practise in.
 | Planner | Posts used this month (x of 15) and the next scheduled post; audience + goal (+ theme, 3-5 posts) → a board of post cards → **Draft this** on any card; comment targets and the inbound-readiness checklist |
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them |
 | Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons. A repurposed post can be saved as a draft |
-| Guide | The routine step by step, what each button does, the four post states, shortcuts and limits |
-| Settings | Claude's status and login folder, **Change folders**, publishing keys (set or missing, never shown), ChatGPT, light/dark/auto, the two health checks, recent runs, Quit |
+| Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-appearance`, `-health`, `-runs`, `-app`) |
+| Trash | Posts moved there: Put back, Delete forever…, Empty trash |
+
+**Keys.** Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
+Claude; Alt+↑ / Alt+↓ open the previous or next post; ? lists the shortcuts. In Ask Claude, Enter
+sends, Shift+Enter adds a line and ↑ in an empty box brings back your last message. The Guide's
+Keys and limits lists them all.
 
 **Jobs.** Claude runs one job at a time; others wait in line. A running job shows its steps,
 numbered, a timer and Cancel (Stop, in a chat), and its result appears in place. You can leave the page: when the
@@ -108,7 +121,11 @@ For each one you can click a place the app **found on this PC**, press **Browse�
 it in a Windows file window, or paste the path (Explorer's "Copy as path" works, quotes
 included). **Save** checks all three, writes them to `config.local.toml` and restarts the app.
 As part of the check it asks the program for its version, so a different `claude.exe` is caught
-there and not on your first job.
+there and not on your first job, and asks Claude Code (`claude auth status`, which sends Claude no
+request) who each login folder is signed in to. The screen shows the account beside every login
+folder it found, so a work sign-in on the same PC is easy to tell apart, and Save refuses a folder
+signed in to nobody. An answer it cannot read (an older Claude Code) is shown, never a reason to
+refuse.
 
 By hand instead: copy `config.example.toml` to `config.local.toml` and set `skills_dir`,
 `claude_bin` and `claude_config_dir`. The other settings in that file (port, time zone, model,
@@ -290,8 +307,13 @@ in-between state can be looked at without spending anything (`--empty` starts it
 - `app\attachments.py`, `app\static\attach.js` and `attach.css` (and `tests\test_attachments.py`)
   are shared byte for byte with other studios built like this one: change them there, never here
   alone.
-- `tests\test_browser.py` drives the page in Chrome or Edge through Playwright, on the demo
-  server; it is skipped when neither is installed.
+- `tests\test_browser.py` and `tests\test_browser_pages.py` drive the page in Chrome or Edge
+  through Playwright, on the demo server; they are skipped when neither is installed.
+- **The Guide's pictures** (`app\static\guide\`) are taken on the demo, never on your own data:
+  `.venv\Scripts\python dev\guide_shots.py` starts the demo in a folder that names no one, uses
+  the page as a person would and saves each screen in light and dark, small, as WebP. It never
+  pictures Settings, the setup screen or the Planner's Claude card, and refuses a picture whose
+  text shows your user name or home folder. Retake them when a screen changes.
 
 `docs/skill-inventory.md` covers what each skill takes and produces, the Publora client surface,
 and the gaps found when this was built. One test uses the real skills code and is skipped unless

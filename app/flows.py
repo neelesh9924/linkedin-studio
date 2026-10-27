@@ -202,8 +202,11 @@ def register(jobs: JobManager, db: DB, cfg: Config) -> None:
         return {"params": {**params, "post": post, "history": history}}
 
     def post_chat_tools(params: dict) -> tuple:
-        tools = ["set_post_text", "record_audit"]
-        if codex.chatgpt_ready():
+        # Only a draft's text and picture can change: a locked post's run is offered neither tool, so it spends no
+        # ChatGPT picture and no rewrite on a post it could not change. Auditing and reading a post still work.
+        draft = (params.get("post") or {}).get("status") == "draft"
+        tools = ["set_post_text", "record_audit"] if draft else ["record_audit"]
+        if draft and codex.chatgpt_ready():
             tools.append("make_image")
         if read_env(cfg).get("APIFY_TOKEN"):
             tools.append("fetch_post")

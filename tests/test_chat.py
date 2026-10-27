@@ -100,6 +100,21 @@ def test_pictures_are_offered_only_once_chatgpt_is_ready(studio, monkeypatch):
     assert "mcp__studio__make_image" in runner.requests[-1].policy.allow
 
 
+@pytest.mark.parametrize("status", ["approved", "scheduled", "published", "failed", "cancelled"])
+def test_a_locked_posts_run_is_offered_no_rewrite_and_no_picture(studio, monkeypatch, status):
+    client, app, runner = studio
+    db = app.state.db
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    wait_for(db, ask(client, add_post(db, status=status), "Make an illustration and a sharper hook"), 10)
+    allowed = runner.requests[-1].policy.allow
+    assert "mcp__studio__set_post_text" not in allowed and "mcp__studio__make_image" not in allowed
+    assert "mcp__studio__record_audit" in allowed and "It is locked" in runner.requests[-1].prompt
+    wait_for(db, ask(client, add_post(db), "The same, on a draft"), 10)
+    allowed = runner.requests[-1].policy.allow
+    assert "mcp__studio__set_post_text" in allowed and "mcp__studio__make_image" in allowed
+    assert "It is locked" not in runner.requests[-1].prompt
+
+
 # ---- the tools, on the run's own token ----------------------------------------------------
 def test_mcp_lists_the_runs_tools_and_closes_when_the_run_ends(studio):
     client, app, runner = studio
@@ -150,8 +165,15 @@ def test_set_post_text_leaves_a_locked_or_too_long_post_alone(studio):
     runner.script = lambda req: (said.update(locked=tool(client, req, "set_post_text", {"text": "Changed!", "note": "x"})),
                                  RunResult(outcome="ok", text="ok", clean_text="ok"))[1]
     wait_for(db, ask(client, approved, "Change it"), 10)
-    assert said["locked"][1] and "locked" in said["locked"][0]
+    assert said["locked"][1] and "not available in this run" in said["locked"][0]     # never offered to a locked post
     assert db.one("SELECT text FROM posts WHERE id=?", (approved,))["text"] == "Final text."
+    locked_meanwhile = add_post(db, text="Final text.")                                 # a draft when the run began
+    runner.script = lambda req: (db.run("UPDATE posts SET status='approved' WHERE id=?", (locked_meanwhile,)),
+                                 said.update(locked=tool(client, req, "set_post_text", {"text": "Changed!", "note": "x"})),
+                                 RunResult(outcome="ok", text="ok", clean_text="ok"))[2]
+    wait_for(db, ask(client, locked_meanwhile, "Change it"), 10)
+    assert said["locked"][1] and "locked" in said["locked"][0]
+    assert db.one("SELECT text FROM posts WHERE id=?", (locked_meanwhile,))["text"] == "Final text."
     draft = add_post(db, text="Short.")
     runner.script = lambda req: (said.update(long=tool(client, req, "set_post_text", {"text": "x" * 3001, "note": "x"})),
                                  RunResult(outcome="ok", text="ok", clean_text="ok"))[1]

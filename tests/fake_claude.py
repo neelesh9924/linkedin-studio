@@ -4,12 +4,27 @@ echo     emit init + a result whose marker block reports argv, stdin and env
 hang     start a child Python that sleeps, record both pids, then sleep (for kill tests)
 garbage  a result with no marker block
 nolist   init event whose skills list lacks the requested skill
+
+`auth status --json` answers who the login folder (CLAUDE_CONFIG_DIR) is signed in to: the text of its
+fake-account.json when it has one, otherwise a made-up account. It notes the environment it was given in
+fake-auth-env.json there.
 """
 import json
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+if sys.argv[1:3] == ["auth", "status"]:
+    folder = Path(os.environ.get("CLAUDE_CONFIG_DIR") or ".")
+    (folder / "fake-auth-env.json").write_text(json.dumps({
+        "argv": sys.argv[1:], "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
+        "api_key": "ANTHROPIC_API_KEY" in os.environ}), encoding="utf-8")
+    said = folder / "fake-account.json"
+    print(said.read_text(encoding="utf-8") if said.is_file()
+          else json.dumps({"loggedIn": True, "email": "owner@example.com", "subscriptionType": "max"}))
+    sys.exit(0)
 
 mode = os.environ.get("FAKE_MODE", "echo")
 stdin = sys.stdin.read()

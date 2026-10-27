@@ -37,6 +37,18 @@ username in them).
 - **Shared files are never edited here alone**: `app/attachments.py`, `app/static/attach.js`,
   `app/static/attach.css` and `tests/test_attachments.py` are copies shared byte for byte with
   the other studios built alike.
+- **Which Claude account.** `health.claude_account` runs `claude auth status --json` with
+  `build_env` (the configured login folder, no API key); it sends Claude no request and nothing of
+  it is stored. Settings, the Planner (`claude.sign_in`) and the setup screen show it; Save refuses
+  a login folder signed in to nobody, and an unreadable answer never blocks. Tests answer it with
+  `tests/fake_claude.py` only.
+- **A locked post's chat** (anything but a draft) is offered no `set_post_text` and no
+  `make_image` (`flows.post_chat_tools`): no rewrite and no ChatGPT picture is spent on a post
+  that cannot change.
+- **The Guide's pictures** come from `dev/guide_shots.py` on the demo only: made-up data, a folder
+  with no user name, no Settings, setup screen or Planner Claude card; it refuses a picture whose
+  text holds the PC's user name or home folder. Retake them when a screen changes; together they
+  stay under about 1.5 MB.
 - Never run `chrome.exe --version`.
 
 ## How it fits together
@@ -45,22 +57,25 @@ username in them).
 |---|---|
 | `app/main.py` | `create_app`: the middleware, `/api/state` (posts, jobs, what changed), jobs, images, `/mcp` |
 | `app/api_posts.py` | A post: save, audit, revise, approve, schedule, retry, cancel, versions, picture, its chat and attachments |
-| `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools, Settings (ChatGPT card), setup, Guide |
+| `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools, Settings (ChatGPT card, Claude's account), setup, Guide (its pictures) |
 | `app/jobs.py`, `app/flows.py` | One job at a time with its numbered steps; what each job does when it ends |
 | `app/skills.py`, `app/claude_runner.py` | Each action's skill, prompt and tools; the `claude -p` command, its env and MCP config |
 | `app/mcp.py`, `app/codex.py` | The post chat's tools (`set_post_text`, `make_image`, `record_audit`, `fetch_post`); ChatGPT's pictures through `codex.exe` |
 | `app/publishing.py` | Publora: schedule (with a picture), retry, back to draft, check |
 | `app/versions.py`, `app/images.py`, `app/attached.py` | A post's versions, its pictures, a chat's attached files |
 | `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, planner, bank, tools, settings, guide, jobs, md) |
-| `dev/demo_server.py` | The page on made-up data with stand-ins for Claude, Publora and ChatGPT |
+| `dev/demo_server.py` | The page on made-up data with stand-ins for Claude (and its sign-in), Publora and ChatGPT |
+| `dev/guide_shots.py` | The Guide's pictures, taken on the demo into `app/static/guide/` |
 
 ## Working here
 
 - Windows. `.venv\Scripts\python -m pytest`; run the files you touched, the whole suite once at
   the end. `tests/test_browser.py` needs `requirements-dev.txt` (Playwright) and Chrome or Edge.
 - Look at the page through `dev/demo_server.py`: nothing real is touched.
-- The Guide is words only (`app/guide.py`, `app/static/js/guide.js`); keep its figures in step
-  with the code.
+- The Guide's words live in `app/guide.py` (figures passed in from the code that enforces them;
+  `SHORTCUTS` is the one list of keys, which the page's ? dialog reads too) and its pictures in
+  `app/static/guide/` (`guide.SHOT_WORDS`). Story Bank headings take `doc-` ids (`md.js`
+  `anchorOf`, `render.doc_sections`) so they never clash with the page's own.
 
 ## Done on 27 Oct 2026
 
@@ -70,4 +85,7 @@ username in them).
   change as a version. Jinja and htmx are gone: a JSON API and plain ES modules.
 - ChatGPT's pictures for a post (`app/codex.py`), a post's picture going out through Publora's
   media upload exactly once, and files attached to any chat (the shared attachments module).
-- The Guide's pictures were dropped with the old screens; its words describe the new ones.
+- The Guide's pictures were dropped with the old screens, then retaken on the new ones
+  (`dev/guide_shots.py`).
+- Ask Claude on a locked post, the Claude account in Settings and setup, Settings' sections with
+  addresses, and the Trash (Put back, Delete forever…, Empty trash).

@@ -2,11 +2,14 @@
 (with ChatGPT and the health checks), the setup screen and the Guide."""
 from __future__ import annotations
 
+import dataclasses
 import re
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI
@@ -16,7 +19,7 @@ from . import attached, attachments, codex, flows, guide, paths, render
 from .api_posts import fail
 from .config import ConfigError, path_problems, problems
 from .db import loads, utcnow
-from .health import claude_version
+from .health import claude_account, claude_version
 from .main import ACTIVE, PROBLEM, TARGET, Studio
 from .publishing import MAX_AHEAD, MIN_LEAD, POST_MAX
 from .skills import ACTIONS, TOOL_KINDS
@@ -27,7 +30,8 @@ MODE_TITLE = {"bank": "Story Bank", "voice": "Voice profile"}
 HUMANIZE_MODES = ("default", "forensic", "strict", "aesthetic", "all")
 REACTIONS = {"LIKE": "Like", "PRAISE": "Celebrate", "EMPATHY": "Love", "INTEREST": "Insightful",
              "APPRECIATION": "Support", "ENTERTAINMENT": "Funny"}
-VERSION_TTL = 60   # seconds the Claude version is kept between Settings visits
+VERSION_TTL = 60   # seconds the Claude version and its sign-in are kept between visits
+GUIDE_SHOTS = Path(__file__).resolve().parent / "static" / "guide"
 
 
 def doc_status(text: str) -> dict:
@@ -61,6 +65,26 @@ def register(app: FastAPI, s: Studio) -> None:
         if time.monotonic() - version_cache["at"] > VERSION_TTL or not version_cache["said"]:
             version_cache.update(at=time.monotonic(), said=claude_version(cfg))
         return version_cache["said"]
+
+    # Who a login folder is signed in to (health.claude_account), asked with the runs' own command and environment
+    # and kept about a minute. Nothing of it is stored.
+    accounts: dict[tuple[str, str], tuple[float, dict]] = {}
+    asking = threading.Lock()
+
+    def account_of(folder: str, program: str = "", fresh: bool = False) -> dict:
+        key = (program or str(cfg.claude_bin), folder)
+        with asking:
+            kept = accounts.get(key)
+        if kept and not fresh and time.monotonic() - kept[0] < VERSION_TTL:
+            return kept[1]
+        candidate = dataclasses.replace(cfg, claude_config_dir=Path(folder), claude_bin=Path(key[0]))
+        said = claude_account(candidate, getattr(jobs.runner, "prefix", None))
+        with asking:
+            accounts[key] = (time.monotonic(), said)
+        return said
+
+    def sign_in(fresh: bool = False) -> dict:
+        return account_of(str(cfg.claude_config_dir), fresh=fresh)
 
     # ---- planner (and this month) ---------------------------------------------------------
     @app.get("/api/planner")
@@ -111,6 +135,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "upcoming": [s.post_summary(p) for p in upcoming],
             "claude": {"working": ACTIONS[active[0]["kind"]].doing if active else "",
                        "login": str(cfg.claude_config_dir), "model": cfg.model or "Account default",
+                       "sign_in": sign_in(),
                        "last_run": (f"{ACTIONS[last_run['kind']].title if last_run['kind'] in ACTIONS else last_run['skill']}, "
                                     f"{s.ago(last_run['started_at'])}") if last_run else "",
                        "health": ({"ok": last_health["exit_code"] == 0, "when": s.ago(last_health["ran_at"])}
@@ -291,6 +316,7 @@ def register(app: FastAPI, s: Studio) -> None:
         p = s.protection
         return {
             "claude": {"version": said, "ready": "Claude Code" in said, "login": str(cfg.claude_config_dir),
+                       "sign_in": sign_in(),
                        "model": cfg.model or "Account default", "turns": cfg.max_turns, "seconds": cfg.timeout_seconds,
                        "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
                        "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},
@@ -329,6 +355,10 @@ def register(app: FastAPI, s: Studio) -> None:
             return fail(str(exc))
         return {"ok": True, "home": text}
 
+    @app.post("/api/settings/claude/check")
+    def settings_sign_in():
+        return {"sign_in": sign_in(fresh=True)}
+
     @app.post("/api/settings/health/{name}")
     def settings_health(name: str):
         if not s.health.start(name):
@@ -346,8 +376,15 @@ def register(app: FastAPI, s: Studio) -> None:
                       for f in paths.FIELDS}
             _chosen, errors = paths.check(values, cfg, probe=False)
             errors = {key: why for key, why in errors.items() if values[key]}   # an empty box is not a mistake yet
+        # Who each login folder is signed in to: the ones found on this PC and the one in the box, asked side by side.
+        folders = list(dict.fromkeys([*found["claude_config_dir"], *([values["claude_config_dir"]] if values.get("claude_config_dir") else [])]))
+        folders = [f for f in folders if Path(f).is_absolute() and Path(f).is_dir()]
+        program = values.get("claude_bin") or str(cfg.claude_bin)
+        program = program if Path(program).is_file() else str(cfg.claude_bin)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            signed = dict(zip(folders, pool.map(lambda f: account_of(f, program), folders)))
         return {"fields": [{"key": f.key, "label": f.label, "kind": f.kind, "what": f.what} for f in paths.FIELDS],
-                "values": values, "errors": errors or {}, "found": found,
+                "values": values, "errors": errors or {}, "found": found, "accounts": signed,
                 "examples": {key: str(where[0]) for key, where in places.items()}, "first_run": s.needs_setup,
                 "saved": saved, "restarts": s.on_restart is not None}
 
@@ -358,7 +395,7 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/setup")
     def setup_save(data: dict = Body(default={})):
         values = {f.key: str(data.get(f.key) or "") for f in paths.FIELDS}
-        chosen, errors = paths.check(values, cfg)
+        chosen, errors = paths.check(values, cfg, prefix=getattr(jobs.runner, "prefix", None))
         if not errors:
             try:
                 paths.save(chosen)
@@ -391,9 +428,14 @@ def register(app: FastAPI, s: Studio) -> None:
                    "target_min": f"{TARGET['min']:,}", "target_max": f"{TARGET['max']:,}", "fold": TARGET["fold"],
                    "timeout": cfg.timeout_seconds, "tz": s.tz_label, "per_request": jobs.images_per_request}
         screens = guide.fill(guide.SCREENS, numbers)
+        shots = guide.shots(GUIDE_SHOTS)
         for screen in screens:
             if screen["key"] == "tools":    # one line per tool, from the same descriptions the Tools page shows
                 screen["points"] = [f"{ACTIONS[k].title}: {ACTIONS[k].blurb}" for k in TOOL_KINDS] + screen["points"]
-        return {"lanes": guide.fill(guide.LANES, numbers), "states": guide.fill(guide.STATES, numbers),
+            screen["shot"] = screen.get("shot", screen["key"]) if screen.get("shot", screen["key"]) in shots else None
+        lanes = guide.fill(guide.LANES, numbers)
+        for step in (step for lane in lanes for step in lane["steps"]):
+            step["shot"] = step.get("shot") if step.get("shot") in shots else None
+        return {"lanes": lanes, "states": guide.fill(guide.STATES, numbers),
                 "screens": screens, "shortcuts": guide.SHORTCUTS, "sample": guide.SAMPLE_POST, "numbers": numbers,
-                "private": s.protection.ok, "target": TARGET}
+                "private": s.protection.ok, "target": TARGET, "shots": shots}
