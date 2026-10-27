@@ -274,7 +274,8 @@ def test_the_palette_and_the_keys(studio):
     page.keyboard.press("Enter")
     page.wait_for_function("() => document.getElementById('title').textContent === 'Three years of Rust'")
 
-    order = page.evaluate("[...document.querySelectorAll('#list [data-post]')].map((b) => b.dataset.post)")
+    # every post, in the studio's order: the published ones are under Earlier, and Alt+↑/↓ reaches them too
+    order = page.evaluate("import('/static/js/core.js').then((m) => m.state.posts.map((p) => String(p.id)))")
     here = page.evaluate("location.hash.replace('#post-', '')")
     page.keyboard.press("Alt+ArrowDown")
     after = order[(order.index(here) + 1) % len(order)]

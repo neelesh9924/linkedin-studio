@@ -10,8 +10,9 @@
 //   for a request no answer ever came to.
 // - A post that is not a draft is locked: the panel says so and what unlocks it, and its ideas work on a locked post.
 // - Copy on each of Claude's replies; ↑ in an empty box brings back the last message sent in this conversation.
+// - Its left edge sets its width: dragged, or with the arrow keys (the panel's width, below).
 import { $, state, h, icon, api, post, put, plural, clockOf, announce, whileBusy, suggestion, drawIfChanged, onPoll, focusFirst,
-  copyButton } from "./core.js";
+  copyButton, recall, keep } from "./core.js";
 import { markdown } from "./md.js";
 import { choosePicture } from "./editor.js";
 import { attacher, chip } from "../attach.js";
@@ -71,21 +72,84 @@ export function showFor(next) {
   }
 }
 
-const hidden = () => {
-  try {
-    return localStorage.getItem("assist") === "0";
-  } catch {
-    return false;
-  }
-};
+const hidden = () => recall("assist") === "0";
 
 function showPanel(show, focus) {
-  try {
-    localStorage.setItem("assist", show ? "1" : "0");
-  } catch {}
+  keep("assist", show ? "1" : "0");
   $("app").classList.toggle("no-assist", !show || !ctx);
   $("showAssist").hidden = show || !ctx;
   if (focus) focusFirst(show ? $("askText") : $("showAssist"));
+}
+
+// ---------- the panel's width ----------
+// As in the owner's other studios: its left edge is a separator to drag, or to focus and move with ← and → (16 px, 64
+// with Shift), Home and End; a double-click puts back the layout's own width. A width chosen is kept for next time and
+// set on the root, so the toasts beside the panel keep clear of it. It never takes the post's room: the centre keeps
+// what it has at 941 px, where three columns still hold and the panel is at most the 320 px the narrow layout gives it.
+const ASSIST_MIN = 320;
+const CENTRE_MIN = 421;   // the centre at 941 px: 941 - 200 (the sidebar there) - 320
+const rootPx = (name) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || 0;
+const assistMax = () => {
+  const wide = document.documentElement.clientWidth;
+  return Math.max(ASSIST_MIN, Math.min(760, Math.round(wide * 0.5), wide - rootPx("--sidebar-w") - CENTRE_MIN));
+};
+const chosenWidth = () => Number(recall("assistWidth", 0)) || 0;
+
+// A width in pixels, kept within its bounds; 0 for the layout's own. Returns the width it is now.
+function setAssistWidth(px, save = true) {
+  const root = document.documentElement;
+  if (px > 0) root.style.setProperty("--assist-w", `${Math.round(Math.max(ASSIST_MIN, Math.min(assistMax(), px)))}px`);
+  else root.style.removeProperty("--assist-w");
+  const width = Math.round(rootPx("--assist-w"));
+  const edge = $("assistResize");
+  for (const [name, value] of [["aria-valuemin", ASSIST_MIN], ["aria-valuemax", assistMax()], ["aria-valuenow", width],
+    ["aria-valuetext", `${width} pixels wide`]]) {
+    if (edge.getAttribute(name) !== String(value)) edge.setAttribute(name, value);
+  }
+  if (save) keep("assistWidth", px > 0 ? width : null);
+  return width;
+}
+
+function wireResize() {
+  const edge = $("assistResize");
+  let dragging = false;
+  let moved = false;
+  edge.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    dragging = true;
+    moved = false;
+    edge.setPointerCapture(event.pointerId);
+    document.body.classList.add("resizing");
+    event.preventDefault();
+  });
+  edge.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    moved = true;
+    setAssistWidth($("assist").getBoundingClientRect().right - event.clientX, false);
+  });
+  const end = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    try {
+      edge.releasePointerCapture(event.pointerId);
+    } catch {}
+    document.body.classList.remove("resizing");
+    if (moved) keep("assistWidth", edge.getAttribute("aria-valuenow"));   // a click alone chooses nothing
+  };
+  edge.addEventListener("pointerup", end);
+  edge.addEventListener("pointercancel", end);
+  edge.addEventListener("dblclick", () => setAssistWidth(0));
+  edge.addEventListener("keydown", (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const now = Number(edge.getAttribute("aria-valuenow")) || ASSIST_MIN;
+    const step = event.shiftKey ? 64 : 16;
+    const next = { ArrowLeft: now + step, ArrowRight: now - step, Home: ASSIST_MIN, End: assistMax() }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    setAssistWidth(next);
+  });
+  window.addEventListener("resize", () => setAssistWidth(chosenWidth(), false));
+  setAssistWidth(chosenWidth(), false);
 }
 
 // ---------- the conversation ----------
@@ -484,6 +548,7 @@ export function init() {
     if (job) await whileBusy($("stopBtn"), () => post(`/api/jobs/${job.id}/cancel`, {}));
     $("askText").focus();
   });
+  wireResize();
   $("hideAssist").addEventListener("click", () => showPanel(false, true));
   $("showAssist").addEventListener("click", () => showPanel(true, true));
   window.addEventListener("studio:chat", () => {

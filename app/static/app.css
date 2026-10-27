@@ -16,6 +16,8 @@
   --accent-soft: #e9eeff; --accent-soft-2: #dbe3ff; --accent-ink: #2843bb;
   --ok: #0f7446; --ok-soft: #e0f4e8; --warn: #8a5800; --warn-soft: #fcefd2; --warn-ink: #5f3d00;
   --bad: #b92c1b; --bad-soft: #fde8e4; --scrim: rgba(16, 24, 40, .42);
+  /* Approved, ready to schedule: its own colour, not the green of Scheduled and Published (6.2:1 on its tint) */
+  --ready: #7a2db1; --ready-soft: #f3e8fb;
   --stage: #e9ecf1; --device: #1b1f27;
   --shadow-1: 0 1px 2px rgba(16, 24, 40, .06);
   --shadow-2: 0 6px 22px rgba(16, 24, 40, .09);
@@ -41,6 +43,7 @@
   --accent-soft: #1a2345; --accent-soft-2: #232f5c; --accent-ink: #a8b7ff;
   --ok: #56c690; --ok-soft: #11301f; --warn: #e7b655; --warn-soft: #33280e; --warn-ink: #f0cf8a;
   --bad: #ff8573; --bad-soft: #3a1914; --scrim: rgba(0, 0, 0, .6);
+  --ready: #d4a7f7; --ready-soft: #2c1a3f;
   --stage: #090b0e; --device: #000000;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
   --shadow-2: 0 8px 26px rgba(0, 0, 0, .45);
@@ -99,6 +102,15 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .nav-text .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-text .sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav-item[aria-current="page"] .sub { color: var(--accent-ink); }
+/* Earlier: the published and cancelled posts, folded away under a label like Posts, with no count */
+.side-fold { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px;
+  border-radius: 8px; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+  cursor: pointer; }
+.side-fold:hover { background: var(--surface-2); color: var(--text); }
+.side-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.side-fold .icon { transform: rotate(-90deg); transition: transform .15s; }
+.side-fold[aria-expanded="true"] .icon { transform: none; }
+.nav-group { display: grid; gap: 2px; }
 .side-links { display: grid; gap: 1px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .side-links .nav-item { gap: 9px; padding: 6px 10px; }
 .side-links .nav-text .name { font-weight: 500; }
@@ -112,6 +124,7 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .dot.ok { background: #1b955c; }
 .dot.warn { background: #b07a0c; }
 .dot.bad { background: #d6452f; }
+.dot.ready { background: #a05ad6; }
 .dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 
 .main { min-width: 0; display: flex; flex-direction: column; height: 100vh; }
@@ -175,6 +188,7 @@ select.input { padding-right: 6px; }
 .chip.warn { background: var(--warn-soft); color: var(--warn); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.busy { background: var(--accent-soft); color: var(--accent-ink); }
+.chip.ready { background: var(--ready-soft); color: var(--ready); }
 
 .notice { flex: none; display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding: 11px 14px; border-radius: var(--radius);
   background: var(--warn-soft); color: var(--warn-ink); }
@@ -380,8 +394,14 @@ del { background: var(--del); color: var(--del-ink); border-radius: 3px; }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
 
 /* ───────────── ask claude ───────────── */
-.assist { position: sticky; top: 0; height: 100vh; min-width: 0; display: flex; flex-direction: column;
+.assist { position: sticky; top: 0; z-index: 25; height: 100vh; min-width: 0; display: flex; flex-direction: column;
   background: var(--surface); border-left: 1px solid var(--line); }
+/* its left edge sets its width (assist.js): over the top bar's edge too, hence the panel's z-index */
+.assist-resize { position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; z-index: 30; cursor: col-resize; touch-action: none; }
+.assist-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background .12s; }
+.assist-resize:hover::after, .assist-resize:focus-visible::after, body.resizing .assist-resize::after { background: var(--accent); }
+.assist-resize:focus-visible { outline: none; }
+body.resizing { cursor: col-resize; user-select: none; }
 .assist-head { display: flex; align-items: center; gap: 8px; min-height: var(--topbar-h); padding: 10px 12px 10px 16px;
   border-bottom: 1px solid var(--line); }
 .assist-mark { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px;
@@ -640,6 +660,7 @@ del { background: var(--del); color: var(--del-ink); border-radius: 3px; }
 .soft { font-size: 13px; color: var(--text-3); }
 .dialog-foot { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .confirm-text { max-height: 260px; overflow-y: auto; }
+.precheck { margin: 14px 0 12px; }
 .confirm-picture { display: block; width: 100%; max-width: 360px; height: auto; margin-top: 10px; border-radius: 8px; }
 .zone { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .version-list { display: grid; gap: 2px; max-height: 300px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
@@ -721,6 +742,7 @@ body:has(> .app.bare) .toasts { left: 18px; max-width: calc(100vw - 36px); }
   .stage { flex: none; min-height: 72vh; }
   .page { overflow: visible; }
   .assist { position: static; height: auto; max-height: 85vh; border-left: 0; border-top: 1px solid var(--line); }
+  .assist-resize { display: none; }
   /* stacked, Ask Claude's box is at the foot of the page: the notes come in at the top instead */
   .toasts, body:has(> .app.no-assist) .toasts { left: 16px; right: 16px; top: 12px; bottom: auto; max-width: none; justify-items: stretch; }
   .toast { max-width: none; }
