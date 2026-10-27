@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .claude_runner import CREATE_NO_WINDOW
 from .config import ROOT, Config, ConfigError, path_problems
-from .health import claude_version, venv_python
+from .health import claude_account, claude_version, venv_python
 
 LOCAL = ROOT / "config.local.toml"
 EXAMPLE = ROOT / "config.example.toml"
@@ -82,11 +82,14 @@ def found(places: dict[str, list[Path]]) -> dict[str, list[str]]:
     return out
 
 
-def check(values: dict[str, str], cfg: Config, probe: bool = True) -> tuple[dict[str, Path], dict[str, str]]:
+def check(values: dict[str, str], cfg: Config, probe: bool = True,
+          prefix: list[str] | None = None) -> tuple[dict[str, Path], dict[str, str]]:
     """Turn what was typed into paths and say what is wrong with each. No errors = usable.
 
     With `probe`, a program that passes every other check is also asked for its version, so a
-    different claude.exe (the desktop app has one too) is caught here and not on the first job.
+    different claude.exe (the desktop app has one too) is caught here and not on the first job;
+    then who the login folder is signed in to. A folder that says it is signed in to nobody is
+    refused; an answer that cannot be read is no reason to refuse (the screen shows it).
     """
     chosen: dict[str, Path] = {}
     errors: dict[str, str] = {}
@@ -110,6 +113,9 @@ def check(values: dict[str, str], cfg: Config, probe: bool = True) -> tuple[dict
             said = claude_version(candidate)
             if "Claude Code" not in said:
                 errors["claude_bin"] = f"That file did not answer as Claude Code. It said: {said[:120]}"
+            elif claude_account(candidate, prefix)["signed_in"] is False:
+                errors["claude_config_dir"] = ("Claude Code is not signed in with this login folder. Run claude once "
+                                               "in a terminal and sign in, or choose the folder you signed in with.")
     return chosen, errors
 
 

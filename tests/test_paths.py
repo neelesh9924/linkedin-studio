@@ -1,9 +1,11 @@
 """The setup screen: finding the usual places, checking a choice, saving it, and being sent there."""
 import dataclasses
+import json
 import shutil
+import sys
 import threading
 import pytest
-from conftest import make_skills
+from conftest import FAKE, make_skills
 from fastapi.testclient import TestClient
 
 from app import paths
@@ -211,6 +213,49 @@ def test_without_a_launcher_it_saves_and_asks_for_a_reopen(cfg, pc, tmp_path, fa
     with client_for(cfg, tmp_path, fake_runner) as client:
         answer = client.post("/api/setup", json=chosen_from(pc)).json()
     assert answer["saved"] is True and answer["restarts"] is False and config_files[0].is_file()
+
+
+def says_signed_in(folder, said) -> None:
+    """What the stand-in Claude (tests/fake_claude.py) answers `auth status` with for this login folder."""
+    (folder / "fake-account.json").write_text(said if isinstance(said, str) else json.dumps(said), encoding="utf-8")
+
+
+def test_the_screen_names_the_account_beside_each_login_folder(cfg, tmp_path, fake_runner, looks_in_pc):
+    pc = looks_in_pc
+    says_signed_in(pc["home"] / ".claude", {"loggedIn": True, "email": "work@example.com", "subscriptionType": "team"})
+    says_signed_in(pc["home"] / ".claude-other", {"loggedIn": False})
+    broken = dataclasses.replace(cfg, skills_dir=tmp_path / "not-there")
+    with client_for(broken, tmp_path, fake_runner) as client:
+        body = client.get("/api/setup").json()
+    accounts = body["accounts"]
+    assert accounts[str(pc["home"] / ".claude")]["account"] == "work@example.com"
+    assert accounts[str(pc["home"] / ".claude")]["plan"] == "team"
+    assert accounts[str(pc["home"] / ".claude-other")]["signed_in"] is False
+    assert body["values"]["claude_config_dir"] in accounts                         # the chosen one too
+
+
+def test_save_refuses_a_login_folder_signed_in_to_nobody_and_an_unreadable_answer_never_blocks(
+        cfg, pc, tmp_path, fake_runner, config_files, monkeypatch):
+    local, _example = config_files
+    monkeypatch.setattr(paths, "claude_version", lambda _cfg: "2.1.292 (Claude Code)")
+    says_signed_in(pc["claude_config_dir"], {"loggedIn": False})
+    with client_for(cfg, tmp_path, fake_runner) as client:
+        refused = client.post("/api/setup", json=chosen_from(pc)).json()
+        assert refused["saved"] is False and not local.exists()
+        assert "not signed in with this login folder" in refused["errors"]["claude_config_dir"]
+        says_signed_in(pc["claude_config_dir"], "error: unknown command 'auth'")      # an older Claude Code
+        saved = client.post("/api/setup", json=chosen_from(pc)).json()
+    assert saved["saved"] is True and load_config(local).claude_config_dir == pc["claude_config_dir"]
+
+
+def test_the_check_asks_the_chosen_folder_with_the_runs_env(cfg, pc, monkeypatch):
+    monkeypatch.setattr(paths, "claude_version", lambda _cfg: "2.1.292 (Claude Code)")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-for-claude-runs")
+    prefix = [sys.executable, str(FAKE)]
+    says_signed_in(pc["claude_config_dir"], {"loggedIn": True, "email": "a@example.com"})
+    assert paths.check(chosen_from(pc), cfg, prefix=prefix)[1] == {}
+    asked = json.loads((pc["claude_config_dir"] / "fake-auth-env.json").read_text(encoding="utf-8"))
+    assert asked["config_dir"] == str(pc["claude_config_dir"]) and asked["api_key"] is False
 
 
 def test_another_site_cannot_change_the_folders(cfg, pc, tmp_path, fake_runner, config_files):

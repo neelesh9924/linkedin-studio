@@ -35,8 +35,9 @@ POST_CHAT_RULES = BASE_RULES + (
     "stands now and the conversation so far. Answer the owner's newest message.\n"
     "5. The post changes only through the studio's set_post_text tool: call it with the whole new text (and the "
     "first comment when that changes) and a short note of what changed. Each call keeps a version the owner can go "
-    "back to. Never put a rewritten post only in your reply. A post that is not a draft is locked: say so and "
-    "change nothing.\n"
+    "back to. Never put a rewritten post only in your reply. A post that is not a draft is locked: set_post_text "
+    "and make_image are not offered for it. Say so in one line, and do what still works: audit it, or advise on "
+    "the next post.\n"
     "6. Work through the skills: linkedin-post-writer to write or rewrite a post (it runs the humanizer pass), "
     "linkedin-humanizer to take out AI tells, linkedin-humanizer --mode audit to audit the post (then call "
     "record_audit with its findings, so they show beside the post), linkedin-hook-extractor to learn from someone "
@@ -205,7 +206,8 @@ def _post_chat(p: dict) -> str:
     """The post as it stands, the conversation so far and the owner's new message (flows.post_chat_context)."""
     post = p["post"]
     lines = [f"The post is a {post['status']} ({post['chars']:,} characters"
-             + (f", {post['blanks']} blank(s) still to fill" if post["blanks"] else "") + ").",
+             + (f", {post['blanks']} blank(s) still to fill" if post["blanks"] else "") + ")."
+             + ("" if post["status"] == "draft" else " It is locked: its text and picture cannot change here."),
              "Its text:", untrusted("POST", post["text"] or "(empty: nothing written yet)")]
     if post.get("first_comment"):
         lines += ["Its first comment:", untrusted("FIRST COMMENT", post["first_comment"])]

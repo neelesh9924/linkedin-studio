@@ -1,6 +1,8 @@
-"""Settings-page checks: the skills repo's own scripts and `claude --version`, run without a shell."""
+"""Settings-page checks: the skills repo's own scripts, `claude --version` and `claude auth status`, run without a
+shell."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -82,6 +84,35 @@ class Health:
         if name:
             return self.db.one("SELECT * FROM health WHERE script=? ORDER BY id DESC LIMIT 1", (name,))
         return self.db.one("SELECT * FROM health ORDER BY id DESC LIMIT 1")
+
+
+NOT_SIGNED_IN = "Not signed in: run claude once in a terminal and sign in"
+
+
+def claude_account(cfg: Config, prefix: list[str] | None = None) -> dict:
+    """Who the login folder is signed in to: `claude auth status --json`, with the environment every run gets (that
+    folder as CLAUDE_CONFIG_DIR, no API key). It sends Claude no request. Email and plan only; nothing is stored.
+
+    {ok, signed_in, account, plan, error}: signed_in is None when the answer could not be read.
+    """
+    unread = {"ok": False, "signed_in": None, "account": "", "plan": ""}
+    try:
+        env = build_env(cfg)
+    except ClaudeRefused as exc:
+        return {**unread, "error": str(exc)}
+    try:
+        done = subprocess.run([*(prefix or [str(cfg.claude_bin)]), "auth", "status", "--json"], env=env,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+                              stdin=subprocess.DEVNULL, creationflags=_flags())
+        said = json.loads(done.stdout or "")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        said = None
+    if not isinstance(said, dict) or not isinstance(said.get("loggedIn"), bool):
+        return {**unread, "error": "Claude Code did not say who is signed in. Run claude once in a terminal."}
+    if not said["loggedIn"]:
+        return {**unread, "signed_in": False, "error": NOT_SIGNED_IN}
+    return {"ok": True, "signed_in": True, "account": str(said.get("email") or ""),
+            "plan": str(said.get("subscriptionType") or ""), "error": ""}
 
 
 def claude_version(cfg: Config) -> str:

@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 
 import uvicorn  # noqa: E402
 
-from app import api_pages, versions  # noqa: E402
+from app import api_pages, paths, versions  # noqa: E402
 from app.claude_runner import RunResult  # noqa: E402
 from app.config import Config  # noqa: E402
 from app.db import DB, dumps, utcnow  # noqa: E402
@@ -38,6 +38,8 @@ from app.publishing import Publisher  # noqa: E402
 
 STEP_SECONDS = 0.8
 DEMO = ROOT / "dev" / "demo"
+# Who the stand-in login folder is "signed in to": made up, as everything here is.
+DEMO_ACCOUNT = {"ok": True, "signed_in": True, "account": "you@example.com", "plan": "max", "error": ""}
 
 POST = """On 14 March I stopped coding my side project after 10 pm on weekdays.
 
@@ -163,7 +165,9 @@ class ScriptedRunner:
             return RunResult(outcome="cancelled", error="Stopped.")
         lower = asked.lower()
         if any(w in lower for w in ("picture", "illustration", "image")):
-            if "mcp__studio__make_image" not in req.policy.allow:
+            if "mcp__studio__set_post_text" not in req.policy.allow:
+                reply = "This post is locked, so it cannot take a new picture. New draft from this makes an editable copy."
+            elif "mcp__studio__make_image" not in req.policy.allow:
                 reply = "ChatGPT's pictures are not set up in this studio yet (Settings › ChatGPT), so I made none."
             else:
                 say("Asking ChatGPT for a picture")
@@ -177,6 +181,10 @@ class ScriptedRunner:
                                                 "blockers": [{"issue": "Unfilled blanks ([N]).", "fix": "Put in your real figures."}] if "[" in text else []})
             reply = "Audited: the findings are beside the post."
             return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=4, usage=usage, skill_invoked=True)
+        if "mcp__studio__set_post_text" not in req.policy.allow:     # a post that is not a draft: its text is locked
+            reply = ("This post's text is locked, so I changed nothing. I can audit it, or say what would make the next "
+                     "one stronger.")
+            return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=2, usage=usage, skill_invoked=True)
         if not text or (("write" in lower or "draft" in lower) and "hook" not in lower):
             new, note = POST, "First draft"
         elif "short" in lower:
@@ -279,7 +287,8 @@ def main() -> None:
     fresh = not db_path.is_file()
     cfg = Config(skills_dir=skills, claude_bin=Path(sys.executable), claude_config_dir=login, port=port)
     # The stand-in "claude program" is this Python: Settings shows it as Claude Code, as on a PC that has it.
-    api_pages.claude_version = lambda _cfg: "2.1.292 (Claude Code), the demo's stand-in"
+    api_pages.claude_version = paths.claude_version = lambda _cfg: "2.1.292 (Claude Code), the demo's stand-in"
+    api_pages.claude_account = paths.claude_account = lambda _cfg, _prefix=None: DEMO_ACCOUNT
     db = DB(db_path)
     if fresh and "--empty" not in args and "--db" not in args:
         seed(db)
