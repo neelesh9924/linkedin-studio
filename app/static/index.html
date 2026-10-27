@@ -26,9 +26,10 @@
         <button id="goBank" class="nav-item" type="button" data-page="bank"><span class="nav-text"><span class="name">Story Bank &amp; Voice</span></span></button>
         <button id="goTools" class="nav-item" type="button" data-page="tools"><span class="nav-text"><span class="name">Tools</span></span></button>
         <button id="goGuide" class="nav-item" type="button" data-page="guide"><span class="nav-text"><span class="name">Guide</span></span></button>
+        <button id="goSettings" class="nav-item" type="button" data-page="settings"><span class="nav-text"><span class="name">Settings</span></span></button>
         <div class="side-row">
-          <button id="goSettings" class="nav-item" type="button" data-page="settings"><span class="nav-text"><span class="name">Settings</span></span></button>
-          <button id="themeBtn" class="btn ghost small square" type="button" aria-label="Switch between light and dark" title="Light or dark"></button>
+          <button id="goTrash" class="nav-item" type="button" data-page="trash" title="The posts you moved to the Trash"><span class="nav-text"><span class="name">Trash</span></span></button>
+          <button id="themeBtn" class="btn ghost small square" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"></button>
         </div>
       </nav>
       <p id="sideFoot" class="side-foot"><span>Runs on this PC. A post goes out only when you schedule it.</span></p>
@@ -43,7 +44,7 @@
         </div>
         <div id="topActions" class="top-actions"></div>
         <button id="postGear" class="btn ghost square" type="button" aria-label="This post’s settings"
-                title="Its title, its versions, Delete" hidden></button>
+                title="Its title, its versions, New draft from this, Move to Trash" hidden></button>
         <button id="showAssist" class="btn ghost" type="button" hidden><span>Ask Claude</span></button>
       </header>
 
@@ -54,6 +55,7 @@
       <div id="toolsPage" class="page" hidden></div>
       <div id="guidePage" class="page" hidden></div>
       <div id="settingsPage" class="page" hidden></div>
+      <div id="trashPage" class="page" hidden></div>
       <div id="setupPage" class="page" hidden></div>
     </main>
 
@@ -90,7 +92,7 @@
     </aside>
   </div>
   <dialog id="dialog" class="modal"></dialog>
-  <div id="toasts" class="toasts"></div>
+  <div id="toasts" class="toasts" role="region" aria-label="Notifications"></div>
   <div id="announce" class="sr-only" role="status"></div>
   <div id="alarm" class="sr-only" role="alert"></div>
   <script type="module" src="/static/app.js"></script>

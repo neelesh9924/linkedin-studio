@@ -126,6 +126,7 @@ def register(app: FastAPI, s: Studio) -> None:
             data = loads(item["data"], {}) if item else {}
             plan = {k: data.get(k) for k in ("day", "time", "angle", "formula", "pillar", "goal", "cta") if data.get(k)}
         status = row["status"]
+        trash_why = trash_refusal(row, s.post_working(pid))
         return {
             **s.post_summary(row),
             "text": row["text"], "first_comment": row["first_comment"] or "", "formula": row["formula"] or "",
@@ -135,7 +136,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "revision": revision_public(revision, row) if revision is not None and status == "draft" else None,
             "slots": len(placeholder_slots(row["text"])), "chars": len(row["text"]),
             "editable": status == "draft" and not busy,
-            "deletable": not trash_refusal(row, s.post_working(pid)),   # Move to Trash… is offered
+            "deletable": not trash_why, "trash_why": trash_why,      # Move to Trash… is offered, or why it is not
             "error": row["error"] or "", "saved": s.clock(row["updated_at"]),
             "picture": images.public(chosen, row["picture_id"]) if chosen else None,
             "pictures": [images.public(p, row["picture_id"]) for p in pictures],
