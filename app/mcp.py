@@ -92,6 +92,8 @@ def _post(studio: Studio, run: Run):
     post = studio.db.one("SELECT * FROM posts WHERE id=?", (run.params.get("post_id"),))
     if post is None:
         raise ToolError("This post is no longer in the studio.")
+    if post["trashed_at"]:
+        raise ToolError("The owner moved this post to the Trash: change nothing, and say so.")
     return post
 
 
@@ -115,7 +117,7 @@ def _set_post_text(studio: Studio, run: Run, args: dict) -> str:
     db = studio.db
     versions.catch_up(db, post["id"])
     changed = db.run("UPDATE posts SET text=?, first_comment=?, formula=COALESCE(?, formula), notes=COALESCE(?, notes), "
-                     "updated_at=? WHERE id=? AND status='draft'",
+                     "updated_at=? WHERE id=? AND status='draft' AND trashed_at IS NULL",
                      (text, first, _text(args.get("formula"))[:120] or None, dumps(notes) if notes else None, utcnow(),
                       post["id"]))
     if changed != 1:

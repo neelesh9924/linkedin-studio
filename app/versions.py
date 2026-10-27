@@ -2,13 +2,17 @@
 
 A version is kept when Claude changes the post (a chat request, a revision used, a first draft)
 and, just before that, the owner's own edits since the last version, so going back never loses
-what they typed. Going back is a change too: it is kept, so it can be undone.
+what they typed. The owner's own edits are kept by themselves too: when they leave the text
+(checkpoint), before a save that takes away a third or more of it (big_cut), and when they approve
+it. Going back is a change too: it is kept, so it can be undone.
 """
 from __future__ import annotations
 
 from .db import DB, utcnow
 
 AUTHORS = ("you", "claude", "studio")
+CUT_SHARE = 3        # a save that takes away 1/CUT_SHARE of the text or more keeps the text before it first
+CUT_LEAST = 20       # ... and at least this many characters: a few letters off a short line are not worth a version
 
 
 def latest(db: DB, post_id: int):
@@ -37,6 +41,29 @@ def catch_up(db: DB, post_id: int) -> int | None:
         return None
     note = "Your edits" if latest(db, post_id) is not None else "As it was"
     return record(db, post_id, post["text"], post["first_comment"], "you", note)
+
+
+def checkpoint(db: DB, post_id: int) -> int | None:
+    """The owner left the text after typing: keep it as their version when it differs from the latest one."""
+    post = db.one("SELECT text, first_comment FROM posts WHERE id=?", (post_id,))
+    if post is None:
+        return None
+    return record(db, post_id, post["text"], post["first_comment"], "you", "Your edits")
+
+
+def big_cut(before: str, after: str) -> bool:
+    """Whether a save takes away a third or more of the text: what lies between the part both keep at the start and
+    the part both keep at the end (select-all and one key takes it all)."""
+    before, after = before or "", after or ""
+    most = min(len(before), len(after))
+    start = 0
+    while start < most and before[start] == after[start]:
+        start += 1
+    end = 0
+    while end < most - start and before[-1 - end] == after[-1 - end]:
+        end += 1
+    gone = len(before) - start - end
+    return gone >= CUT_LEAST and gone * CUT_SHARE >= len(before)
 
 
 def listing(db: DB, post_id: int) -> list:

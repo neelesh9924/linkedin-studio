@@ -131,25 +131,89 @@ def test_using_a_revision_replaces_the_text_once_and_keeps_both_versions(web):
     assert [(v["author"], v["note"]) for v in kept] == [("claude", "New hook"), ("you", "As it was")]
 
 
-def test_delete_is_refused_once_a_post_is_on_publora_and_otherwise_takes_everything_of_it(web):
+def test_a_post_on_publora_stays_and_any_other_goes_to_the_trash_and_from_there_forever(web):
     client, db = web
     for status in ("scheduling", "scheduled", "published"):
         post = add_post(db, status=status, scheduled_at="2026-10-09T03:30:00+00:00", publora_post_id="pg1")
-        assert client.post(f"/api/post/{post}/delete", json={}).status_code == 409
+        assert client.post(f"/api/post/{post}/trash", json={}).status_code == 409
+    assert client.post("/api/post/1/delete", json={}).status_code in (404, 405)        # no way round the Trash
     post = add_post(db)
     plan = db.run("INSERT INTO plans (created_at, inputs, result) VALUES (?,?,?)", (utcnow(), "{}", "{}"))
     item = db.run("INSERT INTO plan_items (plan_id, position, data, post_id) VALUES (?,?,?,?)", (plan, 0, "{}", post))
     image = images.save(db, post, b"\x89PNG-one", mime="image/png", source="chatgpt")
     file = images.path_of(db, db.one("SELECT * FROM images WHERE id=?", (image,)))
     client.post(f"/api/post/{post}/ask", json={"text": "hello"})
-    assert client.post(f"/api/post/{post}/delete", json={}).status_code in (200, 409)   # 409 while its chat request runs
+    assert client.post(f"/api/post/{post}/trash", json={}).status_code in (200, 409)   # 409 while its chat request runs
     from app.jobs import wait_for
     for job in db.all("SELECT id FROM jobs"):
         wait_for(db, job["id"], 15)
-    assert client.post(f"/api/post/{post}/delete", json={}).json() == {"ok": True}
+    client.post(f"/api/post/{post}/trash", json={})
+    assert db.one("SELECT trashed_at FROM posts WHERE id=?", (post,))["trashed_at"] and file.exists()   # all of it kept
+    assert client.post("/api/trash/delete", json={"ids": [post], "confirmed": True}).json()["ok"] is True
     assert db.one("SELECT 1 FROM posts WHERE id=?", (post,)) is None and not file.exists()
     assert db.one("SELECT post_id FROM plan_items WHERE id=?", (item,))["post_id"] is None
     assert db.one("SELECT COUNT(*) AS n FROM conversations WHERE post_id=?", (post,))["n"] == 0
+
+
+# ---- your own edits as versions, the title, New draft from this ---------------------------------
+def kept(client, post):
+    return [(v["author"], v["note"]) for v in client.get(f"/api/post/{post}/versions").json()["versions"]]
+
+
+def test_a_big_cut_keeps_the_text_before_it_and_small_edits_do_not(web):
+    client, db = web
+    hand = "Written by hand, line by line, over an evening.\n\n" * 6
+    post = add_post(db, text=hand.strip())
+    client.post(f"/api/post/{post}/save", json={"text": hand.strip() + " One more word."})
+    assert kept(client, post) == []                                    # typing: no version each second
+    client.post(f"/api/post/{post}/save", json={"text": "x"})            # select-all and one key, autosaved
+    versions = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert [(v["author"], v["note"]) for v in versions] == [("you", "As it was")]
+    assert versions[0]["chars"] == len(hand.strip() + " One more word.")
+    back = client.post(f"/api/post/{post}/versions/back", json={"version": versions[0]["id"]}).json()
+    assert back == {"changed": True} and db.one("SELECT text FROM posts WHERE id=?", (post,))["text"].startswith("Written by hand")
+
+
+def test_leaving_the_text_keeps_your_edits_once_and_approve_keeps_the_approved_text(web):
+    client, db = web
+    post = add_post(db, text="Claude's first draft.")
+    from app import versions as kept_versions
+    kept_versions.record(db, post, "Claude's first draft.", None, "claude", "First draft")
+    client.post(f"/api/post/{post}/save", json={"text": "My own words now."})
+    assert client.post(f"/api/post/{post}/checkpoint", json={}).json()["version"]
+    assert client.post(f"/api/post/{post}/checkpoint", json={}).json() == {"version": None}   # nothing new since
+    assert kept(client, post) == [("you", "Your edits"), ("claude", "First draft")]
+    assert client.post(f"/api/post/{post}/approve", json={"text": "My own words, approved."}).json() == {"ok": True}
+    assert kept(client, post)[0] == ("you", "Approved")
+    assert client.post(f"/api/post/{post}/checkpoint", json={}).json() == {"version": None}   # approved: locked
+    refused = add_post(db, text="Still has [N] in it.")
+    assert client.post(f"/api/post/{refused}/approve", json={}).status_code == 409 and kept(client, refused) == []
+
+
+@pytest.mark.parametrize("status", ["draft", "approved", "scheduled", "published", "cancelled"])
+def test_the_title_saves_in_any_state_and_alone(web, status):
+    client, db = web
+    post = add_post(db, status=status, text="The text stays.", scheduled_at="2026-10-09T03:30:00+00:00")
+    assert client.post(f"/api/post/{post}/title", json={"title": "  A  better   title "}).json() == {"ok": True, "title": "A better title"}
+    assert tuple(db.one("SELECT title, text, status FROM posts WHERE id=?", (post,))) == ("A better title", "The text stays.", status)
+    assert client.post(f"/api/post/{post}/title", json={"title": " "}).status_code == 422
+
+
+def test_new_draft_from_this_copies_the_post_and_shares_its_picture(web):
+    client, db = web
+    post = add_post(db, status="published", text="Shipped it.", first_comment="The link", formula="F4", notes=dumps(["n"]),
+                    scheduled_at="2026-10-01T03:30:00+00:00", publora_post_id="pg1", title="Shipped")
+    image = images.save(db, post, b"\x89PNG-shared", mime="image/png", source="chatgpt", width=1200, height=627, shape="landscape")
+    db.run("UPDATE posts SET picture_id=? WHERE id=?", (image, post))
+    reply = client.post(f"/api/post/{post}/copy", json={}).json()
+    new = reply["id"]
+    assert reply["post"]["status"] == "draft" and reply["post"]["first"] == "Shipped it."
+    shown = client.get(f"/api/post/{new}").json()
+    assert (shown["text"], shown["first_comment"], shown["formula"], shown["notes"], shown["editable"]) == ("Shipped it.", "The link", "F4", ["n"], True)
+    assert shown["picture"]["id"] != image and db.one("SELECT file FROM images WHERE id=?", (shown["picture"]["id"],))["file"] == \
+        db.one("SELECT file FROM images WHERE id=?", (image,))["file"]
+    assert kept(client, new) == [("studio", "From Shipped")]
+    assert client.get(f"/api/post/{post}").json()["status"] == "published"                # the original is as it was
 
 
 @pytest.mark.parametrize("status,extra,can", [
@@ -237,7 +301,7 @@ def test_a_picture_post_stopped_part_way_keeps_its_picture_and_publora_draft_unt
     assert client.post(f"/api/post/{post}/schedule", json={"when": tomorrow_local(cfg)}).json()["ok"] is False
     shown = client.get(f"/api/post/{post}").json()
     assert shown["status"] == "failed" and shown["can_retry"] and not shown["deletable"]
-    assert client.post(f"/api/post/{post}/delete", json={}).status_code == 409   # Publora holds its draft
+    assert client.post(f"/api/post/{post}/trash", json={}).status_code == 409    # Publora holds its draft
     assert client.post(f"/api/post/{post}/picture", json={"image": None}).status_code == 409
     assert client.post(f"/api/post/{post}/retry", json={}).json()["ok"] is True  # carries on from the upload
     assert len(fake.calls) == 1 and client.get(f"/api/post/{post}").json()["status"] == "scheduled"
@@ -324,7 +388,9 @@ def test_an_interview_thread_shows_file_changes_and_waits_for_its_reply(web):
 
 
 # ---- guide --------------------------------------------------------------------------------------
-PAGES = {"#~planner", "#~bank", "#~voice", "#~tools", "#~settings", "#~guide", "#~posts"} | {f"#~tools-{k}" for k in TOOL_KINDS}
+PAGES = ({"#~planner", "#~bank", "#~voice", "#~tools", "#~settings", "#~guide", "#~trash", "#~posts"}
+         | {f"#~tools-{k}" for k in TOOL_KINDS}
+         | {f"#~settings-{k}" for k in ("claude", "publishing", "chatgpt", "appearance", "health", "runs", "app")})
 
 
 def test_the_guide_covers_every_step_and_screen_with_links_the_page_opens(web):

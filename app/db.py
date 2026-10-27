@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS posts (
     audit TEXT,                    -- JSON from the last audit
     picture_id INTEGER,            -- the image that goes out with the post
     status TEXT NOT NULL,          -- draft, approved, scheduling, scheduled, published, failed, cancelled
+    trashed_at TEXT,               -- set while the post is in the Trash; it keeps its status and all it has
     scheduled_at TEXT,             -- UTC ISO
     idempotency_key TEXT,
     publora_post_id TEXT,
@@ -147,6 +148,7 @@ MIGRATIONS = [
     ("messages", "meta", "TEXT"),                       # JSON: what a reply did (versions, pictures, an offer)
     ("posts", "media", "TEXT"),                         # JSON: a picture post's Publora steps (publishing.py)
     ("posts", "media_step", "TEXT"),                    # the step it reaches next
+    ("posts", "trashed_at", "TEXT"),                    # in the Trash since then (api_trash.py)
 ]
 
 

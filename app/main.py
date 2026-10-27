@@ -3,7 +3,8 @@
 The page asks /api/state every two seconds (the posts, the jobs under way, `rev`, which changes
 whenever something it shows was written) and fetches what it shows again only when that changed.
 Each area of the API is its own module: api_posts (a post, its chat, versions and picture),
-api_pages (Planner, Story Bank & Voice, Tools, Settings, setup, the Guide).
+api_trash (the posts moved to the Trash), api_pages (Planner, Story Bank & Voice, Tools, Settings,
+setup, the Guide).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ STATUS_LABEL = {"draft": "Draft", "approved": "Approved", "scheduling": "Sending
 STATUS_KIND = {"draft": "", "approved": "ok", "scheduling": "busy", "scheduled": "ok", "published": "ok",
                "failed": "bad", "cancelled": "warn"}
 ORDER = {"draft": 0, "approved": 1, "failed": 2, "scheduling": 3, "scheduled": 4, "published": 5, "cancelled": 6}
+TRASHED_LABEL = "In the Trash"
 TARGET = {"min": 900, "max": 1300, "hard": POST_MAX, "fold": 210}
 MAX_BODY = 1_000_000
 SETUP_OPEN = ("/api/state", "/api/setup", "/api/guide", "/api/quit")   # what works before the folders are set
@@ -80,16 +82,23 @@ class Studio:
 
     # ---- rows the page reads ----
     def post_summary(self, row) -> dict:
+        """A post as the list, the Planner and the Trash show it. One in the Trash says so (the Planner's card)."""
         busy = self.post_busy(row["id"])
+        trashed = bool(row["trashed_at"]) if "trashed_at" in row.keys() else False
         return {"id": row["id"], "title": row["title"], "first": first_line(row["text"]) or "Nothing written yet",
-                "status": row["status"], "label": STATUS_LABEL.get(row["status"], row["status"]),
-                "kind": STATUS_KIND.get(row["status"], ""), "when": self.when(row["scheduled_at"]),
-                "scheduled_at": row["scheduled_at"], "picture": bool(row["picture_id"]), "busy": busy}
+                "status": row["status"], "label": TRASHED_LABEL if trashed else STATUS_LABEL.get(row["status"], row["status"]),
+                "kind": "" if trashed else STATUS_KIND.get(row["status"], ""), "when": self.when(row["scheduled_at"]),
+                "scheduled_at": row["scheduled_at"], "picture": bool(row["picture_id"]), "busy": busy, "trashed": trashed}
 
     def post_busy(self, post_id: int) -> bool:
         """Claude is writing (or waiting to write) this post's chat reply: its text waits until it is done."""
         return self.db.one("SELECT 1 FROM jobs WHERE kind='post_chat' AND status IN ('queued','running') "
                            "AND json_extract(params,'$.post_id')=?", (post_id,)) is not None
+
+    def post_working(self, post_id: int) -> bool:
+        """Any job of Claude's for this post runs or waits: its chat, an audit or a revision."""
+        return self.db.one("SELECT 1 FROM jobs WHERE status IN ('queued','running') AND json_extract(params,'$.post_id')=?",
+                           (post_id,)) is not None
 
     def job_public(self, row) -> dict:
         params = loads(row["params"], {})
@@ -192,7 +201,7 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
     @app.get("/api/state")
     def state():
         studio.seq += 1
-        rows = db.all("SELECT * FROM posts")
+        rows = db.all("SELECT * FROM posts WHERE trashed_at IS NULL")   # the Trash's are on its own page
         rows.sort(key=lambda r: (ORDER.get(r["status"], 9),
                                  (r["scheduled_at"] or "") if r["status"] in ("scheduling", "scheduled") else "",
                                  -r["id"] if r["status"] not in ("scheduling", "scheduled") else 0))
@@ -263,9 +272,10 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
             return Response(status_code=202)
         return JSONResponse(reply)
 
-    from . import api_pages, api_posts  # noqa: PLC0415  (they use Studio, above)
+    from . import api_pages, api_posts, api_trash  # noqa: PLC0415  (they use Studio, above)
 
     api_posts.register(app, studio)
+    api_trash.register(app, studio)
     api_pages.register(app, studio)
     return app
 
