@@ -1,8 +1,9 @@
-// The Planner: this month (posts used against the limit, the next post, the scheduled ones with Check Publora, Claude's
-// status), getting set up, the week's plan from the content planner, each card drafted with one press (a card whose post
-// is in the Trash says so, with Put back), who to comment on, the inbound-readiness checklist, and earlier plans. Drawn
-// again, a card keeps the focus that was in it: on its Cancel while it is being drafted, else on its first button.
-import { state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
+// The Planner: this week first (the latest plan's cards, each drafted with one press; a card whose post is in the Trash
+// says so, with Put back; who to comment on and the inbound-readiness checklist), then getting set up until every step
+// is done, this month (posts used against the limit, the next post, Claude's status), the scheduled posts with Check
+// Publora, the form for a new week and earlier plans. Drawn again, a card keeps the focus that was in it: on its Cancel
+// while it is being drafted, else on its first button.
+import { $, state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 
 let box = null;
@@ -62,6 +63,7 @@ function draw() {
   }));
   put(box, h("div", { class: "page-width" },
     d.problems.map((p) => h("div", { class: "notice bad" }, icon("alert", 16), h("div", null, p))),
+    weekOf(d),
     left.length ? h("section", { class: "panel" },
       h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("check", 17)),
         h("div", null, h("h2", null, "Getting set up"), h("p", null, `${d.steps.length - left.length} of ${d.steps.length} done`))),
@@ -92,12 +94,12 @@ function draw() {
             : h("a", { href: "#~settings-health" }, "Not run yet")))))),
     h("section", { class: "panel" },
       h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("clock", 17)),
-        h("div", null, h("h2", null, "Scheduled posts"), h("p", null, "Waiting at Publora. Check Publora marks the ones whose time has passed.")), checkPublora),
+        h("div", null, h("h2", null, "Scheduled posts"), h("p", null, "Waiting at Publora. Once a post’s time has passed, the studio asks Publora by itself every few minutes; Check Publora asks now.")), checkPublora),
       d.upcoming.length ? h("div", { class: "rows" }, d.upcoming.map((p) => h("button", { class: "row-link", type: "button", onclick: () => go(`#post-${p.id}`) },
         h("b", null, p.first), h("small", null, p.when), h("span", { class: `chip ${p.kind}` }, p.label))))
         : h("div", { class: "panel-body soft" }, "Nothing is scheduled. Approve a post, then pick a time.")),
     planForm(d),
-    boardOf(d)));
+    earlierOf(d)));
 }
 
 // Who Claude runs as: "Signed in as <account> (<plan>)", or a link to Settings › Claude when it is not (or can't tell).
@@ -186,7 +188,8 @@ function itemCard(item) {
     h("div", { class: "foot" }, foot));
 }
 
-function boardOf(d) {
+// This week: the plan being made (or the one that did not finish), the latest plan's cards and what came with them.
+function weekOf(d) {
   const out = [];
   const pj = d.plan_job;
   if (pj) {
@@ -194,10 +197,16 @@ function boardOf(d) {
     out.push(["queued", "running"].includes(pj.status) ? h("div", { class: "job-box", "data-job-box": pj.id })
       : problemCard(pj, { onDone: () => window.dispatchEvent(new Event("studio:poll")) }));
   }
-  const [latest, ...earlier] = d.boards;
+  const latest = d.boards[0];
   if (!latest) {
+    const toForm = h("button", { class: "btn primary", type: "button" }, icon("calendar", 15), h("span", null, "Plan the next 7 days"));
+    toForm.addEventListener("click", () => {
+      $("plan-form").scrollIntoView({ block: "start" });
+      focusFirst('#plan-form input[name="audience"]');
+    });
     if (!pj) out.push(h("div", { class: "empty" }, h("div", { class: "empty-mark" }, icon("calendar", 24)), h("h2", null, "No plan yet"),
-      h("p", null, "Say who you write for and what the week should achieve. The plan appears here, and each post can be drafted with one press.")));
+      h("p", null, "Say who you write for and what the week should achieve. The plan appears here, and each post can be drafted with one press."),
+      h("div", { class: "form-foot" }, toForm)));
     return out;
   }
   out.push(h("div", { class: "section-title" }, h("h2", null, "This week"), h("span", null, `Planned ${latest.planned} for ${latest.inputs.audience || "your audience"}`)));
@@ -219,6 +228,13 @@ function boardOf(d) {
       latest.notes.length ? h("section", { class: "card" }, h("div", { class: "card-head" }, h("h3", null, icon("info", 15), "Planner’s notes")),
         h("div", { class: "card-body" }, h("ul", { class: "list" }, latest.notes.map((n) => h("li", null, String(n)))))) : null));
   }
+  return out;
+}
+
+// Earlier plans, under the form for a new week.
+function earlierOf(d) {
+  const out = [];
+  const earlier = d.boards.slice(1);
   if (earlier.length) {
     out.push(h("div", { class: "section-title" }, h("h2", null, "Earlier plans")));
     out.push(h("section", { class: "panel", style: "padding:0 16px" }, earlier.map((b) => h("details", { class: "fold" },

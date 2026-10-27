@@ -6,8 +6,8 @@
 import { $, state, h, icon, api, go, showDialog, closeButton, announce, focusFirst, onPoll } from "./core.js";
 
 const GROUPS = ["Posts", "Pages", "Actions"];
-const SETTINGS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["appearance", "Appearance"],
-  ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
+const SETTINGS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["profile", "You in the preview"],
+  ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
 let openNow = null;
 let tools = null;        // Tools' tools, from /api/tools the first time the palette opens
 
@@ -31,7 +31,8 @@ function items() {
   for (const t of tools || []) page(`Tools: ${t.title}`, `#~tools-${t.kind}`, t.icon || "tool", "", `tool ${t.kind}`);
   page("Guide", "#~guide", "help", "How the studio works", "help");
   page("Settings", "#~settings", "settings");
-  for (const [id, name] of SETTINGS) page(`Settings: ${name}`, `#~settings-${id}`, "settings");
+  for (const [id, name] of SETTINGS) page(`Settings: ${name}`, `#~settings-${id}`, id === "profile" ? "user" : "settings", "",
+    id === "profile" ? "name headline photo avatar" : "");
   page("Trash", "#~trash", "trash", "Posts you moved there", "deleted bin");
 
   const action = (label, glyph, run, hint = "", keys = "") => out.push({ group: "Actions", label, icon: glyph, run, hint, keys });
@@ -54,6 +55,10 @@ function items() {
         action(`Revise: ${words}`, "sparkle", () => item.click(), item.querySelector("small").textContent, "revise rewrite");
       }
     }
+  }
+  if (state.page === "tools") {
+    press([...document.querySelectorAll('#toolsPage [data-act="tool-post"]')].find(usable), "Start a post from this", "file", "",
+      "new draft result tool");
   }
   if (shown($("askText"))) action("Ask Claude", "chat", focusAsk, "Ctrl+/", "chat question");
   if (shown($("showAssist"))) action("Show Ask Claude", "panel", () => $("showAssist").click(), "", "panel chat");

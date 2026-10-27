@@ -1,5 +1,7 @@
 // Tools: one skill each (Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer). The input on
-// the left, the result on the right with copy buttons; a repurposed post can become a post. Nothing here goes out.
+// the left, the result on the right with copy buttons, and under it the tool's earlier results, each shown again with a
+// press. Start a post from this makes a post of a result that holds one (a rewrite, the draft audited, a repurposed
+// post, a hook's template) and opens it. Nothing here goes out.
 import { state, h, icon, api, post, put, number, announce, whileBusy, drawIfChanged, copyButton, go, focusFirst } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { auditView } from "./audit.js";
@@ -29,6 +31,11 @@ let data = null;
 let current = "humanize";
 const outs = {};
 const runs = {};          // each tool's Run button: where the focus goes when its result box empties under it
+const lists = {};         // each tool's Earlier results, under its result
+const picks = {};         // kind -> { job, over }: an earlier result picked, shown until the tool's latest job changes
+
+const latestKey = (t) => (t.job ? `${t.job.id}:${t.job.status}` : "");
+const toolOf = (kind) => (data ? data.tools.find((t) => t.kind === kind) : null);
 
 export async function render(container, { sub } = {}) {
   box = container;
@@ -148,16 +155,20 @@ function pane(t) {
     });
   });
   outs[k] = h("div", { class: "panel-body", "aria-live": "off" });
+  lists[k] = h("section", { class: "earlier", "aria-labelledby": `earlier-${k}`, hidden: true });
   return h("section", { "data-pane": k, id: `tool-pane-${k}`, role: "tabpanel", "aria-labelledby": `tool-tab-${k}`, hidden: true },
     h("div", { class: "workbench" },
       h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon(t.icon, 17)), h("div", null, h("h2", null, t.title))), form),
-      h("section", { class: "panel", "aria-label": `${t.title}: result` }, h("header", { class: "panel-head" }, h("div", null, h("h2", null, "Result"))), outs[k])));
+      h("section", { class: "panel", "aria-label": `${t.title}: result` }, h("header", { class: "panel-head" }, h("div", null, h("h2", null, "Result"))), outs[k],
+        lists[k])));
 }
 
 function drawOut(t) {
   const out = outs[t.kind];
   if (!out) return;
-  const job = t.job;
+  if (picks[t.kind] && picks[t.kind].over !== latestKey(t)) delete picks[t.kind];   // a new run takes the box back
+  const job = picks[t.kind] ? picks[t.kind].job : t.job;
+  drawEarlier(t, job);
   const had = out.contains(document.activeElement);
   const drew = drawIfChanged(out, JSON.stringify(job && [job.id, job.status, job.result]), () => {
     if (!job) return void put(out, h("p", { class: "soft" }, "Nothing here yet. Run the tool and its result appears on this side."));
@@ -173,6 +184,51 @@ function drawOut(t) {
   }
 }
 
+// Earlier results: the tool's finished results (newest first, the one shown marked), shown while there is one other than
+// the result in the box. The focus stays on the row it was on through a redraw.
+function drawEarlier(t, shown) {
+  const list = lists[t.kind];
+  const items = t.earlier || [];
+  const at = shown && shown.status === "done" ? shown.id : null;
+  const on = list.contains(document.activeElement) ? document.activeElement.dataset.job : null;
+  const drew = drawIfChanged(list, JSON.stringify([items, at]), () => {
+    list.hidden = !items.some((e) => e.id !== at);
+    put(list, h("header", { class: "panel-head" }, h("div", null, h("h3", { id: `earlier-${t.kind}` }, "Earlier results"),
+      h("p", null, `The last ${items.length === 1 ? "one" : number(items.length)}, newest first. Pick one to see it again.`))),
+    h("div", { class: "rows" }, items.map((e) => h("button", { class: "row-link", type: "button", "data-job": e.id,
+      "aria-current": e.id === at ? "true" : null, onclick: () => pickEarlier(t.kind, e) },
+    h("b", null, e.first || "(no text)"), h("small", null, e.when), e.id === at ? h("span", { class: "chip" }, "Showing") : null))));
+  });
+  if (drew && on) focusFirst(list.querySelector(`[data-job="${on}"]`), runs[t.kind]);
+}
+
+async function pickEarlier(kind, entry) {
+  const t = toolOf(kind);
+  if (!t) return;
+  if (t.job && t.job.id === entry.id) {
+    delete picks[kind];         // the latest: the box follows the tool again
+  } else {
+    const reply = await api(`/api/tools/${kind}/${entry.id}`);
+    if (reply.error) return announce(reply.error, { urgent: true });
+    picks[kind] = { job: reply.job, over: latestKey(t) };
+  }
+  drawOut(toolOf(kind));
+  announce(`Showing the result from ${entry.when}: ${entry.first || "no text"}.`);
+}
+
+// Start a post from this: a new post from this result, opened at once (the one way, for every tool whose result is a
+// post's text).
+function startButton(kind, job) {
+  const start = h("button", { class: "btn primary small", type: "button", "data-act": "tool-post" }, icon("file", 14), h("span", null, "Start a post from this"));
+  start.addEventListener("click", () => whileBusy(start, async () => {
+    const reply = await post(`/api/tools/${kind}/${job.id}/draft`, {});
+    if (reply.error) return announce(reply.error, { urgent: true });
+    announce("A new post, from this result. It is open now.");
+    go(`#post-${reply.post}`);
+  }));
+  return start;
+}
+
 const bullets = (items) => (items && items.length ? h("ul", { class: "list" }, items.map((x) => h("li", null, String(x)))) : null);
 const fold = (title, items, open = false) => (items && items.length ? h("details", { class: "fold", open }, h("summary", null, `${title} (${items.length})`), h("div", { class: "fold-body" }, bullets(items))) : null);
 
@@ -180,11 +236,12 @@ function result(kind, job) {
   const d = job.result || {};
   const p = job.params || {};
   const parts = [];
+  const start = (toolOf(kind) || {}).can_post ? startButton(kind, job) : null;
   if (kind === "humanize") {
     const read = String(d.reader_read || "").toLowerCase();
     parts.push(h("div", { class: "out-head" }, h("h3", null, "Rewritten"),
       read ? h("span", { class: `chip ${read.includes("human") ? "ok" : read.split(" ").includes("ai") ? "bad" : "warn"}` }, d.reader_read) : null,
-      copyButton(String(d.rewritten || ""))));
+      copyButton(String(d.rewritten || "")), start));
     parts.push(h("p", { class: "textbox" }, String(d.rewritten || "")),
       h("p", { class: "soft" }, `${number(String(d.rewritten || "").length)} characters, from ${number(String(p.text || "").length)}`),
       fold("What changed", d.changes, true),
@@ -193,12 +250,13 @@ function result(kind, job) {
       d.missing && d.missing.length ? h("details", { class: "fold" }, h("summary", null, `Worth adding (${d.missing.length})`),
         h("div", { class: "fold-body" }, h("p", { class: "soft" }, "Details only you know. Nothing was invented for you."), bullets(d.missing))) : null);
   } else if (kind === "audit") {
-    parts.push(auditView(d, { level: 3 }));
+    parts.push(auditView(d, { level: 3 }),
+      start ? h("div", { class: "form-foot" }, start, h("span", { class: "soft" }, "The draft you audited, with these findings beside it.")) : null);
   } else if (kind === "hook") {
     parts.push(h("div", { class: "out-head" }, h("h3", null, d.formula || "The hook"), d.confidence ? h("span", { class: "chip busy" }, `${d.confidence} confidence`) : null),
       d.runner_up ? h("p", { class: "soft" }, `Runner-up: ${d.runner_up}`) : null,
       d.hook ? h("blockquote", { class: "textbox" }, d.hook) : null, d.why ? h("p", null, d.why) : null,
-      h("div", { class: "out-head" }, h("h3", null, "Blank template"), copyButton(String(d.template || ""))),
+      h("div", { class: "out-head" }, h("h3", null, "Blank template"), copyButton(String(d.template || "")), d.template ? start : null),
       h("p", { class: "textbox" }, String(d.template || "")),
       fold("How the post is built", d.structure), fold("Do not copy these", d.cautions, true));
   } else if (kind === "comment") {
@@ -209,14 +267,7 @@ function result(kind, job) {
       h("p", { class: "textbox" }, String(v.text || "")),
       h("p", { class: "soft" }, `${String(v.text || "").length} characters${v.why ? ` · ${v.why}` : ""}`))));
   } else if (kind === "repurpose") {
-    const save = h("button", { class: "btn primary small", type: "button" }, icon("file", 14), h("span", null, "Save as a post"));
-    save.addEventListener("click", () => whileBusy(save, async () => {
-      const reply = await post(`/api/tools/repurpose/${job.id}/draft`, {});
-      if (reply.error) return announce(reply.error, { urgent: true });
-      announce("Saved as a new post.");
-      go(`#post-${reply.post}`);
-    }));
-    parts.push(h("div", { class: "out-head" }, h("h3", null, "LinkedIn post"), copyButton(String(d.post || "")), save),
+    parts.push(h("div", { class: "out-head" }, h("h3", null, "LinkedIn post"), copyButton(String(d.post || "")), start),
       h("p", { class: "textbox" }, String(d.post || "")),
       h("p", { class: "soft" }, `${number(String(d.post || "").length)} characters${d.formula ? ` · ${d.formula}` : ""}`),
       d.first_comment ? [h("div", { class: "out-head" }, h("h3", null, "First comment"), copyButton(String(d.first_comment))), h("p", { class: "textbox" }, String(d.first_comment))] : null,
