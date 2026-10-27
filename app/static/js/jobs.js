@@ -8,7 +8,7 @@ import { state, h, icon, post, put, clockOf, announce, whileBusy, onPoll, setTit
 export function drawWorking(box, job, { cancel = true, label = "" } = {}) {
   let card = box.querySelector(`.working[data-job="${job.id}"]`);
   if (!card) {
-    const stop = cancel ? h("button", { class: "btn small", type: "button" }, "Cancel") : null;
+    const stop = cancel ? h("button", { class: "btn small", type: "button", "data-act": "cancel" }, "Cancel") : null;
     if (stop) stop.addEventListener("click", () => whileBusy(stop, () => post(`/api/jobs/${job.id}/cancel`, {})));
     card = h("div", { class: "working", "data-job": job.id },
       h("div", { class: "working-row" }, h("i", { class: "pulse" }),
@@ -25,17 +25,19 @@ export function drawWorking(box, job, { cancel = true, label = "" } = {}) {
 }
 
 // The card of a job that did not finish: what stopped it, Claude's reply when it came in the wrong shape, Try again
-// (the same job) and Dismiss.
+// (the same job) and Dismiss. Where the focus goes when the card goes is the page's: the new card's Cancel after Try
+// again, the control that starts the job after Dismiss (tools.drawOut, editor.drawSide).
 export function problemCard(job, { retry = true, onDone = () => {} } = {}) {
-  const again = retry ? h("button", { class: "btn small", type: "button" }, icon("refresh", 14), h("span", null, "Try again")) : null;
-  const dismiss = h("button", { class: "btn small ghost", type: "button" }, "Dismiss");
+  const again = retry ? h("button", { class: "btn small", type: "button", "data-act": "retry" }, icon("refresh", 14), h("span", null, "Try again")) : null;
+  const dismiss = h("button", { class: "btn small ghost", type: "button", "data-act": "dismiss" }, "Dismiss");
   if (again) again.addEventListener("click", () => whileBusy(again, async () => {
     const reply = await post(`/api/jobs/${job.id}/retry`, {});
-    if (reply.error) announce(reply.error, { urgent: true });
+    announce(reply.error || "Trying again.", { urgent: !!reply.error });
     onDone();
   }));
   dismiss.addEventListener("click", () => whileBusy(dismiss, async () => {
-    await post(`/api/jobs/${job.id}/dismiss`, {});
+    const reply = await post(`/api/jobs/${job.id}/dismiss`, {});
+    if (reply.error) announce(reply.error, { urgent: true });
     onDone();
   }));
   return h("div", { class: "problem", "data-job": job.id },

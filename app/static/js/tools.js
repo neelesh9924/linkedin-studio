@@ -1,7 +1,8 @@
 // Tools: one skill each (Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer). The input on
 // the left, the result on the right with copy buttons; a repurposed post can become a post. Nothing here goes out.
-import { state, h, icon, api, post, put, number, announce, whileBusy, drawIfChanged, copyButton, go } from "./core.js";
+import { state, h, icon, api, post, put, number, announce, whileBusy, drawIfChanged, copyButton, go, focusFirst } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
+import { auditView } from "./audit.js";
 
 const LABELS = { humanize: ["Text to humanize", "Humanize", "Paste the text you want to sound like a person wrote it."],
   audit: ["Draft to audit", "Audit", "Paste a finished draft."], hook: ["Post text", "Find the hook", "Paste the post you want to learn from."],
@@ -27,6 +28,7 @@ let box = null;
 let data = null;
 let current = "humanize";
 const outs = {};
+const runs = {};          // each tool's Run button: where the focus goes when its result box empties under it
 
 export async function render(container, { sub } = {}) {
   box = container;
@@ -57,18 +59,18 @@ export function tick() {
 
 function draw() {
   const tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Tools" }, data.tools.map((t) => {
-    const tab = h("button", { class: "btn small", type: "button", role: "tab", "aria-selected": String(t.kind === current),
-      "aria-pressed": String(t.kind === current), "data-tool": t.kind, tabindex: t.kind === current ? "0" : "-1" }, icon(t.icon, 14), t.title);
+    const tab = h("button", { class: "btn small", type: "button", role: "tab", id: `tool-tab-${t.kind}`, "aria-controls": `tool-pane-${t.kind}`,
+      "aria-selected": String(t.kind === current), "data-tool": t.kind, tabindex: t.kind === current ? "0" : "-1" }, icon(t.icon, 14), t.title);
     tab.addEventListener("click", () => pick(t.kind, true));
     return tab;
   }));
   tabs.addEventListener("keydown", (event) => {
     const list = [...tabs.children];
     const at = list.indexOf(document.activeElement);
-    const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-    if (at < 0 || !step) return;
+    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: list.length - 1 }[event.key];
+    if (at < 0 || to === undefined) return;
     event.preventDefault();
-    pick(list[(at + step + list.length) % list.length].dataset.tool, false, true);
+    pick(list[(to + list.length) % list.length].dataset.tool, false, true);
   });
   put(box, h("div", { class: "page-width" },
     h("p", { class: "lede" }, "One skill per tool. Nothing here posts to LinkedIn: you copy what you want."),
@@ -82,7 +84,6 @@ function pick(kind, focusField = false, focusTab = false) {
   for (const tab of box.querySelectorAll("[data-tool]")) {
     const on = tab.dataset.tool === kind;
     tab.setAttribute("aria-selected", String(on));
-    tab.setAttribute("aria-pressed", String(on));
     tab.tabIndex = on ? 0 : -1;
     if (on && focusTab) tab.focus();
   }
@@ -122,6 +123,7 @@ function pane(t) {
   }
   const err = h("div", { class: "results" });
   const go_ = h("button", { class: "btn primary", type: "submit" }, icon("sparkle", 15), h("span", null, run));
+  runs[k] = go_;
   const form = h("form", { class: "panel-body" }, h("p", { class: "soft" }, t.blurb), fields, err,
     h("div", { class: "form-foot" }, go_, h("span", { class: "soft" }, "Ctrl + Enter")));
   form.addEventListener("keydown", (event) => {
@@ -146,7 +148,7 @@ function pane(t) {
     });
   });
   outs[k] = h("div", { class: "panel-body", "aria-live": "off" });
-  return h("section", { "data-pane": k, hidden: true },
+  return h("section", { "data-pane": k, id: `tool-pane-${k}`, role: "tabpanel", "aria-labelledby": `tool-tab-${k}`, hidden: true },
     h("div", { class: "workbench" },
       h("section", { class: "panel" }, h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon(t.icon, 17)), h("div", null, h("h2", null, t.title))), form),
       h("section", { class: "panel", "aria-label": `${t.title}: result` }, h("header", { class: "panel-head" }, h("div", null, h("h2", null, "Result"))), outs[k])));
@@ -156,13 +158,19 @@ function drawOut(t) {
   const out = outs[t.kind];
   if (!out) return;
   const job = t.job;
-  drawIfChanged(out, JSON.stringify(job && [job.id, job.status, job.result]), () => {
+  const had = out.contains(document.activeElement);
+  const drew = drawIfChanged(out, JSON.stringify(job && [job.id, job.status, job.result]), () => {
     if (!job) return void put(out, h("p", { class: "soft" }, "Nothing here yet. Run the tool and its result appears on this side."));
     if (["queued", "running"].includes(job.status)) return void put(out, h("div", { "data-job-box": job.id }));
     if (["failed", "unparsed"].includes(job.status)) return void put(out, problemCard(job, { onDone: () => window.dispatchEvent(new Event("studio:poll")) }));
     put(out, result(t.kind, job));
   });
   if (job && ["queued", "running"].includes(job.status)) drawWorking(out.querySelector("[data-job-box]"), job);
+  // The control the focus was on went with what was drawn (Try again, Dismiss, Cancel): on to the new card's own
+  // button (Cancel while it works), or else the tool's Run.
+  if (drew && had && !out.contains(document.activeElement)) {
+    focusFirst(out.querySelector(".working button"), out.querySelector(".problem button"), runs[t.kind]);
+  }
 }
 
 const bullets = (items) => (items && items.length ? h("ul", { class: "list" }, items.map((x) => h("li", null, String(x)))) : null);
@@ -185,11 +193,7 @@ function result(kind, job) {
       d.missing && d.missing.length ? h("details", { class: "fold" }, h("summary", null, `Worth adding (${d.missing.length})`),
         h("div", { class: "fold-body" }, h("p", { class: "soft" }, "Details only you know. Nothing was invented for you."), bullets(d.missing))) : null);
   } else if (kind === "audit") {
-    const pass = String(d.verdict || "").toUpperCase() === "PASS";
-    parts.push(h("div", { class: `verdict ${pass ? "pass" : "fail"}` }, icon(pass ? "check-circle" : "alert", 22),
-      h("div", null, h("b", null, pass ? "Ready to post" : "Not ready yet"), h("div", null, d.summary || ""))));
-    if ((d.blockers || []).length) parts.push(h("h3", null, `Fix before posting (${d.blockers.length})`), d.blockers.map((b) => finding(b, true)));
-    if ((d.warnings || []).length) parts.push(h("h3", null, `Worth a look (${d.warnings.length})`), d.warnings.map((b) => finding(b, false)));
+    parts.push(auditView(d, { level: 3 }));
   } else if (kind === "hook") {
     parts.push(h("div", { class: "out-head" }, h("h3", null, d.formula || "The hook"), d.confidence ? h("span", { class: "chip busy" }, `${d.confidence} confidence`) : null),
       d.runner_up ? h("p", { class: "soft" }, `Runner-up: ${d.runner_up}`) : null,
@@ -230,10 +234,4 @@ function result(kind, job) {
   }
   parts.push(h("p", { class: "soft" }, `Finished ${job.finished_ago || ""}`));
   return h("div", { class: "out" }, parts);
-}
-
-function finding(item, blocker) {
-  const issue = typeof item === "string" ? item : item.issue;
-  const fix = typeof item === "string" ? "" : item.fix;
-  return h("div", { class: `finding${blocker ? " blocker" : ""}` }, h("b", null, issue), fix ? h("span", null, fix) : null);
 }

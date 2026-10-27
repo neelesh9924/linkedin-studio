@@ -1,12 +1,14 @@
 // A post in the middle: as LinkedIn shows it (at a desktop's width or an iPhone 16's, folded at "…more", with its picture
-// and first comment), and edited right there: click the text and it opens where you clicked. It saves by itself a moment
-// after you stop typing (Ctrl+S at once), the meter weighs its length, blanks are marked and Next blank finds them.
-// Beside it: a revision shown word by word, the audit's findings, the post's pictures and the writer's notes.
-import { $, state, h, icon, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget } from "./core.js";
+// and first comment), and edited right there: click the text and it opens where you clicked, or press Edit text. It
+// saves by itself a moment after you stop typing (Ctrl+S at once), the meter weighs its length, blanks are marked and
+// Next blank finds them. Beside it: a revision shown word by word, the audit's findings, the post's pictures and the
+// writer's notes. The text is read as a paragraph, and drawn again only when it changes, so the focus stays put.
+import { $, state, h, icon, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
+import { auditView } from "./audit.js";
 
 const SAVE_AFTER = 900;   // ms after the last key
-const ed = { id: null, data: null, editing: false, expanded: false, dirty: false, seq: 0, sent: 0, timer: 0, onChange: () => {} };
+const ed = { id: null, data: null, editing: false, expanded: false, dirty: false, typed: false, seq: 0, sent: 0, timer: 0, onChange: () => {} };
 const parts = {};         // the stage's pieces, made once per post
 
 const slotRe = () => new RegExp(state.slot, "g");   // the studio's own pattern (publishing.SLOT), from /api/state
@@ -51,12 +53,13 @@ export function meter() {
   const scale = 2000;
   box.querySelector(".meter-zone").style.left = `${(state.target.min / scale) * 100}%`;
   box.querySelector(".meter-zone").style.width = `${((state.target.max - state.target.min) / scale) * 100}%`;
-  box.update = (text) => {
+  // A locked post (approved, scheduled, out) gets its count only: its length is no longer anything to act on.
+  box.update = (text, locked = false) => {
     const n = Array.from(text || "").length;
     const said = meterWords(n);
-    box.dataset.state = said.state;
+    box.dataset.state = locked ? "locked" : said.state;
     box.querySelector(".meter-thumb").style.left = `${(Math.min(n, scale) / scale) * 100}%`;
-    put(box.querySelector(".meter-text"), h("b", null, number(n)), ` characters · ${said.tail}`);
+    put(box.querySelector(".meter-text"), h("b", null, number(n)), `${n === 1 ? " character" : " characters"}${locked ? "" : ` · ${said.tail}`}`);
   };
   return box;
 }
@@ -88,18 +91,30 @@ export function autosize(ta) {
 
 function build() {
   const page = $("postPage");
-  parts.notice = h("div", { class: "notice", role: "status", hidden: true });
+  parts.notice = h("div", { class: "notice", hidden: true });   // post.js says aloud what it puts here
   parts.desktop = h("button", { class: "btn small", type: "button", "aria-pressed": "true" }, icon("desktop", 14), "Desktop");
   parts.phone = h("button", { class: "btn small", type: "button", "aria-pressed": "false" }, icon("phone", 14), "Phone");
   parts.desktop.addEventListener("click", () => setView("desktop"));
   parts.phone.addEventListener("click", () => setView("phone"));
   parts.saved = h("span", { class: "save-state", "aria-live": "off" });
-  parts.audit = h("button", { class: "btn small", type: "button" }, icon("check-circle", 14), h("span", null, "Audit"));
+  // Edit text: the editor for the keyboard and a screen reader (a click on the text opens it where it lands).
+  parts.edit = h("button", { class: "btn small", type: "button", "data-act": "edit" }, icon("pen", 14), h("span", null, "Edit text"));
+  parts.edit.addEventListener("click", () => {
+    const open = parts.body.querySelector("textarea");
+    if (open) return void open.focus();
+    openEditor((ed.data.text || "").length);
+  });
+  parts.copy = copyButton(() => fields().text, "Copy");
+  parts.copy.dataset.act = "copy";
+  parts.copy.title = "Copy the post’s text";
+  parts.copyComment = copyButton(() => fields().first_comment, "Copy first comment");
+  parts.copyComment.dataset.act = "copy-comment";
+  parts.audit = h("button", { class: "btn small", type: "button", "data-act": "audit" }, icon("check-circle", 14), h("span", null, "Audit"));
   parts.audit.addEventListener("click", () => runAudit());
   parts.revise = reviseMenu();
   parts.bar = h("div", { class: "stage-bar" },
     h("div", { class: "segmented", role: "group", "aria-label": "Preview width" }, parts.desktop, parts.phone),
-    parts.saved, h("span", { class: "grow" }), parts.audit, parts.revise);
+    parts.saved, h("div", { class: "stage-acts" }, parts.edit, parts.copy, parts.copyComment, parts.audit, parts.revise));
   parts.body = h("div", { class: "li-body" });
   parts.picture = h("figure", { class: "li-picture", hidden: true });
   parts.comment = h("div", { class: "li-comment" });
@@ -166,71 +181,112 @@ export function setView(view) {
 const REVISE = [["hook", "New hook", "A fresh first two lines; the rest stays."], ["shorter", "Shorter", "Trim towards 900-1,000 characters."],
   ["technical", "More technical", "Concrete mechanisms, tools and numbers."]];
 
+// The Revise menu while it is open. One listener for the whole page closes it on a click anywhere else.
+let openMenu = null;
+document.addEventListener("click", (event) => {
+  if (openMenu && !openMenu.wrap.contains(event.target)) openMenu.close(false);
+});
+
+// A menu button: Enter, Space or ↓ opens it on its first item (↑ on its last); ↑ ↓ Home End move; Esc closes it back
+// onto Revise; Tab, or the focus going anywhere else, closes it.
 function reviseMenu() {
-  const button = h("button", { class: "btn small", type: "button", "aria-haspopup": "true", "aria-expanded": "false" },
-    icon("pen", 14), h("span", null, "Revise"), icon("chevron-down", 13));
-  const list = h("div", { class: "menu-list", role: "menu", hidden: true },
-    REVISE.map(([how, label, promise]) => h("button", { class: "menu-item", type: "button", role: "menuitem", "data-how": how,
+  const button = h("button", { class: "btn small", type: "button", id: "reviseBtn", "data-act": "revise", "aria-haspopup": "menu",
+    "aria-expanded": "false", "aria-controls": "reviseMenu" }, icon("sparkle", 14), h("span", null, "Revise"), icon("chevron-down", 13));
+  const list = h("div", { class: "menu-list", id: "reviseMenu", role: "menu", "aria-labelledby": "reviseBtn", hidden: true },
+    REVISE.map(([how, label, promise]) => h("button", { class: "menu-item", type: "button", role: "menuitem", tabindex: "-1", "data-how": how,
       onclick: () => {
-        close();
+        close(true);      // back on Revise, busy while the request goes
         runRevise(how, button);
       } }, h("b", null, label), h("small", null, promise))));
-  const open = () => {
+  const wrap = h("div", { class: "menu" }, button, list);
+  const me = { wrap, close };
+  const items = () => [...list.querySelectorAll('[role="menuitem"]')];
+  function open(at = 0) {
     list.hidden = false;
     button.setAttribute("aria-expanded", "true");
-    list.querySelector("button").focus();
-  };
-  const close = (back) => {
+    openMenu = me;
+    const all = items();
+    all[(at + all.length) % all.length].focus();
+  }
+  function close(back) {
+    if (openMenu === me) openMenu = null;
+    if (list.hidden) return;
     list.hidden = true;
     button.setAttribute("aria-expanded", "false");
     if (back) button.focus();
-  };
-  button.addEventListener("click", () => (list.hidden ? open() : close()));
-  list.addEventListener("keydown", (event) => {
-    const items = [...list.querySelectorAll("button")];
-    const at = items.indexOf(document.activeElement);
-    if (event.key === "Escape") close(true);
-    else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+  }
+  button.addEventListener("click", () => {
+    if (!list.hidden) return close(true);
+    if (button.getAttribute("aria-disabled") === "true") {
+      return announce(ed.data && ed.data.revision ? `A revised version is waiting ${besideWords()}: use it or discard it first.`
+        : "Write the post first: Revise works on its text.");
+    }
+    open();
+  });
+  button.addEventListener("keydown", (event) => {
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && button.getAttribute("aria-disabled") !== "true") {
       event.preventDefault();
-      items[(at + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+      open(event.key === "ArrowDown" ? 0 : -1);
     }
   });
-  document.addEventListener("click", (event) => {
-    if (!list.hidden && !wrap.contains(event.target)) close();
+  list.addEventListener("keydown", (event) => {
+    const all = items();
+    const at = all.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: all.length - 1 }[event.key];
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    } else if (event.key === "Tab") {
+      button.focus();     // Tab goes on from Revise itself, and the menu shuts
+      close(false);
+    } else if (to !== undefined) {
+      event.preventDefault();
+      all[(to + all.length) % all.length].focus();
+    }
   });
-  const wrap = h("div", { class: "menu" }, button, list);
+  wrap.addEventListener("focusout", (event) => {
+    if (!wrap.contains(event.relatedTarget)) close(false);
+  });
   return wrap;
 }
 
+const reviseButton = () => parts.revise && parts.revise.querySelector("button");
+
 // ---------- the text: shown as LinkedIn shows it, edited where it is ----------
 
+// The text, as a paragraph a screen reader reads; drawn only when the text, its fold or whether it can be edited
+// changed, and with the focus put back on …more when it was there.
 function drawBody() {
-  const data = ed.data;
   if (ed.editing) return;
-  const text = data.text || "";
+  const text = ed.data.text || "";
   const fold = foldOf(text);
   const showAll = ed.expanded || !fold.folded;
-  const shown = showAll ? text.trim() : fold.shown;
-  const empty = !text.trim();
-  let read;
-  if (editable()) {
-    read = h("button", { class: "li-read", type: "button", title: "Edit the text here",
-      "aria-label": empty ? "Write the post" : "Edit the post’s text" }, empty ? h("span", { class: "placeholder" },
-      "Write your post here, or ask Claude on the right. The first two lines are the hook.") : withBlanks(shown));
-    read.addEventListener("click", (event) => openEditor(indexAt(event, read, shown)));
-  } else {
-    read = h("span", { class: "li-read locked" }, empty ? "Nothing written yet." : withBlanks(shown));
-  }
-  const more = fold.folded ? h("button", { class: "li-more", type: "button", "aria-expanded": String(showAll) }, showAll ? " …less" : "…more") : null;
-  if (more) {
-    more.addEventListener("click", () => {
-      if (editable() && !showAll) return openEditor(text.length);
-      ed.expanded = !ed.expanded;
-      drawBody();
-      focusFirst(parts.body.querySelector(".li-more"));
-    });
-  }
-  put(parts.body, h("p", { class: `li-text${empty ? " placeholder" : ""}` }, read, fold.folded && !showAll ? " " : null, more));
+  const can = editable();
+  drawIfChanged(parts.body, JSON.stringify([text, fold.folded, showAll, can]), () => {
+    const onMore = !!(document.activeElement && document.activeElement.closest && document.activeElement.closest(".li-more")
+      && parts.body.contains(document.activeElement));
+    const shown = showAll ? text.trim() : fold.shown;
+    const empty = !text.trim();
+    const more = fold.folded ? h("button", { class: "li-more", type: "button", "aria-expanded": String(showAll) }, showAll ? " …less" : "…more") : null;
+    if (more) {
+      more.addEventListener("click", () => {
+        ed.expanded = !ed.expanded;   // for everyone: reading it whole is not editing it
+        drawBody();
+      });
+    }
+    const read = h("p", { class: `li-text li-read${can ? "" : " locked"}${empty ? " placeholder" : ""}` },
+      empty ? (can ? "Write your post here, or ask Claude on the right. The first two lines are the hook." : "Nothing written yet.") : withBlanks(shown),
+      fold.folded && !showAll ? " " : null, more);
+    if (can) {
+      read.addEventListener("click", (event) => {
+        if (event.target.closest(".li-more")) return;
+        openEditor(empty ? 0 : indexAt(event, read, shown));
+      });
+    }
+    put(parts.body, read);
+    if (onMore) focusFirst(parts.body.querySelector(".li-more"));
+  });
 }
 
 // The character of the text a click landed on, so the editor opens with the caret there.
@@ -239,9 +295,10 @@ function indexAt(event, read, shown) {
   const range = document.caretRangeFromPoint(event.clientX, event.clientY);
   if (!range || !read.contains(range.startContainer)) return shown.length;
   let at = 0;
-  const walker = document.createTreeWalker(read, NodeFilter.SHOW_TEXT);
+  const walker = document.createTreeWalker(read, NodeFilter.SHOW_TEXT,
+    { acceptNode: (node) => (node.parentElement.closest(".li-more") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
   while (walker.nextNode()) {
-    if (walker.currentNode === range.startContainer) return at + range.startOffset;
+    if (walker.currentNode === range.startContainer) return Math.min(at + range.startOffset, shown.length);
     at += walker.currentNode.nodeValue.length;
   }
   return shown.length;
@@ -255,9 +312,11 @@ function openEditor(caret = 0, select = 0) {
   ta.value = ed.data.text || "";
   const foldLine = h("div", { class: "li-fold", "aria-hidden": "true" }, h("span", null, "…more"));
   put(parts.body, ta, foldLine);
+  forget(parts.body);     // the text is drawn afresh when the editor closes
   autosize(ta);
   ta.addEventListener("input", () => {
     autosize(ta);
+    ed.typed = true;
     edited();
     placeFold();
     refreshCounts(ta.value);
@@ -287,14 +346,20 @@ function placeFold() {
   line.style.top = `${ta.offsetTop + caretY(ta, at)}px`;
 }
 
-async function closeEditor(focusText) {
+// Leaving the text (Esc puts the focus back on Edit text): saved, and when it was typed in this time, kept as a version
+// of its own (the checkpoint; a studio without that endpoint answers 404, which is fine).
+async function closeEditor(focusBack) {
   if (!ed.editing) return;
   const ta = parts.body.querySelector("textarea");
   if (ta) ed.data.text = ta.value;
   ed.editing = false;
-  await saveNow();
+  const typed = ed.typed;
+  ed.typed = false;
+  const id = ed.id;
+  const saved = await saveNow();
   drawBody();
-  if (focusText) focusFirst(parts.body.querySelector(".li-read"));
+  if (focusBack) focusFirst(parts.edit, parts.copy, $("postGear"));
+  if (typed && !saved.error) post(`/api/post/${id}/checkpoint`, {});
 }
 
 // ---------- saving ----------
@@ -341,7 +406,7 @@ export async function saveNow() {
 }
 
 function refreshCounts(text) {
-  parts.meter.update(text);
+  parts.meter.update(text, !editable());
   const blanks = (text.match(slotRe()) || []).length;
   drawIfChanged(parts.blanks, `${blanks} ${editable()}`, () => {
     if (!blanks) return void parts.blanks.replaceChildren();
@@ -436,9 +501,17 @@ function sideCards() {
   return cards;
 }
 
+// Where the focus goes when the card it was in goes away: Use this version, Discard, a dismissed job → Revise or Audit.
+function besideFallback(name) {
+  const order = name === "audit" ? [parts.audit, reviseButton()] : [reviseButton(), parts.audit];
+  return [...order, parts.edit, parts.copy, $("postGear")];
+}
+
 function drawSide() {
   const wanted = sideCards();
   const keep = new Map([...parts.side.children].map((el) => [el.dataset.card, el]));
+  const holding = [...parts.side.children].find((el) => el.contains(document.activeElement)) || null;
+  let refocus = null;
   const next = [];
   for (const [name, key, make] of wanted) {
     let el = keep.get(name);
@@ -446,11 +519,12 @@ function drawSide() {
       const fresh = make();
       fresh.dataset.card = name;
       fresh.dataset.key = key;
-      if (el && el.contains(document.activeElement)) requestAnimationFrame(() => focusFirst(fresh.querySelector("button")));
+      if (el && el === holding) refocus = [fresh.querySelector(".working button"), fresh.querySelector("button"), ...besideFallback(name)];
       el = fresh;
     }
     next.push(el);
   }
+  if (holding && !next.includes(holding) && !refocus) refocus = besideFallback(holding.dataset.card);
   if (next.length !== parts.side.children.length || next.some((el, i) => parts.side.children[i] !== el)) parts.side.replaceChildren(...next);
   // a job at work: only its words and timer change
   if (ed.data.audit_job && ["queued", "running"].includes(ed.data.audit_job.status)) {
@@ -462,6 +536,17 @@ function drawSide() {
     if (box) drawWorking(box, ed.data.revise_job);
   }
   parts.side.hidden = !next.length;
+  if (refocus && !parts.side.contains(document.activeElement)) focusFirst(refocus);
+}
+
+// Whether the side column sits beside the post or has wrapped under it (a narrow window, or the Phone view).
+function besideWords() {
+  const side = parts.side;
+  const was = side.hidden;
+  side.hidden = false;      // measured as it would stand, and put back before anything is painted
+  const under = side.getBoundingClientRect().top >= parts.device.getBoundingClientRect().bottom - 1;
+  side.hidden = was;
+  return under ? "under the post" : "beside the post";
 }
 
 function card(glyph, heading, extra, ...body) {
@@ -507,23 +592,10 @@ function auditCard() {
   const box = h("div", { class: "job-box" });
   if (working) drawWorking(box, job);
   else if (job) put(box, problemCard(job, { retry: false, onDone: () => ed.onChange() }));
-  const passed = a && a.verdict === "PASS";
-  const chip = a && !working ? h("span", { class: `chip ${passed ? "ok" : "bad"}` }, passed ? "Passed" : "Needs work") : null;
   const again = editable() && !working && ed.data.text.trim()
     ? h("button", { class: "btn small", type: "button" }, icon("refresh", 14), h("span", null, a ? "Audit again" : "Run the audit")) : null;
   if (again) again.addEventListener("click", () => runAudit(again));
-  return card("check-circle", "Audit", chip, box,
-    a && !working ? [
-      a.stale ? h("div", { class: "result warn" }, icon("alert", 15), h("div", null, "The text changed after this audit.")) : null,
-      a.summary ? h("p", { class: "soft" }, a.summary) : null,
-      (a.blockers || []).map((b) => finding(b, true)), (a.warnings || []).map((b) => finding(b, false))] : null,
-    again);
-}
-
-function finding(item, blocker) {
-  const issue = typeof item === "string" ? item : item.issue;
-  const fix = typeof item === "string" ? "" : item.fix;
-  return h("div", { class: `finding${blocker ? " blocker" : ""}` }, h("b", null, issue), fix ? h("span", null, fix) : null);
+  return card("check-circle", "Audit", null, box, a && !working ? auditView(a, { level: 4, stale: !!a.stale }) : null, again);
 }
 
 function picturesCard() {
@@ -561,7 +633,7 @@ async function runAudit(button = parts.audit) {
   await saveNow();
   const reply = await whileBusy(button, () => post(`/api/post/${ed.id}/audit`, fields()));
   if (reply.error) return announce(reply.error, { urgent: true });
-  announce("Auditing. The findings appear beside the post.");
+  announce(`Auditing. The findings appear ${besideWords()}.`);
   ed.onChange();
 }
 
@@ -569,7 +641,7 @@ async function runRevise(how, button) {
   await saveNow();
   const reply = await whileBusy(button, () => post(`/api/post/${ed.id}/revise`, { how, ...fields() }));
   if (reply.error) return announce(reply.error, { urgent: true });
-  announce("Revising. The revised version appears beside the post; nothing changes until you choose it.");
+  announce(`Revising. The revised version appears ${besideWords()}; nothing changes until you choose it.`);
   ed.onChange();
 }
 
@@ -584,8 +656,8 @@ export function renderPost(data, onChange) {
     build();
     for (const key of Object.keys(parts)) if (parts[key] instanceof Element) forget(parts[key]);
   }
-  const wasEditable = editable();
   ed.data = { ...data };
+  const hadText = parts.body.contains(document.activeElement);
   if (ed.editing && !editable()) {   // Claude began working on it, or it was approved elsewhere: back to the preview
     ed.editing = false;
   }
@@ -594,16 +666,20 @@ export function renderPost(data, onChange) {
     ed.data.text = now.text;
     ed.data.first_comment = now.first_comment;
   }
-  if (!ed.editing) drawBody();
-  else if (!wasEditable) drawBody();
+  drawBody();               // nothing while the editor is open; otherwise only what changed
   drawComment();
   drawPicture();
   refreshCounts(ed.editing ? fields().text : ed.data.text);
-  const live = editable() && !!(ed.data.text || "").trim();
-  parts.audit.hidden = !editable();
-  parts.revise.hidden = !editable();
+  const can = editable();
+  const live = can && !!(ed.data.text || "").trim();
+  parts.edit.hidden = !can;
+  parts.copy.hidden = !(ed.data.text || "").trim();
+  parts.copyComment.hidden = !(ed.data.first_comment || "").trim();
+  parts.audit.hidden = !can;
+  parts.revise.hidden = !can;
   parts.audit.setAttribute("aria-disabled", String(!live));
-  parts.revise.querySelector("button").setAttribute("aria-disabled", String(!live || !!data.revision));
+  reviseButton().setAttribute("aria-disabled", String(!live || !!data.revision));
+  if (hadText && !parts.body.contains(document.activeElement)) focusFirst(parts.edit, parts.copy, $("postGear"));
   if (!ed.dirty) {
     parts.saved.classList.remove("dirty");
     parts.saved.textContent = data.status === "draft" ? (data.busy ? "Claude is working on it" : `Saved ${data.saved}`) : "";
@@ -623,6 +699,11 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     saveNow();
   }
+});
+// Going to another page or post (a click, Alt+↑ / Alt+↓, the palette) with typing not yet saved: it is saved at once,
+// to the post it was typed in.
+window.addEventListener("hashchange", () => {
+  if (ed.dirty && editable()) saveNow();
 });
 // Closing the window with typing not yet saved: it is sent on the way out.
 window.addEventListener("pagehide", () => {
