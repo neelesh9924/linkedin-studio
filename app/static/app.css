@@ -407,7 +407,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .assist-mark { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px;
   background: var(--accent-soft); color: var(--accent-ink); }
 .assist-heading { flex: 1; min-width: 0; }
-.assist-title { font: 600 15px var(--display); letter-spacing: -.01em; }
+.assist-title { font: 600 15px var(--display); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .assist-context { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .assist-tools { display: flex; align-items: center; gap: 4px; }
 .assist-tools select { width: auto; max-width: 150px; height: 28px; font-size: 12.5px; }

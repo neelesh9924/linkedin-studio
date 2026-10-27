@@ -17,7 +17,9 @@ LANES = [
          "href": "#~bank", "claude": "Each message runs Claude, a few seconds", "demo": "chat",
          "do": ["Open Story Bank & Voice. The interviewer is on the right.", "Press Start the interview, then answer one "
                 "question at a time. Enter sends, Shift+Enter adds a line.",
-                "Stop whenever you like. Next time it carries on and only asks about thin sections."],
+                "Stop whenever you like. Next time it carries on and only asks about thin sections.",
+                "To go deeper on one thing you said, press Ask me about this beside that entry: a short interview "
+                "about it alone, in a new conversation."],
          "gives": "Your Story Bank: roles, real numbers, turning points and opinions, kept on this computer. "
                   "Drafts draw on it instead of leaving blanks."},
         {"id": "voice", "shot": "bank", "title": "Teach it your voice", "icon": "feather", "where": "Story Bank & Voice, Voice profile",
@@ -37,6 +39,8 @@ LANES = [
         {"id": "draft", "shot": "planner", "title": "Draft it", "icon": "sparkle", "where": "Planner", "href": "#~planner",
          "claude": "Runs Claude, about 30 seconds", "demo": "working",
          "do": ["Press Draft this on a plan card: the draft joins the posts in the sidebar.",
+                "Or press Draft all above the cards: Claude writes each planned post that has no draft, one at a "
+                "time. It asks first, says “Writing 2 of 5”, and Stop ends the rest.",
                 "Or press + New post and tell Claude, on the right, what the post is about.",
                 "You can leave the page while it runs; a notice tells you when it is ready."],
          "gives": "A draft built on the planned formula, in the list on the left."},
@@ -138,6 +142,8 @@ SCREENS = [
      "purpose": "The week in one go, and this month at a glance.",
      "points": ["This week comes first: one card per planned post; Draft this writes it. Who to comment on and the "
                 "inbound-readiness checklist sit under the cards.",
+                "Draft all, above the cards, writes every planned post that has no draft, one at a time, while you "
+                "work; at the end it says how many it wrote, and Try again is on any card that did not finish.",
                 "Getting set up stays until each of its steps is done.",
                 "Then this month: posts used, the next scheduled post, Claude's status and the scheduled posts.",
                 "Plan the next 7 days makes a new week; older plans move to Earlier plans."]},
@@ -146,6 +152,8 @@ SCREENS = [
      "points": ["Read-only, so the format stays what the skills expect.",
                 "The list beside it shows which sections have material.",
                 "On the right, the interviewer (Story Bank) or the voice-profile chat (Voice profile).",
+                "Ask me about this, beside each filled Story Bank entry, starts a short interview about that entry; "
+                "the conversation before it stays under Earlier conversations.",
                 "Both files stay on this computer. The lock chip confirms git leaves them alone."]},
     {"key": "tools", "title": "Tools", "href": "#~tools", "icon": "tool",
      "purpose": "One-off jobs. Nothing here is posted; you copy what you want.",
@@ -202,7 +210,7 @@ SHOT_WORDS = {
     "post": "A post as LinkedIn shows it, with Ask Claude beside it",
     "chat": "Ask Claude at work: each step numbered while it runs",
     "schedule": "Schedule…: the time, the recommended slots and the final check",
-    "planner": "The Planner's week board: one card per post",
+    "planner": "The Planner's week board: Draft all, then one card per post",
     "bank": "Story Bank & Voice, with the interviewer beside it",
     "tools": "Tools, with a result to copy",
     "trash": "The Trash, with Put back and Delete forever…",

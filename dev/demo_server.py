@@ -117,6 +117,20 @@ def blanks_left(text: str) -> str:
     return " One blank is still yours to fill." if n == 1 else f" {COUNT.get(n, n)} blanks are still yours to fill."
 
 
+def draft_for(prompt: str) -> dict:
+    """The stand-in's draft of one planned post: it opens on that item's own angle (and takes its formula), so the
+    drafts Draft all writes each read differently in the sidebar."""
+    data = dict(CANNED["draft"])
+    angle = re.search(r"^Angle: (.+)$", prompt, flags=re.M)
+    formula = re.search(r"^Formula to use: (.+)$", prompt, flags=re.M)
+    if angle:
+        rest = POST.split("\n\n", 1)[1]           # the stand-in's body, after its own first line
+        data["text"] = f"{angle.group(1).strip()}\n\n{rest}"
+    if formula:
+        data["formula"] = formula.group(1).strip()
+    return data
+
+
 def post_in(prompt: str) -> str:
     found = re.search(r"<<<UNTRUSTED POST:[^\n]*\n(.*?)\n<<<END UNTRUSTED POST>>>", prompt, flags=re.S)
     text = found.group(1) if found else ""
@@ -164,7 +178,7 @@ class ScriptedRunner:
                                     "- Deploy time cut from 22 minutes to 9, team of four, Q2 2025")
                 self.story_bank.write_text(body, encoding="utf-8")
             return RunResult(outcome="ok", text=text, clean_text=text, session_id="demo-session", num_turns=3, usage=usage, skill_invoked=True)
-        data = CANNED[req.kind]
+        data = draft_for(req.prompt) if req.kind == "draft" else CANNED[req.kind]
         if req.kind == "audit" and "[" not in req.prompt.split("Draft:")[-1]:
             data = {"verdict": "PASS", "summary": "No blockers. The hook lands in 142 characters.", "blockers": [],
                     "warnings": [{"issue": "No named entity beyond your own project.", "fix": "Name the tool."}], "chars": 1011}

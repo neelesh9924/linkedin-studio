@@ -72,6 +72,8 @@ username in them).
 | `app/api_posts.py` | A post: save, audit, revise, approve, schedule, retry, Check now, cancel, versions (compared with now), picture, its chat and attachments, Move to Trash, New draft from this |
 | `app/api_trash.py` | The Trash: its list, Put back, Delete forever and Empty trash (confirmed); a post in the Trash is `posts.trashed_at`, and `api_posts.find` refuses it everywhere |
 | `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools (each tool's earlier results, Start a post from this), Settings (ChatGPT card, Claude's account, You in the preview), setup, Guide (its pictures) |
+| `app/draft_all.py` | Draft all on the Planner: every planned post without a draft, one ordinary `draft` job at a time (`draft_params`, shared with Draft this); `flows.draft_done` chains the next; Stop through `jobs.cancel`; each board's `draft_all` |
+| `app/ask_about.py` | Ask me about this on a Story Bank entry: the `focus` checked against the file's own entries (`render.doc_sections`), capped; the new conversation's opening message |
 | `app/profile.py` | You in the preview: the name, headline and photo kept beside the database |
 | `app/jobs.py`, `app/flows.py` | One job at a time with its numbered steps; what each job does when it ends |
 | `app/skills.py`, `app/claude_runner.py` | Each action's skill, prompt and tools; the `claude -p` command, its env and MCP config |
@@ -79,7 +81,8 @@ username in them).
 | `app/publishing.py` | Publora: schedule (with a picture), retry, back to draft, refresh (read-only: published with its LinkedIn link, failed in Publora's words) |
 | `app/status_check.py` | The light check: due scheduled posts asked of Publora (get-post only) in the background, every few minutes; what it heard, for the post's notice |
 | `app/versions.py`, `app/images.py`, `app/attached.py` | A post's versions, its pictures, a chat's attached files |
-| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, planner, bank, tools, settings, guide, jobs, md, audit, palette, trash, wdiff, precheck) |
+| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, planner, bank, tools, settings, guide, jobs, md, audit, palette, trash, wdiff, precheck, draftall) |
+| `app/static/js/draftall.js` | Draft all's bar under This week: it asks first, then "Writing 2 of 5" with Stop (each step said aloud), then how many were written and which did not finish |
 | `dev/demo_server.py` | The page on made-up data with stand-ins for Claude (and its sign-in), Publora and ChatGPT |
 | `dev/guide_shots.py` | The Guide's pictures, taken on the demo into `app/static/guide/` |
 
@@ -144,6 +147,13 @@ username in them).
     (`editor.js drawComment`); the sidebar's line now follows Approve and Back to draft at once;
     the top bar's chip follows each poll one way (`post.js chipAfterPoll`); the Guide's pictures
     were retaken, and their guard against the Planner's Claude card reads its "Account" row.
-  - Left for the owner's word: Draft all, Story Bank's Ask me about this, a separate local Back
-    up, the stage bar's results chip, a rail or drawer layout under 1,180 px. Dropped: Back to
-    draft for a cancelled post (New draft from this does that).
+  - On the owner's word, merged in from a branch of their own: Draft all on the Planner
+    (`app/draft_all.py`, `js/draftall.js`: every planned post without a draft, one at a time, after
+    a confirm, "Writing 2 of 5" with Stop) and Ask me about this on a Story Bank entry
+    (`app/ask_about.py`, `assist.askAbout`: a new Interviewer conversation about that entry
+    alone). The demo's stand-in draft opens on its planned item's angle, so each one differs; the
+    Guide's pictures were retaken with Draft all on the Planner; Ask Claude's title ends in … when
+    the Earlier conversations picker (there after every Ask me about this) leaves it no room.
+  - Left for the owner's word: a separate local Back up, the stage bar's results chip, a rail or
+    drawer layout under 1,180 px. Dropped: Back to draft for a cancelled post (New draft from
+    this does that).

@@ -1,8 +1,8 @@
-// The Planner: this week first (the latest plan's cards, each drafted with one press; a card whose post is in the Trash
-// says so, with Put back; who to comment on and the inbound-readiness checklist), then getting set up until every step
-// is done, this month (posts used against the limit, the next post, Claude's status), the scheduled posts with Check
-// Publora, the form for a new week and earlier plans. Drawn again, a card keeps the focus that was in it: on its Cancel
-// while it is being drafted, else on its first button.
+// The Planner: this week first (Draft all's bar, draftall.js; the latest plan's cards, each drafted with one press; a
+// card whose post is in the Trash says so, with Put back; who to comment on and the inbound-readiness checklist), then
+// getting set up until every step is done, this month (posts used against the limit, the next post, Claude's status),
+// the scheduled posts with Check Publora, the form for a new week and earlier plans. Drawn again, a card keeps the focus
+// that was in it: on its Cancel while it is being drafted, else on its first button.
 import { $, state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { draftAllBar } from "./draftall.js";

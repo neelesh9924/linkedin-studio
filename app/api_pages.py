@@ -1,4 +1,5 @@
-"""The API of the pages beside the posts: Planner, Story Bank & Voice (with its two chats), Tools (with each tool's
+"""The API of the pages beside the posts: Planner (with Draft all, draft_all.py), Story Bank & Voice (with its two chats,
+and Ask me about this, ask_about.py), Tools (with each tool's
 earlier results, and Start a post from this), Settings (with ChatGPT, the health checks and You in the preview), the
 setup screen and the Guide."""
 from __future__ import annotations

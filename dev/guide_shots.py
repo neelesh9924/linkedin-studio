@@ -3,7 +3,8 @@
     .venv\\Scripts\\python dev\\guide_shots.py [--port 8795]
 
 It starts dev/demo_server.py itself, in a folder with no user name in its path, uses the page the way a person would
-and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Schedule…, the Planner's week board,
+and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Schedule…, the Planner's week board
+with Draft all,
 Story Bank & Voice, Tools with a result, and the Trash when the page has one (a demo draft is moved there through the
 API first). Each picture is the window at 1200 x 750, saved small as WebP by Chrome's own capture into app/static/guide/,
 where the Guide shows them (app/guide.py SHOT_WORDS). Retake them when a screen changes.
@@ -169,10 +170,16 @@ def take(page: Page) -> list[Path]:
     cam.both("schedule")
     page.keyboard.press("Escape")
 
-    # The Planner's week board, scrolled so the cards above it (Claude's among them) are out of the window.
+    # The Planner's week board from This week's title down, Draft all's bar under it (the demo's plan has two cards
+    # without a draft); whatever is above the title stays out of the window.
     open_(page, "#~planner")
     page.wait_for_selector("#plannerPage .board")
-    page.evaluate("document.querySelector('#plannerPage .board').previousElementSibling.scrollIntoView({ block: 'start' })")
+    page.wait_for_selector("#plannerPage .draft-all")
+    page.evaluate("""() => {
+      let el = document.querySelector('#plannerPage .board');
+      while (el.previousElementSibling && !el.classList.contains('section-title')) el = el.previousElementSibling;
+      el.scrollIntoView({ block: 'start' });
+    }""")
     page.wait_for_timeout(300)
     cam.both("planner")
 
