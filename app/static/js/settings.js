@@ -1,17 +1,21 @@
-// Settings (Claude and who it is signed in as, publishing, ChatGPT, appearance, the health checks, recent runs,
-// quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder with the
-// account it is signed in to; Save checks them, writes config.local.toml and restarts).
+// Settings (Claude and who it is signed in as, publishing, ChatGPT, you in the preview, appearance, the health checks,
+// recent runs, quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder
+// with the account it is signed in to; Save checks them, writes config.local.toml and restarts).
 // Each panel has an address, #~settings-<id>: the jump links at the top use it, and it opens with that panel's heading
-// focused. The focus stays where it was through every redraw (data-keep), and a health check says how it ended.
+// focused. The focus stays where it was through every redraw (data-keep), with what was typed and not yet saved, and a
+// health check says how it ended.
 import { state, h, icon, api, post, put, number, announce, whileBusy, focusFirst, go } from "./core.js";
 import { setTheme } from "./sidebar.js";
+import { YOU, liHead, paintWho } from "./editor.js";
 
 let box = null;
 let polling = 0;
-const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["appearance", "Appearance"],
-  ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
+const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["profile", "You in the preview"],
+  ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
 const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
 const running = {};       // check -> running at the last draw, so its end is said once
+const typed = {};         // a box's words not yet saved (name, headline, codexHome), kept through redraws
+const PHOTO_PX = 256;     // the photo is made this size here, before it is sent
 
 export async function render(container, { page, sub } = {}) {
   box = container;
@@ -53,7 +57,7 @@ const OUTCOME = { ok: ["Done", "ok"], unparsed: ["Unreadable reply", "warn"], er
 
 let last = "";
 async function settings(quiet = false) {
-  const [data, codex] = await Promise.all([api("/api/settings"), api("/api/codex")]);
+  const [data, codex, me] = await Promise.all([api("/api/settings"), api("/api/codex"), api("/api/profile")]);
   if (data.error || state.page !== "settings") return;
   for (const [name, title] of Object.entries(CHECKS)) {        // a check that was running has ended: say how
     const check = data.checks[name];
@@ -62,10 +66,11 @@ async function settings(quiet = false) {
     }
     running[name] = check.running;
   }
-  const key = JSON.stringify([data, codex]);
+  const key = JSON.stringify([data, codex, me]);
   if (quiet && key === last) return;
   last = key;
   const on = box.contains(document.activeElement) ? document.activeElement.dataset.keep : null;
+  const caret = on ? selectionOf(document.activeElement) : null;
   const c = data.claude;
   const theme = h("div", { class: "segmented", role: "group", "aria-label": "Theme" }, [["auto", "Match Windows"], ["light", "Light"], ["dark", "Dark"]].map(([value, label]) => {
     const b = h("button", { class: "btn small", type: "button", "aria-pressed": String(window.studioTheme.get() === value), "data-keep": `theme-${value}` }, label);
@@ -118,6 +123,7 @@ async function settings(quiet = false) {
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
         ["Monthly limit", `${data.limit} posts`], ["Times shown in", `${data.timezone} (${data.tz})`])),
     chatgpt(codex),
+    profileSection(me),
     section("appearance", "moon", "Appearance", "Match Windows follows its light or dark setting.", theme),
     section("health", "activity", "Health checks", "The skills repo’s own scripts, run with this app’s Python.",
       health("check_config", "Connections", "Checks the Publora, Apify and Pixfaro keys against free endpoints. Shows key prefixes, never keys.", data.checks.check_config),
@@ -133,16 +139,152 @@ async function settings(quiet = false) {
             h("td", null, `${r.seconds} s`), h("td", null, String(r.turns)), h("td", null, `${number(r.tokens_in)} / ${number(r.tokens_out)}`));
         })))) : h("p", { class: "soft" }, "No runs yet. Every Claude call the app makes is listed here.")),
     section("app", "power", "The app", "Closing the window stops LinkedIn Studio too. A job under way is stopped.", h("div", { class: "form-foot" }, quit))));
-  if (on) focusFirst(box.querySelector(`[data-keep="${on}"]`));
+  if (on) keepFocus(on, caret);
   for (const name of ["check_config", "selftest"]) if (data.checks[name].running) watchHealth();
 }
 
+// Where the caret was in a box, so it is put back after a redraw; null for anything else.
+function selectionOf(el) {
+  try {
+    return typeof el.selectionStart === "number" ? [el.selectionStart, el.selectionEnd] : null;
+  } catch {
+    return null;
+  }
+}
+
+function keepFocus(keep, caret, ...instead) {
+  const el = focusFirst(box.querySelector(`[data-keep="${keep}"]`), ...instead);
+  if (el && caret && el.dataset.keep === keep) {
+    try {
+      el.setSelectionRange(...caret);
+    } catch {}
+  }
+}
+
+// ---------- you, in the preview ----------
+
+// A photo for the preview: the square in its middle, made 256 px (never larger than it was), as WebP, or PNG where the
+// browser cannot write WebP. One the browser cannot draw (an iPhone's HEIC) gives null.
+async function shrinkPhoto(file) {
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return null;
+  }
+  const side = Math.min(bitmap.width, bitmap.height);
+  const size = Math.min(PHOTO_PX, side);
+  const canvas = h("canvas", { width: size, height: size });
+  canvas.getContext("2d").drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, size, size);
+  bitmap.close();
+  const data = canvas.toDataURL("image/webp", 0.85);
+  return data.startsWith("data:image/webp") ? data : canvas.toDataURL("image/png");
+}
+
+// Your name, headline and photo for every post's preview (kept beside the studio's database, on this PC), with a preview
+// of its own that follows what you type.
+function profileSection(me) {
+  const title = "You in the preview";
+  const lede = "Your name, headline and photo, above each post’s preview and beside its first comment. They stay on this PC: nothing here goes to LinkedIn, Publora or Claude.";
+  if (!me || me.error) return section("profile", "user", title, lede, note("bad", (me && me.error) || "The studio did not answer."));
+  const saved = me.saved || { name: "", headline: "" };
+  const most = me.most || { name: 80, headline: 220 };
+  const name = h("input", { class: "input", id: "profile-name", maxlength: most.name, autocomplete: "name", spellcheck: "false",
+    placeholder: YOU.name, value: typed.name ?? saved.name, "data-keep": "profile-name" });
+  const headline = h("input", { class: "input", id: "profile-headline", maxlength: most.headline, placeholder: YOU.headline,
+    value: typed.headline ?? saved.headline, "data-keep": "profile-headline", "aria-describedby": "profile-headline-count" });
+  const count = h("span", { class: "field-hint", id: "profile-headline-count" });
+  const preview = h("div", { class: "li-card", style: "max-width:555px;padding-bottom:12px", role: "img",
+    "aria-label": "How a post’s preview shows you" }, liHead("now · ", icon("globe", 11)));
+  const show = () => {
+    paintWho(preview, { name: name.value.trim() || YOU.name, headline: headline.value.trim() || YOU.headline, photo: me.photo,
+      saved: { name: name.value.trim() } });
+    count.textContent = `${number(Array.from(headline.value.trim()).length)} of ${number(most.headline)} characters`;
+  };
+  for (const [input, key] of [[name, "name"], [headline, "headline"]]) {
+    input.addEventListener("input", () => {
+      typed[key] = input.value;
+      show();
+    });
+  }
+  show();
+  const out = h("div", { class: "results" });
+  const save = h("button", { class: "btn primary small", type: "submit", "data-keep": "profile-save" }, icon("check", 14), h("span", null, "Save"));
+  const form = h("form", { class: "grid" },
+    h("div", { class: "fields" },
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "Name"), name),
+      h("label", { class: "field" }, h("span", { class: "field-label" }, "Headline"), headline, count)),
+    out,
+    h("div", { class: "form-foot" }, save, h("span", { class: "soft" }, "Left empty, the preview says You and Your headline.")));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    whileBusy(save, async () => {
+      const reply = await post("/api/profile", { name: name.value, headline: headline.value });
+      if (reply.error) {
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      delete typed.name;
+      delete typed.headline;
+      told(reply, "Saved. Every post’s preview shows it now.", "profile-save");
+    });
+  });
+  const file = h("input", { type: "file", accept: "image/png,image/jpeg,image/webp", hidden: true, "data-photo": "" });
+  const choose = h("button", { class: "btn small", type: "button", "data-keep": "profile-photo" }, icon("image", 14), h("span", null, "Choose a photo…"));
+  choose.addEventListener("click", () => file.click());
+  const said = h("div", { class: "results" });
+  const refused = (why) => {
+    put(said, note("bad", why));
+    announce(why, { urgent: true });
+  };
+  file.addEventListener("change", () => {
+    const picked = file.files && file.files[0];
+    if (!picked) return;
+    whileBusy(choose, async () => {
+      const data = await shrinkPhoto(picked);
+      file.value = "";
+      if (!data) return refused(`${picked.name} could not be read here. Choose a PNG, JPEG or WebP photo.`);
+      const reply = await post("/api/profile/photo", { data });
+      if (reply.error) return refused(reply.error);
+      told(reply, "Photo saved. Every post’s preview shows it now.", "profile-photo");
+    });
+  });
+  const remove = me.photo ? h("button", { class: "btn small", type: "button", "data-keep": "profile-remove" }, icon("x", 14), h("span", null, "Remove")) : null;
+  if (remove) remove.addEventListener("click", () => whileBusy(remove, async () => {
+    const reply = await post("/api/profile/photo/remove", {});
+    if (reply.error) return refused(reply.error);
+    told(reply, "Photo removed. The preview shows your initials, or You.", "profile-photo");
+  }));
+  return section("profile", "user", title, lede, preview, form,
+    h("div", { class: "field", role: "group", "aria-labelledby": "profile-photo-label" },
+      h("span", { class: "field-label", id: "profile-photo-label" }, "Photo"),
+      h("div", { class: "form-foot" }, choose, remove, file),
+      h("span", { class: "field-hint" }, "A PNG, JPEG or WebP picture. It is cut to a square and made 256 px here, before it is saved."),
+      said));
+}
+
+// A change was saved: every preview takes it at once (studio:profile), and this section is drawn again from the answer.
+function told(profile, words, keep) {
+  window.dispatchEvent(new CustomEvent("studio:profile", { detail: profile }));
+  const old = box && box.querySelector("#settings-profile");
+  const now = old && old.contains(document.activeElement) ? document.activeElement : null;
+  const caret = now ? selectionOf(now) : null;
+  if (old) old.replaceWith(profileSection(profile));
+  keepFocus((now && now.dataset.keep) || keep, caret, box.querySelector('[data-keep="profile-photo"]'));
+  announce(words);
+}
+
 function chatgpt(c) {
-  const home = h("input", { class: "input path", placeholder: "C:\\Users\\you\\.codex-personal", value: c.home || "", "aria-label": "Codex home", "data-keep": "codex-home" });
+  const home = h("input", { class: "input path", placeholder: "C:\\Users\\you\\.codex-personal", value: typed.codexHome ?? (c.home || ""),
+    "aria-label": "Codex home", "data-keep": "codex-home" });
+  home.addEventListener("input", () => {
+    typed.codexHome = home.value;
+  });
   const out = h("div", { class: "results" });
   const save = h("button", { class: "btn small", type: "button", "data-keep": "codex-save" }, "Save");
   save.addEventListener("click", () => whileBusy(save, async () => {
     const reply = await post("/api/codex/home", { home: home.value });
+    if (!reply.error) delete typed.codexHome;
     put(out, note(reply.error ? "bad" : "ok", reply.error || "Saved. Pictures use this sign-in from now on."));
     announce(reply.error || "Saved.", { urgent: !!reply.error });
   }));

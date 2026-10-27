@@ -351,6 +351,54 @@ def test_a_repurposed_post_becomes_a_post_with_its_first_version(web):
     assert [v["note"] for v in client.get(f"/api/post/{post}/versions").json()["versions"]] == ["Repurposed"]
 
 
+def test_earlier_results_come_per_tool_newest_first_and_each_opens_again(web):
+    client, db = web
+    first = add_job(db, "humanize", params={"source": "tools", "text": "\n  The first draft line\nmore"}, result=TOOL_RESULTS["humanize"], finished_at=utcnow())
+    add_job(db, "humanize", status="failed", params={"source": "tools", "text": "failed one"}, error="boom")
+    second = add_job(db, "humanize", params={"source": "tools", "text": "The second one"}, result={"rewritten": "Again."}, finished_at=utcnow())
+    add_job(db, "audit", params={"post_id": 1, "text": "a post's own audit"}, result=TOOL_RESULTS["audit"], finished_at=utcnow())
+    linked = add_job(db, "hook", params={"source": "tools", "text": "", "url": "https://www.linkedin.com/posts/x"}, result=TOOL_RESULTS["hook"], finished_at=utcnow())
+    tools = {t["kind"]: t for t in client.get("/api/tools").json()["tools"]}
+    assert [(e["id"], e["first"]) for e in tools["humanize"]["earlier"]] == [(second, "The second one"), (first, "The first draft line")]
+    assert tools["audit"]["earlier"] == [] and tools["hook"]["earlier"][0]["first"] == "https://www.linkedin.com/posts/x"
+    assert [k for k, t in tools.items() if t["can_post"]] == ["humanize", "audit", "hook", "repurpose"]
+    shown = client.get(f"/api/tools/humanize/{first}").json()["job"]
+    assert shown["result"] == TOOL_RESULTS["humanize"] and shown["compare"][-1] == ["+", "Better."] and shown["finished_ago"]
+    assert client.get(f"/api/tools/audit/{first}").status_code == 404 and client.get(f"/api/tools/hook/{linked}").status_code == 200
+
+
+def test_start_a_post_from_this_makes_a_draft_with_its_first_version(web):
+    client, db = web
+    humanized = add_job(db, "humanize", params={"source": "tools", "text": "t"}, result=TOOL_RESULTS["humanize"], finished_at=utcnow())
+    post = client.post(f"/api/tools/humanize/{humanized}/draft", json={}).json()["post"]
+    shown = client.get(f"/api/post/{post}").json()
+    assert (shown["text"], shown["status"], shown["notes"], shown["editable"]) == ("Better.", "draft", ["b"], True)
+    assert kept(client, post) == [("claude", "From Humanize")]
+    audited = add_job(db, "audit", params={"source": "tools", "text": "My draft,\r\nas pasted. "}, result=TOOL_RESULTS["audit"], finished_at=utcnow())
+    post = client.post(f"/api/tools/audit/{audited}/draft", json={}).json()["post"]
+    shown = client.get(f"/api/post/{post}").json()
+    assert shown["text"] == "My draft,\nas pasted." and kept(client, post) == [("you", "From Audit")]
+    assert shown["audit"]["verdict"] == "PASS" and shown["audit"]["stale"] is False             # its findings beside it
+    hooked = add_job(db, "hook", params={"source": "tools", "text": "t"}, result=TOOL_RESULTS["hook"], finished_at=utcnow())
+    post = client.post(f"/api/tools/hook/{hooked}/draft", json={}).json()["post"]
+    assert client.get(f"/api/post/{post}").json()["text"] == "{slot}" and kept(client, post) == [("claude", "From Hook extractor")]
+
+
+def test_start_a_post_is_refused_for_comment_drafts_the_profile_review_and_results_not_here(web):
+    client, db = web
+    before = db.one("SELECT COUNT(*) AS n FROM posts")["n"]
+    for kind in ("comment", "profile"):
+        job = add_job(db, kind, params={"source": "tools", "text": "t"}, result=TOOL_RESULTS[kind], finished_at=utcnow())
+        refused = client.post(f"/api/tools/{kind}/{job}/draft", json={})
+        assert refused.status_code == 422 and "not a post" in refused.json()["error"]
+    running = add_job(db, "humanize", status="running", params={"source": "tools", "text": "t"})
+    assert client.post(f"/api/tools/humanize/{running}/draft", json={}).status_code == 404
+    assert client.post("/api/tools/nope/1/draft", json={}).status_code == 404
+    empty = add_job(db, "humanize", params={"source": "tools", "text": "t"}, result={"rewritten": "  "}, finished_at=utcnow())
+    assert client.post(f"/api/tools/humanize/{empty}/draft", json={}).status_code == 422
+    assert db.one("SELECT COUNT(*) AS n FROM posts")["n"] == before
+
+
 def test_the_planner_shows_this_month_and_both_plan_shapes(web):
     client, db = web
     old = {"items": [{"day": "Tue", "angle": "old angle"}], "comment_targets": ["Tue: peers"], "readiness": ["Vulnerability post: missing"]}
@@ -390,7 +438,7 @@ def test_an_interview_thread_shows_file_changes_and_waits_for_its_reply(web):
 # ---- guide --------------------------------------------------------------------------------------
 PAGES = ({"#~planner", "#~bank", "#~voice", "#~tools", "#~settings", "#~guide", "#~trash", "#~posts"}
          | {f"#~tools-{k}" for k in TOOL_KINDS}
-         | {f"#~settings-{k}" for k in ("claude", "publishing", "chatgpt", "appearance", "health", "runs", "app")})
+         | {f"#~settings-{k}" for k in ("claude", "publishing", "chatgpt", "profile", "appearance", "health", "runs", "app")})
 
 
 def test_the_guide_covers_every_step_and_screen_with_links_the_page_opens(web):

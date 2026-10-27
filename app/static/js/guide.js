@@ -3,7 +3,7 @@
 // figures the code enforces; its pictures (static/guide/, taken on the demo by dev/guide_shots.py) follow the theme,
 // and a click shows one large.
 import { $, state, h, icon, api, put, go, focusFirst, showDialog, closeButton } from "./core.js";
-import { foldOf, withBlanks, meter, autosize } from "./editor.js";
+import { foldOf, withBlanks, meter, autosize, liHead } from "./editor.js";
 
 let box = null;
 let data = null;
@@ -195,6 +195,5 @@ function sandbox() {
     h("div", null, h("h2", null, "Try the editor"), h("p", null, "A sandbox: nothing you type here is saved."))),
     h("div", { class: "panel-body grid cols-2" },
       h("div", { class: "field" }, ta, m, h("div", { class: "form-foot" }, blanks, nextBlank)),
-      h("div", { class: "li-card" }, h("div", { class: "li-head" }, h("span", { class: "li-avatar" }, "You"),
-        h("span", { class: "li-who" }, h("b", null, "You"), h("span", null, "How it opens in the feed"))), h("div", { class: "li-body", style: "padding-bottom:14px" }, preview))));
+      h("div", { class: "li-card" }, liHead("How it opens in the feed"), h("div", { class: "li-body", style: "padding-bottom:14px" }, preview))));
 }

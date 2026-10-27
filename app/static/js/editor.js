@@ -3,7 +3,8 @@
 // saves by itself a moment after you stop typing (Ctrl+S at once), the meter weighs its length, blanks are marked and
 // Next blank finds them. Beside it: a revision shown word by word, the audit's findings, the post's pictures and the
 // writer's notes. The text is read as a paragraph, and drawn again only when it changes, so the focus stays put.
-import { $, state, h, icon, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton } from "./core.js";
+// Above it and beside the first comment: your name, headline and photo from Settings › You in the preview, or You.
+import { $, state, h, icon, api, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { auditView } from "./audit.js";
 
@@ -87,6 +88,61 @@ export function autosize(ta) {
   ta.style.height = `${ta.scrollHeight + 2}px`;
 }
 
+// ---------- you, in the preview ----------
+
+// Settings › You in the preview (/api/profile): the name, headline and photo the preview shows; until it answers, or
+// with nothing set, You / Your headline and the You avatar.
+export const YOU = { name: "You", headline: "Your headline" };
+let me = { ...YOU, photo: null, saved: { name: "", headline: "" } };
+
+async function loadProfile() {
+  const reply = await api("/api/profile");
+  if (!reply.error) setProfile(reply);
+}
+
+function setProfile(profile) {
+  me = profile;
+  paintWho(document);
+}
+
+// "Asha Rao" → "AR": the avatar of a name with no photo.
+export function initials(name) {
+  return String(name || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => Array.from(w)[0].toLocaleUpperCase()).join("");
+}
+
+// Fills every [data-who] inside root from a profile (the studio's, or one being typed in Settings): the avatar (the
+// photo, shown round; else the name's initials; else You), the name, the headline, the first comment's name.
+export function paintWho(root, profile = me) {
+  const named = !!(profile.saved && profile.saved.name);
+  for (const el of root.querySelectorAll("[data-who]")) {
+    const what = el.dataset.who;
+    if (what === "avatar") {
+      drawIfChanged(el, JSON.stringify([profile.photo, named && profile.name]), () => {
+        const size = Number(el.dataset.size || 48);
+        const letters = (named && initials(profile.name)) || "You";
+        put(el, profile.photo ? h("img", { src: profile.photo, alt: "", width: size, height: size, decoding: "async",
+          onerror: () => put(el, letters) }) : letters);
+      });
+      continue;
+    }
+    const text = { name: profile.name, headline: profile.headline, comment: `${profile.name} · first comment` }[what];
+    if (text !== undefined && el.textContent !== text) el.textContent = text;
+  }
+}
+
+// The head of a post as LinkedIn shows it: the avatar, the name, the headline and a third line (when, or a hint).
+export function liHead(...third) {
+  const head = h("header", { class: "li-head" },
+    h("span", { class: "li-avatar", "aria-hidden": "true", "data-who": "avatar", "data-size": "48" }),
+    h("span", { class: "li-who" }, h("b", { "data-who": "name" }), h("span", { "data-who": "headline" }),
+      third.length ? h("span", null, ...third) : null));
+  paintWho(head);
+  return head;
+}
+
+// The first comment's avatar and name, beside its bubble.
+const commentAvatar = () => h("span", { class: "li-avatar", "aria-hidden": "true", "data-who": "avatar", "data-size": "32" });
+
 // ---------- the stage, made once per post ----------
 
 function build() {
@@ -119,9 +175,7 @@ function build() {
   parts.picture = h("figure", { class: "li-picture", hidden: true });
   parts.comment = h("div", { class: "li-comment" });
   parts.card = h("article", { class: "li-card", "aria-label": "The post as LinkedIn shows it" },
-    h("header", { class: "li-head" }, h("span", { class: "li-avatar", "aria-hidden": "true" }, "You"),
-      h("span", { class: "li-who" }, h("b", null, "You"), h("span", null, "Your headline"),
-        h("span", null, "now · ", icon("globe", 11)))),
+    liHead("now · ", icon("globe", 11)),
     parts.body, parts.picture,
     h("div", { class: "li-social", "aria-hidden": "true" }, h("span", { class: "li-reactions" }, h("i"), h("i"), h("i")), "Reactions and comments show here"),
     h("div", { class: "li-actions", "aria-hidden": "true" },
@@ -452,8 +506,8 @@ function drawComment() {
         autosize(fc);
         edited();
       });
-      put(parts.comment, h("span", { class: "li-avatar", "aria-hidden": "true" }, "You"),
-        h("div", { class: "li-bubble" }, h("b", null, "You · first comment"), fc));
+      put(parts.comment, commentAvatar(), h("div", { class: "li-bubble" }, h("b", { "data-who": "comment" }), fc));
+      paintWho(parts.comment);
     }
     if (!ed.dirty && fc.value !== value) fc.value = value;
     autosize(fc);
@@ -461,8 +515,8 @@ function drawComment() {
   }
   drawIfChanged(parts.comment, `ro ${value}`, () => {
     parts.comment.hidden = !value;
-    put(parts.comment, h("span", { class: "li-avatar", "aria-hidden": "true" }, "You"),
-      h("div", { class: "li-bubble" }, h("b", null, "You · first comment"), h("p", null, value)));
+    put(parts.comment, commentAvatar(), h("div", { class: "li-bubble" }, h("b", { "data-who": "comment" }), h("p", null, value)));
+    paintWho(parts.comment);
   });
   if (value) parts.comment.hidden = false;
 }
@@ -692,6 +746,10 @@ export function noticeBox() {
 }
 
 export const editorState = ed;
+
+// Settings › You in the preview was saved (its answer is the event's detail): every preview shows it at once.
+window.addEventListener("studio:profile", (event) => (event.detail && !event.detail.error ? setProfile(event.detail) : loadProfile()));
+loadProfile();
 
 // Ctrl+S saves at once.
 document.addEventListener("keydown", (event) => {
