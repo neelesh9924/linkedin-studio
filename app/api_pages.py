@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse
 
-from . import attached, attachments, codex, flows, guide, paths, render
+from . import ask_about, attached, attachments, codex, draft_all, flows, guide, paths, render
 from .api_posts import fail
 from .config import ConfigError, path_problems, problems
 from .db import loads, utcnow
@@ -113,7 +113,8 @@ def register(app: FastAPI, s: Studio) -> None:
             result = loads(plan["result"], {}) or {}
             boards.append({"id": plan["id"], "planned": s.ago(plan["created_at"]), "inputs": loads(plan["inputs"], {}) or {},
                            "items": out_items, "comment_targets": result.get("comment_targets") or [],
-                           "readiness": result.get("readiness") or [], "notes": result.get("notes") or []})
+                           "readiness": result.get("readiness") or [], "notes": result.get("notes") or [],
+                           "draft_all": draft_all.board(db, plan["id"])})
         plan_job = db.one("SELECT * FROM jobs WHERE kind='plan' ORDER BY id DESC LIMIT 1")
         last_run = db.one("SELECT r.*, j.kind FROM runs r LEFT JOIN jobs j ON j.id = r.job_id ORDER BY r.id DESC LIMIT 1")
         last_health = s.health.latest()
@@ -169,11 +170,9 @@ def register(app: FastAPI, s: Studio) -> None:
             return fail("This item already has a draft.")
         if any(j["status"] in ACTIVE for j in jobs_for("plan_item_id", item_id, ("draft",))):
             return fail("This item is already being drafted.")
-        plan = db.one("SELECT inputs FROM plans WHERE id=?", (row["plan_id"],))
-        item, inputs = loads(row["data"], {}) or {}, (loads(plan["inputs"], {}) or {}) if plan else {}
-        params = {k: item.get(k) for k in ("angle", "formula", "pillar", "goal", "cta", "format", "bank_section")}
-        params.update(plan_item_id=item_id, audience=inputs.get("audience"))
-        return {"job": jobs.submit("draft", params)}
+        return {"job": jobs.submit("draft", draft_all.draft_params(db, row))}
+
+    draft_all.register(app, s)   # Draft all: POST /api/planner/{plan_id}/draft-all and /api/planner/draft-all/stop
 
     # ---- story bank & voice ------------------------------------------------------------
     @app.get("/api/bank")
@@ -244,8 +243,11 @@ def register(app: FastAPI, s: Studio) -> None:
     def chat_send(mode: str, data: dict = Body(default={})):
         if mode not in MODES:
             return fail("Unknown mode.", 404)
-        text = str(data.get("text") or "").strip()
-        conv = conversation(mode, int(data.get("conversation") or 0)) if data.get("conversation") else None
+        focus = ask_about.focus_of(data, mode, cfg.story_bank)   # Ask me about this: a new conversation about one entry
+        if isinstance(focus, str):
+            return fail(focus)
+        text = ask_about.opening(focus) if focus else str(data.get("text") or "").strip()
+        conv = conversation(mode, int(data.get("conversation") or 0)) if data.get("conversation") and not focus else None
         if conv is None:
             conv_id = db.run("INSERT INTO conversations (mode, created_at) VALUES (?,?)", (mode, utcnow()))
             conv = db.one("SELECT * FROM conversations WHERE id=?", (conv_id,))
@@ -260,7 +262,7 @@ def register(app: FastAPI, s: Studio) -> None:
             return fail(str(exc))
         message = flows.add_message(db, conv["id"], "user", text or "Let's start.", meta={"files": files} if files else None)
         job = jobs.submit(MODES[mode], {"conversation_id": conv["id"], "text": text, "first": first, "message_id": message,
-                                        "files": [r["path"] for r in files]})
+                                        "files": [r["path"] for r in files], **({"focus": focus} if focus else {})})
         db.run("UPDATE messages SET job_id=? WHERE id=?", (job, message))
         return {"conversation": conv["id"], "job": job, "message": message}
 

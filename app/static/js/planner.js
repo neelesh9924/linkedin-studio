@@ -4,6 +4,7 @@
 // again, a card keeps the focus that was in it: on its Cancel while it is being drafted, else on its first button.
 import { state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
+import { draftAllBar } from "./draftall.js";
 
 let box = null;
 let data = null;
@@ -201,6 +202,7 @@ function boardOf(d) {
     return out;
   }
   out.push(h("div", { class: "section-title" }, h("h2", null, "This week"), h("span", null, `Planned ${latest.planned} for ${latest.inputs.audience || "your audience"}`)));
+  out.push(draftAllBar(latest));
   out.push(h("div", { class: "board" }, latest.items.map(itemCard)));
   const targets = latest.comment_targets;
   const ready = latest.readiness;
