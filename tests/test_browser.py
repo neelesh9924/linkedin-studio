@@ -3,7 +3,8 @@ in a folder of its own: no Claude, Publora or ChatGPT). Skipped without Playwrig
 
 The shell; a post's chat that rewrites the post; a file attached and sent, opened again, and the attached picture
 chosen as the post's picture; Approve refused while blanks remain; the focus kept through the polls; every page and the
-audit card in words (never "[object …]"); dialogs named by their heading; light and dark."""
+audit card in words (never "[object …]"); dialogs named by their heading; light and dark; New post opening the new post;
+Move to Trash… on the top draft (one request, no alert, the focus on the next post), Put back and Delete forever…."""
 import json
 import socket
 import subprocess
@@ -55,7 +56,7 @@ def test_the_shell_lists_the_posts_with_no_counts_anywhere_in_the_sidebar(studio
     subs = page.locator("#list .nav-item .sub").all_inner_texts()
     assert len(names) == 4 and {"Draft", "Approved", "Published"} <= set(subs)
     side = page.locator(".sidebar").inner_text()
-    assert [w for w in ("Planner", "Story Bank & Voice", "Tools", "Guide", "Settings") if w not in side] == []
+    assert [w for w in ("Planner", "Story Bank & Voice", "Tools", "Guide", "Settings", "Trash") if w not in side] == []
     assert page.locator(".sidebar .chip, .sidebar .badge, .sidebar .count").count() == 0
     assert errors == []
 
@@ -113,7 +114,7 @@ def test_every_page_and_the_audit_card_show_words_never_an_object(studio):
     assert "[object" not in page.locator("#postPage").inner_text()
     for button, box in (("#goPlanner", "#plannerPage .page-width"), ("#goBank", "#bankPage .page-width"),
                         ("#goTools", "#toolsPage .page-width"), ("#goGuide", "#guidePage .page-width"),
-                        ("#goSettings", "#settingsPage .settings")):
+                        ("#goSettings", "#settingsPage .settings"), ("#goTrash", "#trashPage .page-width")):
         page.click(button)
         page.wait_for_selector(box)
         assert "[object" not in page.locator(box).inner_text(), button
@@ -132,5 +133,84 @@ def test_dialogs_are_named_by_their_heading_and_both_themes_work(studio):
     before = page.evaluate("document.documentElement.dataset.theme")
     page.click("#themeBtn")
     assert page.evaluate("document.documentElement.dataset.theme") != before
+    assert page.locator("#themeBtn").get_attribute("aria-label") == f"Switch to {before} theme"   # names where it goes
     page.click("#themeBtn")
+    assert errors == []
+
+
+# ---- New post, Move to Trash…, Put back, Delete forever… ---------------------------------------
+WATCH_ALARMS = """() => {
+  window.alarms = [];
+  const alarm = document.getElementById('alarm');
+  alarm.textContent = '';
+  new MutationObserver(() => alarm.textContent && window.alarms.push(alarm.textContent))
+    .observe(alarm, { childList: true, characterData: true, subtree: true });
+}"""
+
+
+def test_new_post_opens_the_new_post_empty_with_the_focus_in_the_ask_box(studio):
+    page, errors, _ = studio
+    before = page.locator("#list .nav-item").count()
+    assert before >= 4
+    with page.expect_response("**/api/posts/new") as made:
+        page.click("#newPost")
+    new = made.value.json()["id"]
+    page.wait_for_function(f"() => location.hash === '#post-{new}' && document.activeElement.id === 'askText'")
+    page.wait_for_selector(".li-text.placeholder")
+    page.wait_for_timeout(2500)                                       # through a poll: still the new post, still the box
+    assert page.evaluate("location.hash") == f"#post-{new}" and page.evaluate("document.activeElement.id") == "askText"
+    assert page.locator("#list .nav-item").count() == before + 1
+    assert page.locator(f'#list [data-post="{new}"]').get_attribute("aria-current") == "page"
+    assert errors == []
+
+
+def test_move_to_trash_on_the_top_draft_moves_on_quietly_and_the_trash_puts_it_back(studio):
+    page, errors, _ = studio
+    top = page.locator("#list .nav-item").first
+    gone, after = top.get_attribute("data-post"), page.locator("#list .nav-item").nth(1).get_attribute("data-post")
+    top.click()
+    page.wait_for_function(f"() => location.hash === '#post-{gone}'")
+    page.wait_for_selector(".li-text.placeholder")
+    page.evaluate(WATCH_ALARMS)
+    seen = []
+    page.on("response", lambda r: seen.append((r.request.method, r.url, r.status)))
+    page.click("#postGear")
+    page.get_by_role("button", name="Move to Trash…").click()
+    assert "Untitled draft" in page.locator("dialog h2").inner_text()     # the dialog names the post
+    page.locator("dialog").get_by_role("button", name="Move to Trash").click()
+    page.wait_for_function(f"() => document.activeElement.dataset.post === '{after}'")
+    page.wait_for_timeout(2500)                                       # a poll and more
+    assert page.locator(f'#list [data-post="{gone}"]').count() == 0
+    assert page.evaluate("document.activeElement.dataset.post") == after and page.evaluate("location.hash") == f"#post-{after}"
+    assert len([s for s in seen if s[0] == "POST" and s[1].endswith(f"/api/post/{gone}/trash")]) == 1
+    assert len([s for s in seen if s[2] == 404]) <= 1 and page.evaluate("window.alarms") == []
+    page.locator(".toast a", has_text="Open the Trash").click()
+    page.wait_for_selector("#trashPage .trash-row")
+    assert page.locator("#goTrash").get_attribute("aria-current") == "page"
+    page.get_by_role("button", name="Put back, Untitled draft").click()
+    page.wait_for_function("() => document.activeElement.closest('#trashPage .result.ok')")
+    assert "back among your posts" in page.locator("#trashPage .result.ok").inner_text()
+    page.wait_for_selector(f'#list [data-post="{gone}"]')
+    assert page.locator(f'#list [data-post="{gone}"] .sub').inner_text() == "Draft"
+    assert errors == []
+
+
+def test_delete_forever_names_the_post_and_leaves_the_focus_on_what_it_did(studio):
+    page, errors, _ = studio
+    gone = page.locator("#list .nav-item").first.get_attribute("data-post")
+    page.locator("#list .nav-item").first.click()
+    page.wait_for_function(f"() => location.hash === '#post-{gone}'")
+    page.wait_for_selector(".li-text.placeholder")                    # it shows (the gear waits for the post it opens)
+    page.click("#postGear")
+    page.get_by_role("button", name="Move to Trash…").click()
+    page.locator("dialog").get_by_role("button", name="Move to Trash").click()
+    page.wait_for_function(f"() => !document.querySelector('#list [data-post=\"{gone}\"]')")
+    page.click("#goTrash")
+    page.get_by_role("button", name="Delete forever, Untitled draft").click()
+    assert page.locator("dialog .trash-names").inner_text() == "Untitled draft"
+    assert "can’t be undone" in page.locator("dialog").inner_text()
+    page.locator("dialog").get_by_role("button", name="Delete forever").click()
+    page.wait_for_function("() => document.activeElement.closest('#trashPage .result.ok')")
+    assert page.locator("#trashPage .result.ok").inner_text() == "Deleted forever."
+    assert page.locator("#trashPage .trash-row").count() == 0 and "The Trash is empty" in page.locator("#trashPage").inner_text()
     assert errors == []

@@ -1,32 +1,44 @@
 // A post at the top: its title, where it stands, and the one next step (Approve this text, then Schedule…, then the time
-// it goes out); the gear (its title, its versions to go back to, its earlier chats, Cancel on Publora, Delete); and the
-// Schedule… dialog (a time, then the final text, picture, time and first comment to confirm).
+// it goes out; New draft from this once it is published or cancelled); the gear (its title, its versions to go back to,
+// its earlier chats, Cancel on Publora, New draft from this, Move to Trash…); and the Schedule… dialog (a time, then the
+// final text, picture, time and first comment to confirm).
 import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, drawIfChanged, showDialog,
-  closeDialog, closeButton, setTitle, go } from "./core.js";
+  closeDialog, closeButton, setTitle, go, toast } from "./core.js";
 import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor.js";
-import { statusOf } from "./sidebar.js";
+import { statusOf, renderList, openNew } from "./sidebar.js";
 
 let shown = null;      // the post as the studio last said it
-let asking = false;
+let asking = 0;        // the post being asked for: asking again for it waits for that answer; another post does not
 
 export async function loadPost(id, { quiet = false } = {}) {
-  if (asking) return;
-  asking = true;
+  if (asking === id) return;
+  asking = id;
+  if (shown && shown.id !== id) shown = null;   // the gear and the top bar never act on the post shown before
   try {
     const data = await api(`/api/post/${id}`);
     if (state.postId !== id) return;
     if (data.error) {
+      if (data.gone || data.trashed) return void lost(id, data.trashed);
       if (!quiet) announce(data.error, { urgent: true });
-      shown = null;
-      return void go("#~posts");
+      return;
     }
     shown = data;
     renderPost(data, () => loadPost(id, { quiet: true }));   // makes the stage (and its notice) the first time
     renderTop(data);
     renderNotice(data);
   } finally {
-    asking = false;
+    if (asking === id) asking = 0;
   }
+}
+
+// The post went (to the Trash, or for good) while it was open: it leaves the list, and the page goes, once and quietly,
+// to the Trash or to the first post.
+function lost(id, trashed) {
+  shown = null;
+  state.posts = state.posts.filter((p) => p.id !== id);
+  renderList();
+  history.replaceState(null, "", trashed ? "#~trash" : "#~posts");
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 export const shownPost = () => shown;
@@ -74,16 +86,34 @@ function mainActions(p) {
       return [p.can_back ? act("Back to draft", "ghost", "back", () => change("unapprove", "Back in draft.")) : null,
         p.can_retry ? act("Try again", "primary", "retry", () => change("retry", "Scheduled on Publora."), "refresh") : null].filter(Boolean);
     case "published":
-      return [h("span", { class: "top-when" }, icon("check-circle", 15), p.when ? `Published ${p.when}` : "Published")];
+      return [h("span", { class: "top-when" }, icon("check-circle", 15), p.when ? `Published ${p.when}` : "Published"),
+        act("New draft from this", "", "copy", () => copyPost(p), "copy")];
     default:
-      return [h("span", { class: "top-when" }, "Cancelled on Publora. It was never published.")];
+      return [h("span", { class: "top-when" }, "Cancelled on Publora. It was never published."),
+        act("New draft from this", "", "copy", () => copyPost(p), "copy")];
   }
 }
 
-// The post's notice above it: Claude at work on it, a send that failed, Publora's warnings, a refusal just now.
+// New draft from this: a draft with its text, first comment and picture, opened at once (this post stays as it is).
+async function copyPost(p) {
+  const reply = await post(`/api/post/${p.id}/copy`, {});
+  if (reply.error) return announce(reply.error, { urgent: true });
+  if ($("dialog").open) closeDialog();
+  announce("A new draft from it is open. This one stays as it was.");
+  openNew(reply.post);
+}
+
+// The post's notice above it: Claude at work on it, a send that failed, Publora's warnings, a refusal just now (gone as
+// soon as the text changes: typed here, or rewritten by Claude).
 let refused = "";
+let refusedText = null;   // the text it was refused for
+function refuse(words) {
+  refused = words;
+  refusedText = editorState.data ? editorState.data.text : null;
+}
 function renderNotice(p) {
   const box = noticeBox();
+  if (refused && refusedText !== null && p.text !== refusedText) refused = "";
   let kind = "";
   let words = null;
   if (refused) {
@@ -113,12 +143,13 @@ async function refresh() {
 }
 
 async function approve() {
+  if (!shown) return;
   refused = "";
   const saved = await saveNow();
   if (saved && saved.error) return;
   const reply = await post(`/api/post/${shown.id}/approve`, {});
   if (reply.error) {
-    refused = reply.error;
+    refuse(reply.error);
     announce(reply.error, { urgent: true });
   } else {
     announce("Approved. Pick a time and schedule it.");
@@ -128,10 +159,11 @@ async function approve() {
 }
 
 async function change(what, said) {
+  if (!shown) return;
   refused = "";
   const reply = await post(`/api/post/${shown.id}/${what}`, {});
   if (reply.error) {
-    refused = reply.error;
+    refuse(reply.error);
     announce(reply.error, { urgent: true });
   } else if (reply.ok === false) {
     announce(reply.error || "It did not go through.", { urgent: true });
@@ -145,7 +177,7 @@ async function change(what, said) {
 
 function openSchedule() {
   const p = shown;
-  const sch = p.schedule;
+  const sch = p && p.schedule;
   if (!sch) return;
   const when = h("input", { class: "input", type: "datetime-local", id: "when", min: sch.min, max: sch.max, value: sch.quick[0] ? sch.quick[0].value : "" });
   const picks = h("div", { class: "picks", role: "group", "aria-label": "Recommended times" }, sch.quick.map((q, i) => {
@@ -215,12 +247,12 @@ function confirmSchedule(value) {
 
 async function openGear() {
   const p = shown;
-  if (!p) return;
+  if (!p || p.id !== state.postId) return;
   const name = h("input", { class: "input", value: p.title, maxlength: 120, "aria-describedby": "titleHint" });
   const keep = h("button", { class: "btn small", type: "button" }, "Save the title");
   const said = h("div", { class: "results" });
   keep.addEventListener("click", () => whileBusy(keep, async () => {
-    const reply = await post(`/api/post/${p.id}/save`, { title: name.value, text: editorState.data.text, first_comment: editorState.data.first_comment });
+    const reply = await post(`/api/post/${p.id}/title`, { title: name.value });   // the title alone, in any state
     put(said, h("div", { class: `result ${reply.error ? "bad" : "ok"}` }, icon(reply.error ? "alert" : "check", 15), h("div", null, reply.error || "Saved.")));
     announce(reply.error || "Title saved.", { urgent: !!reply.error });
     await refresh();
@@ -232,14 +264,17 @@ async function openGear() {
     ["scheduled", "published", "failed", "cancelled"].includes(p.status)
       ? h("div", { class: "danger-row" }, h("span", null, "Its status and history on Publora."),
         h("a", { class: "btn small", href: p.dashboard, target: "_blank", rel: "noreferrer" }, icon("external", 14), "Publora dashboard")) : null,
-    p.deletable ? h("div", { class: "danger-row" }, h("span", null, "Delete: the post, its versions, its chat and its pictures leave this computer."),
-      gearAct("Delete…", () => confirmDelete(p), "danger")) : null);
+    h("div", { class: "danger-row" }, h("span", null, "New draft from this: its text, first comment and picture in a new draft. This post stays as it is."),
+      gearAct("New draft from this", (event) => whileBusy(event.currentTarget, () => copyPost(p)))),
+    p.deletable ? h("div", { class: "danger-row" }, h("span", null, "Move to Trash: it goes with its versions, chat and pictures. Put it back, or delete it forever, from the Trash."),
+      gearAct("Move to Trash…", () => confirmTrash(p), "danger"))
+      : h("p", { class: "soft" }, p.trash_why || "This post can’t go to the Trash just now."));
   showDialog(h("h2", null, p.title),
     h("label", { class: "field" }, h("span", { class: "field-label" }, "Title (only you see it)"), name),
     h("div", { class: "form-foot", style: "margin-top:8px" }, keep, h("span", { class: "soft", id: "titleHint" }, "The list shows the post’s first line.")),
     said,
     h("section", { class: "zone", "aria-label": "Versions" }, h("h3", null, "Versions"),
-      h("p", { class: "soft" }, "Each change Claude makes is kept, and your own edits before it. Going back is kept too, so it can be undone."),
+      h("p", { class: "soft" }, "Each change Claude makes is kept, and your own edits: before Claude’s change, when you leave the text, before a cut of a third or more, and when you approve it. Going back is kept too, so it can be undone."),
       versions),
     danger,
     h("div", { class: "dialog-foot" }, closeButton("Close")));
@@ -304,18 +339,40 @@ function confirmCancel(p) {
     h("div", { class: "dialog-foot" }, closeButton("Keep it"), yes));
 }
 
-function confirmDelete(p) {
-  const yes = h("button", { class: "btn danger", type: "button" }, "Delete");
+// Move to Trash…: the dialog names the post (its title and first line). Afterwards the post is out of the list at once,
+// the next one opens with the focus on its button in the list, and a note links to the Trash.
+function confirmTrash(p) {
+  const yes = h("button", { class: "btn danger", type: "button" }, icon("trash", 15), h("span", null, "Move to Trash"));
+  const out = h("div", { class: "results" });
   yes.addEventListener("click", () => whileBusy(yes, async () => {
-    const reply = await post(`/api/post/${p.id}/delete`, {});
+    await saveNow();
+    const reply = await post(`/api/post/${p.id}/trash`, {});
+    if (reply.error) {
+      put(out, h("div", { class: "result bad" }, icon("alert", 15), h("div", null, reply.error)));
+      return announce(reply.error, { urgent: true });
+    }
     closeDialog();
-    if (reply.error) return announce(reply.error, { urgent: true });
-    announce("Post deleted.");
-    go("#~posts");
+    moveOn(p.id);
+    toast("Moved to the Trash", "#~trash", "Open the Trash");
   }));
-  showDialog(h("h2", null, "Delete this post?"),
-    h("p", null, "The post, its versions, its chat and its pictures are removed from this computer. This cannot be undone."),
+  const first = p.first === "Nothing written yet" ? "It has no text yet." : `It begins: “${p.first}”`;
+  showDialog(h("h2", null, `Move “${p.title}” to the Trash?`),
+    h("p", null, "It moves to the Trash with its versions, chat and pictures. Put it back or delete it forever from there."),
+    h("p", { class: "soft" }, first),
+    out,
     h("div", { class: "dialog-foot" }, closeButton("Keep it"), yes));
+}
+
+// The list without that post, at once (the next poll agrees), and the post after it opened in its place.
+function moveOn(id) {
+  const at = state.posts.findIndex((x) => x.id === id);
+  state.posts = state.posts.filter((x) => x.id !== id);
+  const next = state.posts[Math.max(at, 0)] || state.posts[at - 1] || null;
+  shown = null;
+  state.postId = next ? next.id : null;
+  renderList();
+  go(next ? `#post-${next.id}` : "#~posts");
+  focusFirst(next ? $("list").querySelector(`[data-post="${next.id}"]`) : null, $("newPost"));
 }
 
 export function forgetRefusal() {
@@ -325,4 +382,10 @@ export function forgetRefusal() {
 export function init() {
   $("postGear").prepend(icon("gear", 17));
   $("postGear").addEventListener("click", openGear);
+  // A refusal (Approve's blanks, say) goes as soon as the text changes.
+  $("postPage").addEventListener("input", (event) => {
+    if (!refused || !(event.target instanceof HTMLTextAreaElement)) return;
+    refused = "";
+    if (shown) renderNotice(shown);
+  });
 }

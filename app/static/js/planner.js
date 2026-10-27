@@ -1,7 +1,8 @@
 // The Planner: this month (posts used against the limit, the next post, the scheduled ones with Check Publora, Claude's
-// status), getting set up, the week's plan from the content planner, each card drafted with one press, who to comment
-// on, the inbound-readiness checklist, and earlier plans.
-import { state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, go } from "./core.js";
+// status), getting set up, the week's plan from the content planner, each card drafted with one press (a card whose post
+// is in the Trash says so, with Put back), who to comment on, the inbound-readiness checklist, and earlier plans. Drawn
+// again, a card keeps the focus that was in it: on its Cancel while it is being drafted, else on its first button.
+import { state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 
 let box = null;
@@ -18,8 +19,12 @@ export async function refresh() {
   const reply = await api("/api/planner");
   if (reply.error || state.page !== "planner") return;
   data = reply;
-  drawIfChanged(box, JSON.stringify(data, (k, v) => (k === "seconds" || k === "quiet" || k === "progress" || k === "activity" ? undefined : v)), draw);
+  const card = box.contains(document.activeElement) && document.activeElement.closest(".plan-card");
+  const drew = drawIfChanged(box, JSON.stringify(data, (k, v) => (k === "seconds" || k === "quiet" || k === "progress" || k === "activity" ? undefined : v)), draw);
   tick();
+  if (drew && card && card.id) {
+    focusFirst(`#${card.id} .job-box button`, `#${card.id} .foot button`, `#${card.id}`);
+  }
 }
 
 // Between polls only the jobs' words and timers change.
@@ -79,12 +84,12 @@ function draw() {
         h("div", { class: "seg-row" }, h("span", { class: "stat" }, h("span", { class: "label" }, "Claude")),
           h("span", { class: `chip ${d.claude.working ? "busy" : ""}` }, d.claude.working || "Idle")),
         h("dl", { class: "facts" },
-          h("dt", null, "Login folder"), h("dd", null, h("code", null, d.claude.login)),
+          d.claude.sign_in ? [h("dt", null, "Account"), h("dd", null, signedIn(d.claude.sign_in))] : null,
           h("dt", null, "Model"), h("dd", null, d.claude.model),
           h("dt", null, "Last run"), h("dd", null, d.claude.last_run || "None yet"),
           h("dt", null, "Health check"), h("dd", null, d.claude.health
-            ? h("a", { href: "#~settings" }, `${d.claude.health.ok ? "All good" : "Found a problem"}, ${d.claude.health.when}`)
-            : h("a", { href: "#~settings" }, "Not run yet")))))),
+            ? h("a", { href: "#~settings-health" }, `${d.claude.health.ok ? "All good" : "Found a problem"}, ${d.claude.health.when}`)
+            : h("a", { href: "#~settings-health" }, "Not run yet")))))),
     h("section", { class: "panel" },
       h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("clock", 17)),
         h("div", null, h("h2", null, "Scheduled posts"), h("p", null, "Waiting at Publora. Check Publora marks the ones whose time has passed.")), checkPublora),
@@ -93,6 +98,12 @@ function draw() {
         : h("div", { class: "panel-body soft" }, "Nothing is scheduled. Approve a post, then pick a time.")),
     planForm(d),
     boardOf(d)));
+}
+
+// Who Claude runs as: "Signed in as <account> (<plan>)", or a link to Settings › Claude when it is not (or can't tell).
+function signedIn(si) {
+  if (si.signed_in) return si.account ? `Signed in as ${si.account}${si.plan ? ` (${si.plan})` : ""}` : "Signed in";
+  return h("a", { href: "#~settings-claude" }, si.ok === false && si.error ? `Could not tell: ${si.error}` : "Not signed in");
 }
 
 function planForm(d) {
@@ -142,7 +153,15 @@ function planForm(d) {
 function itemCard(item) {
   const job = item.job;
   let foot;
-  if (item.post) {
+  if (item.post && item.post.trashed) {
+    const back = h("button", { class: "btn small", type: "button", "aria-label": `Put back, ${item.post.first}` }, icon("history", 14), h("span", null, "Put back"));
+    back.addEventListener("click", () => whileBusy(back, async () => {
+      const reply = await post("/api/trash/back", { id: item.post.id });
+      announce(reply.error || "Put back: the post is among your posts again, as it was.", { urgent: !!reply.error });
+      window.dispatchEvent(new Event("studio:poll"));
+    }));
+    foot = [back, h("span", { class: "chip" }, item.post.label)];
+  } else if (item.post) {
     foot = [h("button", { class: "btn small", type: "button", onclick: () => go(`#post-${item.post.id}`) }, icon("file", 14), h("span", null, "Open the post")),
       h("span", { class: `chip ${item.post.kind}` }, item.post.label)];
   } else if (job && ["queued", "running"].includes(job.status)) {
@@ -205,7 +224,7 @@ function boardOf(d) {
     out.push(h("section", { class: "panel", style: "padding:0 16px" }, earlier.map((b) => h("details", { class: "fold" },
       h("summary", null, `${b.planned} · ${plural(b.items.length, "post", "posts")} · ${b.inputs.audience || ""}`),
       h("div", { class: "fold-body" }, b.items.map((i) => h("div", { class: "seg-row" }, h("b", null, i.day || ""), h("span", { class: "grow" }, i.angle || ""),
-        i.post ? h("a", { href: `#post-${i.post.id}` }, "Open the post") : null)))))));
+        i.post && i.post.trashed ? h("a", { href: "#~trash" }, "In the Trash") : i.post ? h("a", { href: `#post-${i.post.id}` }, "Open the post") : null)))))));
   }
   return out;
 }

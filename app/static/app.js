@@ -1,8 +1,8 @@
 // The studio's page, its entry (a module: no build step, nothing from outside this PC). Here: the pages and the address
-// they follow (#post-<id>, #~planner, #~bank, #~voice, #~tools, #~guide, #~settings, #~setup), asking the studio what
-// changed and having each area draw it, and the start. Each area is its module in js/.
-import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner } from "./js/core.js";
-import { renderList, init as initSidebar } from "./js/sidebar.js";
+// they follow (#post-<id>, #~planner, #~bank, #~voice, #~tools, #~guide, #~settings, #~trash, #~setup), asking the studio
+// what changed and having each area draw it, and the start. Each area is its module in js/.
+import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst } from "./js/core.js";
+import { renderList, takeMade, init as initSidebar } from "./js/sidebar.js";
 import { loadPost, forgetRefusal, init as initPost } from "./js/post.js";
 import { showFor, refresh as refreshChat, init as initAssist } from "./js/assist.js";
 import { init as initJobs } from "./js/jobs.js";
@@ -11,11 +11,14 @@ import * as bank from "./js/bank.js";
 import * as tools from "./js/tools.js";
 import * as settings from "./js/settings.js";
 import * as guide from "./js/guide.js";
+import * as trash from "./js/trash.js";
 
 const POLL_MS = 2000;
 const PAGES = { planner: ["Planner", planner], bank: ["Story Bank & Voice", bank], voice: ["Story Bank & Voice", bank],
-  tools: ["Tools", tools], guide: ["Guide", guide], settings: ["Settings", settings], setup: ["Set up LinkedIn Studio", settings] };
-const BOXES = ["postPage", "emptyPage", "plannerPage", "bankPage", "toolsPage", "guidePage", "settingsPage", "setupPage"];
+  tools: ["Tools", tools], guide: ["Guide", guide], settings: ["Settings", settings], trash: ["Trash", trash],
+  setup: ["Set up LinkedIn Studio", settings] };
+const BOXES = ["postPage", "emptyPage", "plannerPage", "bankPage", "toolsPage", "guidePage", "settingsPage", "trashPage", "setupPage"];
+const SUMMARY = ["id", "title", "first", "status", "label", "kind", "when", "scheduled_at", "picture", "busy", "trashed"];
 
 // ---------- pages ----------
 
@@ -23,21 +26,31 @@ function show(box) {
   for (const id of BOXES) $(id).hidden = id !== box;
 }
 
-function route() {
+function replace(hash) {
+  history.replaceState(null, "", hash);
+  return route();
+}
+
+let turn = 0;   // each route() is a turn; one that waited for the studio gives way to a later one
+async function route() {
+  const mine = ++turn;
   const mark = decodeURIComponent(location.hash.slice(1));
   forgetRefusal();
-  if (state.setup && mark !== "~setup") return void history.replaceState(null, "", "#~setup"), route();
+  if (state.setup && mark !== "~setup") return replace("#~setup");
   $("app").classList.toggle("bare", mark === "~setup" && state.setup);
   const postMatch = /^post-(\d+)$/.exec(mark);
-  if (postMatch && state.posts.some((p) => p.id === Number(postMatch[1]))) {
-    state.page = "post";
-    state.postId = Number(postMatch[1]);
-    show("postPage");
-    $("postGear").hidden = false;
-    showFor({ kind: "post", id: state.postId });
-    loadPost(state.postId);
-    renderList();
-    return;
+  if (postMatch) {
+    const id = Number(postMatch[1]);
+    // Not in the list the studio last sent: made a moment ago, in the Trash, or gone. The studio says which.
+    if (!state.posts.some((p) => p.id === id)) {
+      const data = await api(`/api/post/${id}`);
+      if (mine !== turn) return;
+      if (data.trashed) return replace("#~trash");
+      if (!data.error && !state.posts.some((p) => p.id === id)) {
+        state.posts = [Object.fromEntries(SUMMARY.map((k) => [k, data[k]])), ...state.posts];
+      }
+    }
+    if (state.posts.some((p) => p.id === id)) return void openPost(id);
   }
   state.postId = null;
   $("postGear").hidden = true;
@@ -56,15 +69,31 @@ function route() {
     renderList();
     return;
   }
-  // Posts: the first one, or the page that says there are none.
+  // Posts: the first one (quietly, in place of one that is gone), or the page that says there are none.
   const first = state.posts[0];
-  if (first) return void history.replaceState(null, "", `#post-${first.id}`), route();
+  if (first) return replace(`#post-${first.id}`);
   state.page = "empty";
   $("title").textContent = "LinkedIn Studio";
   setTitle("LinkedIn Studio");
   show("emptyPage");
   showFor(null);
   renderEmpty();
+  renderList();
+}
+
+// A post in the middle, its chat beside it. One made just now gets the focus in the Ask box (or on its text when the
+// panel is hidden), so the next thing the owner types is what it should say.
+function openPost(id) {
+  state.page = "post";
+  state.postId = id;
+  show("postPage");
+  $("postGear").hidden = false;
+  showFor({ kind: "post", id });
+  const fresh = takeMade(id);
+  const asked = fresh && !$("app").classList.contains("no-assist") && focusFirst($("askText"));
+  loadPost(id).then(() => {
+    if (fresh && !asked && state.postId === id) focusFirst($("postPage").querySelector(".li-read, .li-edit"));
+  });
   renderList();
 }
 
@@ -92,6 +121,7 @@ async function poll() {
     const data = await api("/api/state");
     if (!data.posts) {
       state.offline = true;
+      window.dispatchEvent(new Event("studio:offline"));   // each time: an area may hold what it sends until it is back
       banner("offline", [icon("alert", 17), h("div", null, h("strong", null, lost.said ? "This window belongs to an earlier session."
         : "LinkedIn Studio is not running."), lost.said ? "Open LinkedIn Studio from its shortcut again." : "Start it again from its shortcut, then reload this window."),
       h("button", { class: "btn small", type: "button", onclick: () => location.reload() }, "Reload")], "bad");
@@ -107,7 +137,7 @@ async function poll() {
       state.first = false;
       route();
     } else if (contentChanged || jobsChanged) {
-      if (state.page === "post" && !state.posts.some((p) => p.id === state.postId)) route();   // deleted elsewhere
+      if (state.page === "post" && !state.posts.some((p) => p.id === state.postId)) route();   // moved to the Trash or deleted elsewhere
       else if (state.page === "post") loadPost(state.postId, { quiet: true });
       else if (PAGES[state.page]) PAGES[state.page][1].refresh();
       else if (state.page === "empty" && state.posts.length) route();

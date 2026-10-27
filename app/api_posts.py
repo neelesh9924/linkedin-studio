@@ -1,7 +1,11 @@
-"""The API of one post: the editor's actions, its chat, its versions and its picture, and sending it to Publora."""
+"""The API of one post: the editor's actions, its chat, its versions and its picture, sending it to Publora, and
+moving it to the Trash (api_trash.py has the Trash itself).
+
+Every endpoint of a post asks `find` for it: one that is gone, or in the Trash, is refused in the same words. A post
+in the Trash keeps everything (its state, versions, chat, pictures and plan link) and nothing here can change it.
+"""
 from __future__ import annotations
 
-import shutil
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -18,17 +22,46 @@ from .skills import REVISION_LABELS, REVISIONS
 
 CHAT_BUSY = "Claude is still working on this post. What you wrote stays in the box: send it once Claude is done."
 TEXT_BUSY = "Claude is working on this post: its text waits until Claude is done."
+GONE = "That post no longer exists."
+TRASHED = "That post is in the Trash."
 
 
-def fail(text: str, status: int = 422) -> JSONResponse:
-    return JSONResponse({"error": text}, status_code=status)
+def fail(text: str, status: int = 422, **extra) -> JSONResponse:
+    return JSONResponse({"error": text, **extra}, status_code=status)
+
+
+def trash_refusal(row, working: bool) -> str:
+    """Why this post cannot go to the Trash just now, or "" when it can (the gear offers Move to Trash… then)."""
+    status = row["status"]
+    if status == "scheduling":
+        return "This post is being sent to Publora just now, so it stays here."
+    if status == "scheduled":
+        return "A scheduled post can't go to the Trash. Cancel it on Publora first (the gear's Cancel on Publora…)."
+    if status == "published":
+        return "A published post stays here: it can't go to the Trash."
+    if (loads(row["media"], {}) or {}).get("postGroupId"):
+        return ("Publora still holds an unsent draft of this post. Move it back to draft first: that takes the draft off "
+                "Publora.")
+    if working:
+        return "Claude is working on this post. It can go to the Trash once Claude is done, or once you stop it."
+    return ""
 
 
 def register(app: FastAPI, s: Studio) -> None:
     db, jobs, pub, cfg = s.db, s.jobs, s.pub, s.cfg
 
     def get_post(post_id: int):
+        """The row, the Trash's too: only `find` decides what an endpoint may do with it."""
         return db.one("SELECT * FROM posts WHERE id=?", (post_id,))
+
+    def find(post_id: int):
+        """(the post, None), or (None, the refusal) for a post that is gone or in the Trash."""
+        row = get_post(post_id)
+        if row is None:
+            return None, fail(GONE, 404, gone=True)
+        if row["trashed_at"]:
+            return None, fail(TRASHED, 404, trashed=True)
+        return row, None
 
     def jobs_for(post_id: int, kinds: tuple[str, ...]) -> list:
         marks = ",".join("?" * len(kinds))
@@ -93,6 +126,7 @@ def register(app: FastAPI, s: Studio) -> None:
             data = loads(item["data"], {}) if item else {}
             plan = {k: data.get(k) for k in ("day", "time", "angle", "formula", "pillar", "goal", "cta") if data.get(k)}
         status = row["status"]
+        trash_why = trash_refusal(row, s.post_working(pid))
         return {
             **s.post_summary(row),
             "text": row["text"], "first_comment": row["first_comment"] or "", "formula": row["formula"] or "",
@@ -102,8 +136,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "revision": revision_public(revision, row) if revision is not None and status == "draft" else None,
             "slots": len(placeholder_slots(row["text"])), "chars": len(row["text"]),
             "editable": status == "draft" and not busy,
-            "deletable": status not in ("scheduling", "scheduled", "published") and not busy
-                         and not (loads(row["media"], {}) or {}).get("postGroupId"),
+            "deletable": not trash_why, "trash_why": trash_why,      # Move to Trash… is offered, or why it is not
             "error": row["error"] or "", "saved": s.clock(row["updated_at"]),
             "picture": images.public(chosen, row["picture_id"]) if chosen else None,
             "pictures": [images.public(p, row["picture_id"]) for p in pictures],
@@ -118,8 +151,9 @@ def register(app: FastAPI, s: Studio) -> None:
         }
 
     def save_fields(post_id: int, title: Any, text: Any, first_comment: Any):
-        """Store the editor's fields if the post is still a draft Claude is not working on. The fresh row, or None."""
-        post = db.one("SELECT * FROM posts WHERE id=? AND status='draft'", (post_id,))
+        """Store the editor's fields if the post is still a draft Claude is not working on. The fresh row, or None.
+        A save that takes away a third or more of the text keeps the text before it as a version first."""
+        post = db.one("SELECT * FROM posts WHERE id=? AND status='draft' AND trashed_at IS NULL", (post_id,))
         if post is None or s.post_busy(post_id):
             return None
         if not isinstance(text, str):
@@ -128,14 +162,17 @@ def register(app: FastAPI, s: Studio) -> None:
         new_fc = (first_comment if isinstance(first_comment, str) else post["first_comment"] or "").replace("\r\n", "\n").strip() or None
         new_title = (title if isinstance(title, str) else "").strip()[:120] or post["title"]
         if (new_text, new_fc, new_title) != (post["text"], post["first_comment"], post["title"]):
-            db.run("UPDATE posts SET text=?, first_comment=?, title=?, updated_at=? WHERE id=? AND status='draft'",
-                   (new_text, new_fc, new_title, utcnow(), post_id))
+            if versions.big_cut(post["text"], new_text):
+                versions.catch_up(db, post_id)
+            db.run("UPDATE posts SET text=?, first_comment=?, title=?, updated_at=? WHERE id=? AND status='draft' "
+                   "AND trashed_at IS NULL", (new_text, new_fc, new_title, utcnow(), post_id))
             post = get_post(post_id)
         return post
 
     def locked(post_id: int) -> JSONResponse:
-        if get_post(post_id) is None:
-            return fail("That post no longer exists.", 404)
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if s.post_busy(post_id):
             return fail(TEXT_BUSY, 409)
         return fail("Only a draft can be edited. Move it back to draft first.", 409)
@@ -145,8 +182,9 @@ def register(app: FastAPI, s: Studio) -> None:
     def post_new(data: dict = Body(default={})):
         now = utcnow()
         title = str(data.get("title") or "").strip()[:120] or "Untitled draft"
-        return {"id": db.run("INSERT INTO posts (created_at, updated_at, title, text, status) VALUES (?,?,?,?, 'draft')",
-                             (now, now, title, ""))}
+        post_id = db.run("INSERT INTO posts (created_at, updated_at, title, text, status) VALUES (?,?,?,?, 'draft')",
+                         (now, now, title, ""))
+        return {"id": post_id, "post": s.post_summary(get_post(post_id))}   # the page lists it before it opens it
 
     @app.post("/api/posts/refresh")
     def refresh_due():
@@ -165,10 +203,8 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.get("/api/post/{post_id}")
     def post_get(post_id: int):
-        row = get_post(post_id)
-        if row is None:
-            return fail("That post no longer exists.", 404)
-        return post_full(row)
+        row, refusal = find(post_id)
+        return refusal if refusal is not None else post_full(row)
 
     # ---- the editor ----------------------------------------------------------------
     @app.post("/api/post/{post_id}/save")
@@ -180,8 +216,11 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/audit")
     def post_audit(post_id: int, data: dict = Body(default={})):
-        post = save_fields(post_id, data.get("title"), data.get("text"), data.get("first_comment")) or get_post(post_id)
-        if post is None or not post["text"].strip():
+        post, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        post = save_fields(post_id, data.get("title"), data.get("text"), data.get("first_comment")) or post
+        if not post["text"].strip():
             return fail("Write something first.")
         if any(j["status"] in ACTIVE for j in jobs_for(post_id, ("audit",))):
             return fail("An audit is already running.")
@@ -192,6 +231,9 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/post/{post_id}/revise")
     def post_revise(post_id: int, data: dict = Body(default={})):
         how = data.get("how")
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         post = save_fields(post_id, data.get("title"), data.get("text"), data.get("first_comment"))
         if post is None or how not in REVISIONS or not post["text"].strip():
             return fail("Only a draft with some text can be revised.")
@@ -203,9 +245,11 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/revision")
     def post_use_revision(post_id: int, data: dict = Body(default={})):
+        post, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         job = db.one("SELECT * FROM jobs WHERE id=? AND kind='revise'", (int(data.get("job") or 0),))
-        post = db.one("SELECT * FROM posts WHERE id=? AND status='draft'", (post_id,))
-        if post is None or job is None or (loads(job["params"], {}) or {}).get("post_id") != post_id:
+        if post["status"] != "draft" or job is None or (loads(job["params"], {}) or {}).get("post_id") != post_id:
             return fail("That revision can no longer be applied.", 409)
         if s.post_busy(post_id):
             return fail(TEXT_BUSY, 409)
@@ -217,14 +261,15 @@ def register(app: FastAPI, s: Studio) -> None:
         how = (loads(job["params"], {}) or {}).get("how")
         versions.catch_up(db, post_id)
         first = result.get("first_comment") or post["first_comment"]
-        db.run("UPDATE posts SET text=?, first_comment=?, audit=NULL, updated_at=? WHERE id=?",
+        db.run("UPDATE posts SET text=?, first_comment=?, audit=NULL, updated_at=? WHERE id=? AND trashed_at IS NULL",
                (text, first, utcnow(), post_id))
         versions.record(db, post_id, text, first, "claude", REVISION_LABELS.get(how, ("Revision",))[0])
         return {"used": True}
 
     def transition(post_id: int, fn) -> Any:
-        if get_post(post_id) is None:
-            return fail("That post no longer exists.", 404)
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         try:
             result = fn()
         except ScheduleError as exc:
@@ -246,10 +291,17 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/approve")
     def post_approve(post_id: int, data: dict = Body(default={})):
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if s.post_busy(post_id):
             return fail(TEXT_BUSY, 409)
         save_fields(post_id, data.get("title"), data.get("text"), data.get("first_comment"))
-        return transition(post_id, lambda: pub.approve(post_id))
+        done = transition(post_id, lambda: pub.approve(post_id))
+        row = get_post(post_id)
+        if isinstance(done, dict) and row is not None and row["status"] == "approved":   # the text it was approved with
+            versions.record(db, post_id, row["text"], row["first_comment"], "you", "Approved")
+        return done
 
     @app.post("/api/post/{post_id}/unapprove")
     def post_unapprove(post_id: int):
@@ -274,48 +326,88 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/refresh")
     def post_refresh(post_id: int):
-        if get_post(post_id) is None:
-            return fail("That post no longer exists.", 404)
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         try:
             return {"status": pub.refresh(post_id)}
         except Exception as exc:
             return fail(f"Could not read the status from Publora: {exc}", 502)
 
-    @app.post("/api/post/{post_id}/delete")
-    def post_delete(post_id: int):
-        post = get_post(post_id)
-        if post is None:
-            return {"ok": True}
-        if post["status"] in ("scheduling", "scheduled", "published"):
-            return fail("A scheduled or published post cannot be deleted here. Cancel it on Publora first.", 409)
-        if (loads(post["media"], {}) or {}).get("postGroupId"):
-            return fail("Publora still holds an unsent draft of this post. Move it back to draft first: that takes the "
-                        "draft off Publora.", 409)
-        if s.post_busy(post_id):
-            return fail(TEXT_BUSY, 409)
-        files = [r["file"] for r in images.for_post(db, post_id)]
+    # ---- Move to Trash…, the title, your own edits, New draft from this --------------------
+    @app.post("/api/post/{post_id}/trash")
+    def post_trash(post_id: int):
+        """The gear's Move to Trash…: the post leaves the list with everything it has; the Trash puts it back or deletes
+        it forever. Never a post on Publora (scheduling, scheduled, published, or a picture post's Publora draft), and
+        never while Claude works on it or waits to (its chat, an audit or a revision)."""
+        row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        why = trash_refusal(row, s.post_working(post_id))
+        if why:
+            return fail(why, 409)
+        # Checked again in the one statement that moves it, so nothing that started meanwhile is overtaken.
+        moved = db.run("UPDATE posts SET trashed_at=? WHERE id=? AND trashed_at IS NULL "
+                       "AND status NOT IN ('scheduling','scheduled','published') "
+                       "AND (media IS NULL OR NOT json_valid(media) OR json_extract(media, '$.postGroupId') IS NULL) "
+                       "AND NOT EXISTS (SELECT 1 FROM jobs WHERE status IN ('queued','running') "
+                       "AND json_extract(params, '$.post_id')=?)", (utcnow(), post_id, post_id))
+        if moved != 1:
+            return fail("The post changed just now, so it stayed. Look at it again.", 409)
+        return {"ok": True, "id": post_id}
+
+    @app.post("/api/post/{post_id}/title")
+    def post_title(post_id: int, data: dict = Body(default={})):
+        """The title only (only the owner sees it), in any state but the Trash: the text is never sent with it."""
+        row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        title = " ".join(str(data.get("title") or "").split())[:120]
+        if not title:
+            return fail("Give the post a title. Only you see it.")
+        if title != row["title"]:
+            db.run("UPDATE posts SET title=?, updated_at=? WHERE id=? AND trashed_at IS NULL", (title, utcnow(), post_id))
+        return {"ok": True, "title": title}
+
+    @app.post("/api/post/{post_id}/checkpoint")
+    def post_checkpoint(post_id: int):
+        """The owner left the text after typing: their edits are kept as a version when they differ from the latest."""
+        row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        if row["status"] != "draft":
+            return {"version": None}
+        return {"version": versions.checkpoint(db, post_id)}
+
+    @app.post("/api/post/{post_id}/copy")
+    def post_copy(post_id: int):
+        """New draft from this: the text, first comment, formula, notes and picture (its file is shared, not copied),
+        with a first version that says where it came from. Any state but the Trash."""
+        row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        now = utcnow()
         with db.transaction() as con:
-            con.execute("UPDATE plan_items SET post_id=NULL WHERE post_id=?", (post_id,))
-            con.execute("DELETE FROM versions WHERE post_id=?", (post_id,))
-            con.execute("DELETE FROM images WHERE post_id=?", (post_id,))
-            for conv in con.execute("SELECT id FROM conversations WHERE mode='post' AND post_id=?", (post_id,)).fetchall():
-                con.execute("DELETE FROM messages WHERE conversation_id=?", (conv["id"],))
-            con.execute("DELETE FROM conversations WHERE mode='post' AND post_id=?", (post_id,))
-            con.execute("DELETE FROM posts WHERE id=?", (post_id,))
-        for name in files:   # a picture's file goes once no other post's picture is the same file
-            if db.one("SELECT 1 FROM images WHERE file=?", (name,)) is None:
-                path = images.path_of(db, {"file": name})
-                if path:
-                    path.unlink(missing_ok=True)
-        shutil.rmtree(attached.folder(db, f"post-{post_id}"), ignore_errors=True)   # what was attached in its chat
-        return {"ok": True}
+            new = con.execute("INSERT INTO posts (created_at, updated_at, title, text, first_comment, formula, notes, status) "
+                              "VALUES (?,?,?,?,?,?,?, 'draft')",
+                              (now, now, row["title"], row["text"], row["first_comment"], row["formula"], row["notes"])).lastrowid
+            image = (con.execute("SELECT * FROM images WHERE id=? AND post_id=?", (row["picture_id"], post_id)).fetchone()
+                     if row["picture_id"] else None)
+            if image is not None:
+                copy = con.execute("INSERT INTO images (post_id, file, source, prompt, shape, width, height, mime, sha256, "
+                                   "job_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                                   (new, image["file"], image["source"], image["prompt"], image["shape"], image["width"],
+                                    image["height"], image["mime"], image["sha256"], image["job_id"], now)).lastrowid
+                con.execute("UPDATE posts SET picture_id=? WHERE id=?", (copy, new))
+        versions.record(db, new, row["text"], row["first_comment"], "studio", f"From {row['title']}")
+        return {"id": new, "post": s.post_summary(get_post(new))}
 
     # ---- versions -------------------------------------------------------------------
     @app.get("/api/post/{post_id}/versions")
     def post_versions(post_id: int):
-        post = get_post(post_id)
-        if post is None:
-            return fail("That post no longer exists.", 404)
+        post, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         rows = versions.listing(db, post_id)
         return {"versions": [{"id": v["id"], "author": v["author"], "note": v["note"] or "", "when": s.when(v["created_at"]),
                               "chars": len(v["text"]), "first": (v["text"].strip().splitlines() or [""])[0][:140],
@@ -325,6 +417,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/versions/back")
     def post_go_back(post_id: int, data: dict = Body(default={})):
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if s.post_busy(post_id):
             return fail(TEXT_BUSY, 409)
         try:
@@ -336,9 +431,9 @@ def register(app: FastAPI, s: Studio) -> None:
     # ---- the picture ------------------------------------------------------------------
     @app.post("/api/post/{post_id}/picture")
     def post_picture(post_id: int, data: dict = Body(default={})):
-        post = get_post(post_id)
-        if post is None:
-            return fail("That post no longer exists.", 404)
+        post, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if post["status"] != "draft":
             return fail("The picture goes with the approved text: move the post back to draft to change it.", 409)
         chosen = data.get("image")
@@ -347,7 +442,7 @@ def register(app: FastAPI, s: Studio) -> None:
             if image is None:
                 return fail("That picture is not this post's.", 404)
             chosen = image["id"]
-        db.run("UPDATE posts SET picture_id=?, updated_at=? WHERE id=?", (chosen, utcnow(), post_id))
+        db.run("UPDATE posts SET picture_id=?, updated_at=? WHERE id=? AND trashed_at IS NULL", (chosen, utcnow(), post_id))
         return {"ok": True, "picture": chosen}
 
     # ---- the post's chat --------------------------------------------------------------
@@ -387,9 +482,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.get("/api/post/{post_id}/chat")
     def post_chat(post_id: int):
-        post = get_post(post_id)
-        if post is None:
-            return fail("That post no longer exists.", 404)
+        post, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         conv = conversation(post_id)
         earlier = db.all("SELECT c.id, c.created_at, c.cleared_at, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) "
                          "AS n FROM conversations c WHERE c.mode='post' AND c.post_id=? AND c.cleared_at IS NOT NULL "
@@ -400,8 +495,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/ask")
     def post_ask(post_id: int, data: dict = Body(default={})):
-        if get_post(post_id) is None:
-            return fail("That post no longer exists.", 404)
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         text = str(data.get("text") or "").strip()
         if not text:
             return fail("Say what you want first.")
@@ -427,6 +523,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.get("/api/post/{post_id}/file/{name}")
     def post_file(post_id: int, name: str):
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         found = attached.served(db, f"post-{post_id}", name)
         if found is None:
             return fail("That file is not here.", 404)
@@ -435,6 +534,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/chat/clear")
     def post_chat_clear(post_id: int):
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if s.post_busy(post_id):
             return fail(CHAT_BUSY, 409)
         conv = conversation(post_id)
@@ -444,6 +546,9 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/chat/back")
     def post_chat_back(post_id: int, data: dict = Body(default={})):
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
         if s.post_busy(post_id):
             return fail(CHAT_BUSY, 409)
         wanted = db.one("SELECT * FROM conversations WHERE id=? AND mode='post' AND post_id=?",
