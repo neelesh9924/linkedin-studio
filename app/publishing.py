@@ -82,6 +82,50 @@ def unclear_failure(exc: Exception) -> bool:
     return "Timeout" in type(exc).__name__ or "Connection" in type(exc).__name__
 
 
+# What get-post says about a post, read without sending anything. Only a LinkedIn address is ever kept as the post's
+# link (the page offers it as Open on LinkedIn): its permalink, or the feed address of its urn:li: id.
+LINKEDIN = "https://www.linkedin.com/"
+_LINKEDIN_LINK = re.compile(r"https://www\.linkedin\.com/[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]{0,1900}")
+_URN = re.compile(r"urn:li:[A-Za-z]{2,40}:[A-Za-z0-9_-]{1,100}")
+NO_REASON = "Publora says it failed, and gave no reason. Its dashboard may say more."
+
+
+def linkedin_link(value: Any) -> str | None:
+    """`value` when it is a https://www.linkedin.com/ address, else None: no other link is ever kept or offered."""
+    link = value.strip() if isinstance(value, str) else ""
+    return link if _LINKEDIN_LINK.fullmatch(link) else None
+
+
+def _said(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("message") or value.get("error") or value.get("code") or ""
+    return " ".join(str(value or "").split())[:300]
+
+
+def remote_state(body: Any) -> tuple[str, str | None, list[str]]:
+    """get-post's answer as (published | failed | scheduled, the post's LinkedIn link or None, Publora's own words).
+    The status is read at the top level or under postGroup; published and partially_published are published, failed
+    is failed, and anything else is still scheduled. The words are the posts' errors and the group's."""
+    body = body if isinstance(body, dict) else {}
+    group = body.get("postGroup") if isinstance(body.get("postGroup"), dict) else {}
+    remote = str(body.get("status") or group.get("status") or "").strip().lower()
+    posts = [p for p in [*(body.get("posts") if isinstance(body.get("posts"), list) else []),
+                         *(group.get("posts") if isinstance(group.get("posts"), list) else [])] if isinstance(p, dict)]
+    words: list[str] = []
+    for value in [*(p.get("error") for p in posts), group.get("error"), body.get("error")]:
+        said = _said(value)
+        if said and said not in words:
+            words.append(said)
+    status = "published" if remote in ("published", "partially_published") else "failed" if remote == "failed" else "scheduled"
+    link = None
+    if status == "published":
+        link = next(filter(None, (linkedin_link(p.get("permalink")) for p in posts)), None)
+        posted = next((u for u in (str(p.get("postedId") or "").strip() for p in posts) if _URN.fullmatch(u)), None)
+        if link is None and posted:
+            link = linkedin_link(f"{LINKEDIN}feed/update/{posted}")
+    return status, link, words
+
+
 # The writer marks facts it does not have as [N], [DD Month YYYY], {slot}. None may reach LinkedIn.
 SLOT = re.compile(r"\[[^\[\]\n]{1,60}\]|\{[A-Za-z_ ]{1,40}\}")
 
@@ -444,17 +488,25 @@ class Publisher:
                     (utcnow(), post_id))
 
     def refresh(self, post_id: int) -> str:
+        """Read a scheduled post's status from Publora: get-post only, so nothing is sent, changed or deleted there.
+        Published (or partially) becomes published, with the post's LinkedIn link when Publora gives one; failed
+        becomes failed, in Publora's own words; anything else stays scheduled. A post in the Trash is never asked
+        about. Returns the post's status."""
         row = self.db.one("SELECT * FROM posts WHERE id=?", (post_id,))
-        if row is None or row["status"] != "scheduled" or not row["publora_post_id"]:
-            return row["status"] if row else "missing"
-        body = self.client_factory().get_post(post_group_id=row["publora_post_id"])
-        remote = (body.get("postGroup") or body).get("status")
-        new = {"published": "published", "partially_published": "published", "failed": "failed"}.get(remote)
-        if new:
-            errors = [p.get("error") for p in body.get("posts") or [] if p.get("error")]
-            self.db.run("UPDATE posts SET status=?, error=?, updated_at=? WHERE id=? AND status='scheduled'",
-                        (new, ("Publora: " + "; ".join(map(str, errors))) if errors else None, utcnow(), post_id))
-        return new or "scheduled"
+        if row is None:
+            return "missing"
+        if row["trashed_at"] or row["status"] != "scheduled" or not row["publora_post_id"]:
+            return row["status"]
+        status, link, words = remote_state(self.client_factory().get_post(post_group_id=row["publora_post_id"]))
+        if status == "published":
+            self.db.run("UPDATE posts SET status='published', published_url=?, error=?, updated_at=? WHERE id=? "
+                        "AND status='scheduled' AND trashed_at IS NULL",
+                        (link, ("Publora says: " + "; ".join(words))[:1000] if words else None, utcnow(), post_id))
+        elif status == "failed":
+            self.db.run("UPDATE posts SET status='failed', error=?, updated_at=? WHERE id=? AND status='scheduled' "
+                        "AND trashed_at IS NULL",
+                        (("Publora says it failed: " + "; ".join(words))[:1000] if words else NO_REASON, utcnow(), post_id))
+        return status
 
 
 # The UI's entry points for a post with a picture. `picture` is {"path", "name", "mime", "sha256"};

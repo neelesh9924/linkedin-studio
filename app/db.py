@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS posts (
     idempotency_key TEXT,
     publora_post_id TEXT,
     publora_payload TEXT,          -- exact JSON body sent, so a retry is byte-identical
+    published_url TEXT,            -- the post on LinkedIn, once Publora gives its link (publishing.py)
     error TEXT,
     media TEXT,                    -- JSON, picture posts only: the file, then postGroupId, mediaId, upload URL
     media_step TEXT                -- picture posts only: next step (create, upload_url, put, update) or done
@@ -149,6 +150,7 @@ MIGRATIONS = [
     ("posts", "media", "TEXT"),                         # JSON: a picture post's Publora steps (publishing.py)
     ("posts", "media_step", "TEXT"),                    # the step it reaches next
     ("posts", "trashed_at", "TEXT"),                    # in the Trash since then (api_trash.py)
+    ("posts", "published_url", "TEXT"),                 # the post on LinkedIn, once Publora gives its link
 ]
 
 
@@ -193,6 +195,10 @@ class DB:
     def _bump(self) -> None:
         with self._rev_lock:
             self._rev += 1
+
+    def touch(self) -> None:
+        """Something the page shows changed outside the database (the light check's words): the page asks again."""
+        self._bump()
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

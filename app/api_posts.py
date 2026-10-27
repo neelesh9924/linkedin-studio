@@ -16,9 +16,10 @@ from . import attached, attachments, images, render, versions
 from .db import dumps, loads, utcnow
 from .flows import add_message, short_title
 from .main import ACTIVE, PROBLEM, Studio
-from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MAX_AHEAD, MIN_LEAD, ScheduleError, placeholder_slots,
-                         retry_with_picture, schedule_with_picture)
+from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MAX_AHEAD, MIN_LEAD, NO_REASON, ScheduleError,
+                         placeholder_slots, retry_with_picture, schedule_with_picture)
 from .skills import REVISION_LABELS, REVISIONS
+from .status_check import failure_words
 
 CHAT_BUSY = "Claude is still working on this post. What you wrote stays in the box: send it once Claude is done."
 TEXT_BUSY = "Claude is working on this post: its text waits until Claude is done."
@@ -45,6 +46,12 @@ def trash_refusal(row, working: bool) -> str:
     if working:
         return "Claude is working on this post. It can go to the Trash once Claude is done, or once you stop it."
     return ""
+
+
+def due_now(row, now: datetime) -> bool:
+    """A scheduled post whose time has passed: Publora should have sent it by now."""
+    at = render.parse_utc(row["scheduled_at"] or "") if row["status"] == "scheduled" else None
+    return at is not None and at <= now
 
 
 def register(app: FastAPI, s: Studio) -> None:
@@ -127,6 +134,7 @@ def register(app: FastAPI, s: Studio) -> None:
             plan = {k: data.get(k) for k in ("day", "time", "angle", "formula", "pillar", "goal", "cta") if data.get(k)}
         status = row["status"]
         trash_why = trash_refusal(row, s.post_working(pid))
+        due = due_now(row, now)
         return {
             **s.post_summary(row),
             "text": row["text"], "first_comment": row["first_comment"] or "", "formula": row["formula"] or "",
@@ -148,6 +156,8 @@ def register(app: FastAPI, s: Studio) -> None:
             "can_retry": status == "failed" and not row["publora_post_id"] and bool(row["publora_payload"]),
             "can_back": status in ("approved", "failed") and not row["publora_post_id"],
             "plan": plan, "versions": db.one("SELECT COUNT(*) AS n FROM versions WHERE post_id=?", (pid,))["n"],
+            # A scheduled post whose time has passed: what the light check last heard (status_check.py), for its notice.
+            "waiting": s.checker.notice(pid, s.clock) if due else None,
         }
 
     def save_fields(post_id: int, title: Any, text: Any, first_comment: Any):
@@ -188,12 +198,12 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/posts/refresh")
     def refresh_due():
-        due = db.all("SELECT id FROM posts WHERE status='scheduled' AND scheduled_at <= ?",
+        due = db.all("SELECT id FROM posts WHERE status='scheduled' AND trashed_at IS NULL AND scheduled_at <= ?",
                      (datetime.now(timezone.utc).isoformat(timespec="seconds"),))
         errors = []
         for row in due:
             try:
-                pub.refresh(row["id"])
+                s.checker.check(row["id"])   # what it heard is kept for the post's notice, as the light check's is
             except Exception as exc:
                 errors.append(str(exc))
         if errors:
@@ -326,13 +336,28 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/refresh")
     def post_refresh(post_id: int):
-        _row, refusal = find(post_id)
+        """Check now: Publora's word on a scheduled post, read at once (get-post only, nothing is sent), in words:
+        published, failed in Publora's own words, or still waiting, with the time it was asked."""
+        row, refusal = find(post_id)
         if refusal is not None:
             return refusal
+        if row["status"] != "scheduled" or not row["publora_post_id"]:
+            return {"status": row["status"], "said": "Only a scheduled post is asked about on Publora."}
         try:
-            return {"status": pub.refresh(post_id)}
+            status = s.checker.check(post_id)
         except Exception as exc:
-            return fail(f"Could not read the status from Publora: {exc}", 502)
+            return fail(f"Could not ask Publora just now ({failure_words(exc)}). Try again in a minute.", 502)
+        row = get_post(post_id)
+        if status == "published":
+            said = ("Publora says it is published. Open on LinkedIn shows it." if s.post_summary(row)["link"]
+                    else "Publora says it is published. It gave no link to the post.")
+        elif status == "failed":
+            said = row["error"] or NO_REASON
+        elif due_now(row, datetime.now(timezone.utc)):
+            said = f"Not out yet: Publora still has it scheduled (checked {s.clock(utcnow())})."
+        else:
+            said = f"Publora has it scheduled for {s.when(row['scheduled_at'])} (checked {s.clock(utcnow())})."
+        return {"status": status, "said": said}
 
     # ---- Move to Trash…, the title, your own edits, New draft from this --------------------
     @app.post("/api/post/{post_id}/trash")
@@ -408,12 +433,16 @@ def register(app: FastAPI, s: Studio) -> None:
         post, refusal = find(post_id)
         if refusal is not None:
             return refusal
-        rows = versions.listing(db, post_id)
-        return {"versions": [{"id": v["id"], "author": v["author"], "note": v["note"] or "", "when": s.when(v["created_at"]),
-                              "chars": len(v["text"]), "first": (v["text"].strip().splitlines() or [""])[0][:140],
-                              "current": (v["text"], v["first_comment"]) == (post["text"], post["first_comment"])}
-                             for v in rows],
-                "editable": post["status"] == "draft" and not s.post_busy(post_id)}
+        listed = []
+        for v in versions.listing(db, post_id):
+            item = {"id": v["id"], "author": v["author"], "note": v["note"] or "", "when": s.when(v["created_at"]),
+                    "chars": len(v["text"]), "first": (v["text"].strip().splitlines() or [""])[0][:140],
+                    "current": (v["text"], v["first_comment"]) == (post["text"], post["first_comment"])}
+            if not item["current"]:   # Compare with now: that version's words to the post's now, word by word
+                item["segments"] = render.wdiff(v["text"], post["text"])
+                item["first_comment_differs"] = (v["first_comment"] or None) != (post["first_comment"] or None)
+            listed.append(item)
+        return {"versions": listed, "editable": post["status"] == "draft" and not s.post_busy(post_id)}
 
     @app.post("/api/post/{post_id}/versions/back")
     def post_go_back(post_id: int, data: dict = Body(default={})):
@@ -422,10 +451,16 @@ def register(app: FastAPI, s: Studio) -> None:
             return refusal
         if s.post_busy(post_id):
             return fail(TEXT_BUSY, 409)
+        wanted = int(data.get("version") or 0)
         try:
-            changed = versions.go_back(db, post_id, int(data.get("version") or 0))
+            changed = versions.go_back(db, post_id, wanted)
         except versions.VersionError as exc:
             return fail(str(exc), 409)
+        if changed:   # one line in the post's chat (started if it has none), so the chat and Claude know it
+            version = db.one("SELECT created_at, note FROM versions WHERE id=?", (wanted,))
+            note = f" ({version['note']})" if version["note"] else ""
+            add_message(db, conversation(post_id, create=True)["id"], "info",
+                        f"You went back to the version of {render.day_time(version['created_at'], cfg.tz)}{note}.")
         return {"changed": changed}
 
     # ---- the picture ------------------------------------------------------------------
