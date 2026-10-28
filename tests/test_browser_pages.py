@@ -76,7 +76,7 @@ def test_settings_names_the_account_and_opens_at_a_panel(studio):
     page.wait_for_function("() => document.activeElement && document.activeElement.id === 'settings-health-title'")
     assert "signed in as you@example.com (Max)" in page.locator("#settings-claude").inner_text()
     ids = page.eval_on_selector_all("#settingsPage section.panel", "(all) => all.map((s) => s.id)")
-    assert ids == [f"settings-{i}" for i in ("claude", "publishing", "chatgpt", "profile", "appearance", "health", "runs", "app")]
+    assert ids == [f"settings-{i}" for i in ("claude", "publishing", "chatgpt", "profile", "style", "appearance", "health", "runs", "app")]
     assert errors == []
 
 
@@ -162,4 +162,38 @@ def test_the_guides_pictures_follow_the_theme_and_its_editor_fits_its_text(studi
     page.keyboard.press("Escape")
     fits = page.locator("#guide-try textarea").evaluate("(t) => t.scrollHeight <= t.clientHeight + 4 && t.clientHeight > 100")
     assert fits
+    assert errors == []
+
+
+def test_post_style_saved_in_settings_is_a_posts_style_and_its_restyle_waits_beside_the_post(studio):
+    page, errors = studio
+    page.evaluate("location.hash = '#~settings-style'")
+    page.wait_for_function("() => document.activeElement && document.activeElement.id === 'settings-style-title'")
+    hook = page.locator("#style-default-hook")
+    assert hook.get_attribute("aria-valuetext") == "Catchy"
+    hook.focus()
+    page.keyboard.press("ArrowRight")                                   # one step on from Catchy
+    assert hook.get_attribute("aria-valuetext") == "Bold" and page.locator("#settings-style .slider-now").first.inner_text() == "Bold"
+    page.click("#settings-style [data-keep='style-save']")
+    page.wait_for_function("() => document.activeElement && document.activeElement.dataset.keep === 'style-save'")
+    open_draft(page)
+    page.click("#styleBtn")
+    page.wait_for_selector("#stylePanel:not([hidden])")
+    assert page.evaluate("document.activeElement.id") == "post-style-hook"
+    assert page.locator("#post-style-hook").input_value() == "5"         # the default, as Settings has it now
+    assert page.locator("#stylePanel .style-whose").inner_text() == "Your default, from Settings › Post style"
+    page.keyboard.press("Escape")
+    assert page.locator("#stylePanel").is_hidden() and page.evaluate("document.activeElement.id") == "styleBtn"
+    page.click("#styleBtn")
+    page.wait_for_selector("#stylePanel:not([hidden])")
+    page.click("#stylePanel [data-act='restyle']")
+    page.wait_for_selector("#postPage [data-restyle]")
+    assert page.locator("#postPage [data-restyle]").inner_text() == "Hook bold, tone human, one emoji."
+    page.locator("#postPage .card", has_text="Revised version").get_by_role("button", name="Discard").click()
+    page.wait_for_function("() => !document.querySelector('#postPage [data-restyle]')")
+    page.evaluate("location.hash = '#~settings-style'")                # the studio's default again, for any test after this
+    page.wait_for_function("() => document.activeElement && document.activeElement.id === 'settings-style-title'")
+    page.click("#settings-style [data-keep='style-studio']")
+    page.click("#settings-style [data-keep='style-save']")
+    page.wait_for_function("() => document.querySelector('#style-default-hook').getAttribute('aria-valuetext') === 'Catchy'")
     assert errors == []

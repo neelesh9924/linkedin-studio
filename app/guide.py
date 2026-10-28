@@ -63,6 +63,8 @@ LANES = [
          "claude": "Runs Claude, about 40 seconds", "demo": "audit",
          "do": ["Press Audit. The findings appear beside the post: red must be fixed, amber is worth a look.",
                 "Want a different take? Revise: New hook, Shorter or More technical.",
+                "Style: three sliders (Hook plain to bold, Tone formal to warm, Emojis none to two). Restyle "
+                "writes the same post in them, and they become that post's own style.",
                 "A revision shows every change word by word. Nothing is replaced until you choose Use this version."],
          "gives": "Either a pass, or a short list of concrete fixes."},
         {"id": "approve", "shot": "post", "title": "Approve", "icon": "check", "where": "The post's top bar", "href": "#~posts",
@@ -170,6 +172,7 @@ SCREENS = [
                 "account beside each login folder, and refuses one that is not signed in.",
                 "ChatGPT: who is signed in for pictures, and how many were made today.",
                 "You in the preview: your name, headline and photo for every post's preview. They stay on this PC.",
+                "Post style: the hook, tone and emojis every new draft is written with. It always stays professional.",
                 "Connections confirms your Publora key works. Run it after changing .env.",
                 "Recent runs lists every Claude run and how long it took."]},
     {"key": "trash", "title": "Trash", "href": "#~trash", "icon": "trash",

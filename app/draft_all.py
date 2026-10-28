@@ -18,6 +18,7 @@ import secrets
 import threading
 from typing import Any
 
+from . import style
 from .db import loads
 
 log = logging.getLogger("studio.draft_all")
@@ -35,7 +36,7 @@ def draft_params(db, row) -> dict:
     item = loads(row["data"], {}) or {}
     inputs = (loads(plan["inputs"], {}) or {}) if plan else {}
     params = {k: item.get(k) for k in ITEM_FIELDS}
-    params.update(plan_item_id=row["id"], audience=inputs.get("audience"))
+    params.update(plan_item_id=row["id"], audience=inputs.get("audience"), style=style.default(db))
     return params
 
 

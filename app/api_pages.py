@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, Response
 
-from . import ask_about, attached, attachments, codex, draft_all, flows, guide, paths, profile, render, versions
+from . import ask_about, attached, attachments, codex, draft_all, flows, guide, paths, profile, render, style, versions
 from .api_posts import fail
 from .config import ConfigError, path_problems, problems
 from .db import dumps, loads, utcnow
@@ -366,7 +366,8 @@ def register(app: FastAPI, s: Studio) -> None:
         if mode and mode not in HUMANIZE_MODES:
             return fail("Unknown mode.")
         return {"job": jobs.submit(kind, {"source": "tools", "text": text, "url": url, "mode": mode,
-                                          "goal": str(data.get("goal") or ""), "angle": str(data.get("angle") or "").strip()})}
+                                          "goal": str(data.get("goal") or ""), "angle": str(data.get("angle") or "").strip(),
+                                          **({"style": style.default(db)} if kind == "repurpose" else {})})}
 
     # ---- settings ----------------------------------------------------------------------
     @app.get("/api/settings")
@@ -424,6 +425,24 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/settings/claude/check")
     def settings_sign_in():
         return {"sign_in": sign_in(fresh=True)}
+
+    # Settings › Post style (style.py): the sliders every new draft is written with, and what each step is called.
+    def style_public() -> dict:
+        return {"style": style.default(db), "studio": style.DEFAULT, "sliders": style.SLIDERS, "labels": style.LABELS}
+
+    @app.get("/api/style")
+    def style_get():
+        return style_public()
+
+    @app.post("/api/style")
+    def style_save(data: dict = Body(default={})):
+        try:
+            style.save_default(db, data)
+        except style.Refused as exc:
+            return fail(str(exc))
+        except OSError as exc:
+            return fail(f"It could not be saved ({exc.strerror or exc}).", 500)
+        return style_public()
 
     # Settings › You in the preview (profile.py): kept beside the database, read by the preview alone.
     @app.get("/api/profile")

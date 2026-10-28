@@ -5,7 +5,7 @@ import difflib
 import re
 from pathlib import Path
 
-from . import attached, codex, draft_all, versions
+from . import attached, codex, draft_all, style, versions
 from .claude_runner import RunResult
 from .config import Config
 from .db import DB, dumps, loads, utcnow
@@ -104,7 +104,7 @@ def post_chat_context(db: DB, post_id: int, conversation_id: int, request_id: in
     history = chat_history(db, conversation_id, request_id)
     return {"status": post["status"], "text": post["text"], "first_comment": post["first_comment"],
             "chars": len(post["text"]), "blanks": len(placeholder_slots(post["text"])), "picture": picture,
-            "audit": audit_line, "planned": planned}, history
+            "audit": audit_line, "planned": planned, "style": style.of_post(db, post)}, history
 
 
 MODE_OF = {"interview": "bank", "voice": "voice"}

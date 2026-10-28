@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from . import style
 from .claude_runner import (MARK_END, MARK_START, MCP_SERVER, STATELESS, RunRequest, ToolPolicy,
                             owned_file_policy, untrusted)
 
@@ -112,7 +113,12 @@ def _repurpose(p: dict) -> str:
             f"post. Goal: {p.get('goal') or 'your pick'}." + _json_spec(
                 '{"post": "<the LinkedIn post>", "formula": "...", "mapping": ["<source part -> post part>", ...], '
                 '"first_comment": "<link or text for the first comment, or null>", "chars": <int>}')
-            + "\n\n" + untrusted("SOURCE", p["text"]))
+            + _style(p.get("style")) + "\n\n" + untrusted("SOURCE", p["text"]))
+
+
+def _style(chosen: dict | None) -> str:
+    """The owner's post style (style.words) for a run that writes a post, as its own paragraph; nothing without one."""
+    return "\n\n" + style.words(chosen) if chosen else ""
 
 
 def _profile(p: dict) -> str:
@@ -148,7 +154,7 @@ def _draft(p: dict) -> str:
             lines.append(f"{label}: {p[key]}")
     lines.append(f"Length: {p.get('length') or 'medium 900-1300 chars'}")
     lines.append("Run the humanizer pass as the skill says. Put any external link in first_comment, not the body.")
-    return "\n".join(lines) + _json_spec(
+    return "\n".join(lines) + _style(p.get("style")) + _json_spec(
         '{"formula": "<code and name>", "text": "<the full post>", "first_comment": "<or null>", '
         '"posting_window": "...", "notes": ["<what is missing or assumed>", ...]}')
 
@@ -158,6 +164,7 @@ REVISIONS = {
     "shorter": "Make it shorter: aim for 900-1000 characters without losing the number, the name or the turn.",
     "technical": "Make it more technical: concrete mechanisms, tools and numbers the audience would recognise. "
                  "Never invent figures.",
+    "style": style.RESTYLE,   # the post's Style › Restyle
 }
 
 
@@ -166,6 +173,7 @@ REVISION_LABELS = {
     "hook": ("New hook", "A fresh first two lines; the rest stays."),
     "shorter": ("Shorter", "Trim towards 900-1,000 characters."),
     "technical": ("More technical", "Concrete mechanisms, tools and numbers."),
+    "style": ("Restyle", "The same post in your post style."),
 }
 
 
@@ -173,7 +181,7 @@ def _revise(p: dict) -> str:
     return ("Run the linkedin-post-writer skill to revise the draft below. " + REVISIONS[p["how"]]
             + " Then run the humanizer pass." + _json_spec(
                 '{"text": "<the full revised post>", "first_comment": "<or null>", "changes": ["...", ...]}')
-            + "\n\nCurrent draft:\n" + untrusted("DRAFT", p["text"]))
+            + _style(p.get("style")) + "\n\nCurrent draft:\n" + untrusted("DRAFT", p["text"]))
 
 
 def _attached(p: dict) -> str:
@@ -248,7 +256,7 @@ def _post_chat(p: dict) -> str:
         lines.append(f"Its last audit: {post['audit']}")
     if post.get("planned"):
         lines.append(f"From the week plan: {post['planned']}")
-    return "\n".join(lines + _conversation(p)) + _attached(p)
+    return "\n".join(lines) + _style(post.get("style")) + "\n".join(["", *_conversation(p)]) + _attached(p)
 
 
 ACTIONS: dict[str, Action] = {a.kind: a for a in [

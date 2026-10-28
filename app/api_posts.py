@@ -12,8 +12,8 @@ from typing import Any
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import attached, attachments, images, render, versions
-from .db import loads, utcnow
+from . import attached, attachments, images, render, style, versions
+from .db import dumps, loads, utcnow
 from .flows import add_message
 from .main import ACTIVE, PROBLEM, Studio
 from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MAX_AHEAD, MIN_LEAD, NO_REASON, ScheduleError,
@@ -100,8 +100,12 @@ def register(app: FastAPI, s: Studio) -> None:
 
     def revision_public(job, post) -> dict:
         data = loads(job["result"], {}) or {}
-        how = (loads(job["params"], {}) or {}).get("how")
+        params = loads(job["params"], {}) or {}
+        how = params.get("how")
         label, promise = REVISION_LABELS.get(how, ("Revision", ""))
+        chosen = style.valid(params.get("style")) if how == "style" else None
+        if chosen:
+            promise = f"{style.summary(chosen)}."   # what this Restyle was asked for
         text = str(data.get("text") or "")
         return {"job": job["id"], "how": how, "label": label, "promise": promise, "text": text,
                 "segments": render.wdiff(post["text"], text), "chars": len(text), "first_comment": data.get("first_comment"),
@@ -143,6 +147,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "revise_job": s.job_public(revise_job) if revise_job else None,
             "revision": revision_public(revision, row) if revision is not None and status == "draft" else None,
             "slots": len(placeholder_slots(row["text"])), "chars": len(row["text"]),
+            "style": {"value": style.of_post(db, row), "own": style.parse(row["style"]) is not None},
             "editable": status == "draft" and not busy,
             "deletable": not trash_why, "trash_why": trash_why,      # Move to Trash… is offered, or why it is not
             "error": row["error"] or "", "saved": s.clock(row["updated_at"]),
@@ -244,6 +249,10 @@ def register(app: FastAPI, s: Studio) -> None:
         _row, refusal = find(post_id)
         if refusal is not None:
             return refusal
+        try:   # Restyle: the sliders it was given are this post's style from now on; any other revision keeps its style
+            chosen = style.clean(data.get("style")) if how == "style" else None
+        except style.Refused as exc:
+            return fail(str(exc))
         post = save_fields(post_id, data.get("title"), data.get("text"), data.get("first_comment"))
         if post is None or how not in REVISIONS or not post["text"].strip():
             return fail("Only a draft with some text can be revised.")
@@ -251,7 +260,10 @@ def register(app: FastAPI, s: Studio) -> None:
             return fail("A revision is already being written.")
         for old in jobs_for(post_id, ("revise",)):
             jobs.dismiss(old["id"])
-        return {"job": jobs.submit("revise", {"post_id": post_id, "how": how, "text": post["text"]})}
+        if chosen:
+            db.run("UPDATE posts SET style=? WHERE id=?", (dumps(chosen), post_id))
+        return {"job": jobs.submit("revise", {"post_id": post_id, "how": how, "text": post["text"],
+                                              "style": chosen or style.of_post(db, post)})}
 
     @app.post("/api/post/{post_id}/revision")
     def post_use_revision(post_id: int, data: dict = Body(default={})):

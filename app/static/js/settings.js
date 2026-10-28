@@ -1,4 +1,4 @@
-// Settings (Claude and who it is signed in as, publishing, ChatGPT, you in the preview, appearance, the health checks,
+// Settings (Claude and who it is signed in as, publishing, ChatGPT, you in the preview, post style, appearance, the health checks,
 // recent runs, quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder
 // with the account it is signed in to; Save checks them, writes config.local.toml and restarts).
 // Each panel has an address, #~settings-<id>: the jump links at the top use it, and it opens with that panel's heading
@@ -7,11 +7,12 @@
 import { state, h, icon, api, post, put, number, announce, whileBusy, focusFirst, go } from "./core.js";
 import { setTheme } from "./sidebar.js";
 import { YOU, liHead, paintWho } from "./editor.js";
+import { ALWAYS, styleSliders } from "./style.js";
 
 let box = null;
 let polling = 0;
 const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["profile", "You in the preview"],
-  ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
+  ["style", "Post style"], ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
 const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
 const running = {};       // check -> running at the last draw, so its end is said once
 const typed = {};         // a box's words not yet saved (name, headline, codexHome), kept through redraws
@@ -57,7 +58,7 @@ const OUTCOME = { ok: ["Done", "ok"], unparsed: ["Unreadable reply", "warn"], er
 
 let last = "";
 async function settings(quiet = false) {
-  const [data, codex, me] = await Promise.all([api("/api/settings"), api("/api/codex"), api("/api/profile")]);
+  const [data, codex, me, look] = await Promise.all([api("/api/settings"), api("/api/codex"), api("/api/profile"), api("/api/style")]);
   if (data.error || state.page !== "settings") return;
   for (const [name, title] of Object.entries(CHECKS)) {        // a check that was running has ended: say how
     const check = data.checks[name];
@@ -66,7 +67,7 @@ async function settings(quiet = false) {
     }
     running[name] = check.running;
   }
-  const key = JSON.stringify([data, codex, me]);
+  const key = JSON.stringify([data, codex, me, look]);
   if (quiet && key === last) return;
   last = key;
   const on = box.contains(document.activeElement) ? document.activeElement.dataset.keep : null;
@@ -124,6 +125,7 @@ async function settings(quiet = false) {
         ["Monthly limit", `${data.limit} posts`], ["Times shown in", `${data.timezone} (${data.tz})`])),
     chatgpt(codex),
     profileSection(me),
+    styleSection(look),
     section("appearance", "moon", "Appearance", "Match Windows follows its light or dark setting.", theme),
     section("health", "activity", "Health checks", "The skills repo’s own scripts, run with this app’s Python.",
       health("check_config", "Connections", "Checks the Publora, Apify and Pixfaro keys against free endpoints. Shows key prefixes, never keys.", data.checks.check_config),
@@ -261,6 +263,36 @@ function profileSection(me) {
       h("div", { class: "form-foot" }, choose, remove, file),
       h("span", { class: "field-hint" }, "A PNG, JPEG or WebP picture. It is cut to a square and made 256 px here, before it is saved."),
       said));
+}
+
+// Post style: the sliders new drafts are written with (style.js draws them, the same as a post's Style panel). What
+// is moved and not yet saved stays through redraws.
+function styleSection(look) {
+  const title = "Post style";
+  const lede = "How new drafts are written: the Planner’s drafts, Draft all, Ask Claude and the Repurposer. A post you restyle keeps its own style.";
+  if (!look || look.error) return section("style", "sliders", title, lede, note("bad", (look && look.error) || "The studio did not answer."));
+  const out = h("div", { class: "results" });
+  const control = styleSliders(look, typed.style || look.style, "style-default", (values) => { typed.style = values; });
+  const save = h("button", { class: "btn primary small", type: "submit", "data-keep": "style-save" }, icon("check", 14), h("span", null, "Save"));
+  const studio = h("button", { class: "btn small", type: "button", "data-keep": "style-studio",
+    title: "Moves the sliders back to the studio’s own setting. Save keeps it." }, icon("refresh", 14), h("span", null, "Studio default"));
+  studio.addEventListener("click", () => control.set(look.studio));
+  const form = h("form", { class: "style-form" }, control.element, h("p", { class: "soft" }, ALWAYS), out,
+    h("div", { class: "form-foot" }, save, studio));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    whileBusy(save, async () => {
+      const reply = await post("/api/style", control.values());
+      if (reply.error) {
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      delete typed.style;
+      announce("Saved. New drafts are written in this style.");
+      await settings(true);
+    });
+  });
+  return section("style", "sliders", title, lede, form);
 }
 
 // A change was saved: every preview takes it at once (studio:profile), and this section is drawn again from the answer.

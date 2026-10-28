@@ -29,6 +29,12 @@ username in them).
   (`data\profile.json`, `data\profile-photo`). Only the page's preview reads them, never Claude, Publora or ChatGPT.
   A photo is kept and served only when its bytes are a PNG, JPEG or WebP (`publishing.sniff_image`), with no-store
   and nosniff. The demo, the tests and the Guide's pictures show You / Your headline.
+- **Post style is one definition.** `app/style.py` holds the three sliders (Hook 1-5, Tone 1-5, Emojis 0-2), the words
+  each step gives the writer and the rule that it stays professional. Every run that writes a post gets `style.words`
+  (Ask Claude, Revise and Restyle, the Planner's drafts and Draft all, the Repurposer); the page takes the steps'
+  names from `/api/style`, never its own copy. The default is `data\style.json` beside the database; a Restyle makes
+  its sliders the post's own (`posts.style`). Restyle is a revision (`how: "style"`), so it waits beside the post
+  like New hook does.
 - **ChatGPT's pictures use only the Codex home in `config.local.toml` (`codex_home`).** It has no
   default: never the PC's own `~/.codex`, which may be signed in to another account; never sign
   it in, read it or change it. Tests give Codex a home of their own and never call the real one:
@@ -75,6 +81,7 @@ username in them).
 | `app/draft_all.py` | Draft all on the Planner: every planned post without a draft, one ordinary `draft` job at a time (`draft_params`, shared with Draft this); `flows.draft_done` chains the next; Stop through `jobs.cancel`; each board's `draft_all` |
 | `app/ask_about.py` | Ask me about this on a Story Bank entry: the `focus` checked against the file's own entries (`render.doc_sections`), capped; the new conversation's opening message |
 | `app/profile.py` | You in the preview: the name, headline and photo kept beside the database |
+| `app/style.py`, `app/static/js/style.js` | Post style: the three sliders, each step's words for the writer, the default beside the database; the sliders the page draws in Settings and a post's Style panel |
 | `app/jobs.py`, `app/flows.py` | One job at a time with its numbered steps; what each job does when it ends |
 | `app/skills.py`, `app/claude_runner.py` | Each action's skill, prompt and tools; the `claude -p` command, its env and MCP config |
 | `app/mcp.py`, `app/codex.py` | The post chat's tools (`set_post_text`, `make_image`, `record_audit`, `fetch_post`); ChatGPT's pictures through `codex.exe` |

@@ -1,14 +1,15 @@
 // A post in the middle: as LinkedIn shows it (at a desktop's width or an iPhone 16's, folded at "…more", with its picture
 // and first comment), and edited right there: click the text and it opens where you clicked, or press Edit text. It
 // saves by itself a moment after you stop typing (Ctrl+S at once), the meter weighs its length, blanks are marked and
-// Next blank finds them. Beside it: a revision shown word by word, the audit's findings, the post's pictures and the
-// writer's notes. The text is read as a paragraph, and drawn again only when it changes, so the focus stays put.
+// Next blank finds them. Style holds its three sliders and Restyle. Beside it: a revision shown word by word, the audit's
+// findings, the post's pictures and the writer's notes. The text is read as a paragraph, and drawn again only when it changes, so the focus stays put.
 // Above it and beside the first comment: your name, headline and photo from Settings › You in the preview, or You.
 import { $, state, h, icon, api, post, put, plural, number, announce, whileBusy, focusFirst, drawIfChanged, forget, copyButton,
   recall, keep } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { auditView } from "./audit.js";
 import { wordDiff } from "./wdiff.js";
+import { ALWAYS, styleSliders } from "./style.js";
 
 const SAVE_AFTER = 900;   // ms after the last key
 const ed = { id: null, data: null, editing: false, expanded: false, dirty: false, typed: false, seq: 0, sent: 0, timer: 0, onChange: () => {} };
@@ -170,9 +171,10 @@ function build() {
   parts.audit = h("button", { class: "btn small", type: "button", "data-act": "audit" }, icon("check-circle", 14), h("span", null, "Audit"));
   parts.audit.addEventListener("click", () => runAudit());
   parts.revise = reviseMenu();
+  parts.style = styleMenu();
   parts.bar = h("div", { class: "stage-bar" },
     h("div", { class: "segmented", role: "group", "aria-label": "Preview width" }, parts.desktop, parts.phone),
-    parts.saved, h("div", { class: "stage-acts" }, parts.edit, parts.copy, parts.copyComment, parts.audit, parts.revise));
+    parts.saved, h("div", { class: "stage-acts" }, parts.edit, parts.copy, parts.copyComment, parts.audit, parts.revise, parts.style));
   parts.body = h("div", { class: "li-body" });
   parts.picture = h("figure", { class: "li-picture", hidden: true });
   parts.comment = h("div", { class: "li-comment" });
@@ -302,6 +304,63 @@ function reviseMenu() {
 }
 
 const reviseButton = () => parts.revise && parts.revise.querySelector("button");
+const styleButton = () => parts.style && parts.style.querySelector("button");
+
+// Style: the post's three sliders (style.js), at its own style or the owner's default, and Restyle, which asks for the
+// same post in them. Like Revise, the result waits beside the post until it is used or discarded; the sliders become
+// this post's own style. Esc, Tab out or a click elsewhere closes the panel.
+function styleMenu() {
+  const button = h("button", { class: "btn small", type: "button", id: "styleBtn", "data-act": "style", "aria-haspopup": "dialog",
+    "aria-expanded": "false", "aria-controls": "stylePanel" }, icon("sliders", 14), h("span", null, "Style"), icon("chevron-down", 13));
+  const panel = h("div", { class: "menu-list style-panel", id: "stylePanel", role: "dialog", "aria-label": "Post style", hidden: true });
+  const wrap = h("div", { class: "menu" }, button, panel);
+  const me = { wrap, close };
+  async function open() {
+    const look = await api("/api/style");     // the steps' names, and the default as Settings has it now
+    if (look.error) return announce(look.error, { urgent: true });
+    const mine = ed.data.style || { value: look.style, own: false };
+    const control = styleSliders(look, mine.value, "post-style");
+    const go = h("button", { class: "btn primary small", type: "button", "data-act": "restyle" }, icon("sparkle", 14), h("span", null, "Restyle"));
+    go.addEventListener("click", () => {
+      close(true);
+      runRestyle(control.values(), button);
+    });
+    const back = h("button", { class: "btn ghost small", type: "button", title: "Moves the sliders to your default from Settings › Post style" },
+      "Your default");
+    back.addEventListener("click", () => control.set(look.style));
+    put(panel, h("p", { class: "style-whose" }, mine.own ? "This post’s own style" : "Your default, from Settings › Post style"),
+      control.element, h("p", { class: "soft" }, ALWAYS), h("div", { class: "form-foot" }, go, back));
+    panel.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    openMenu = me;
+    panel.querySelector("input").focus();
+  }
+  function close(backToButton) {
+    if (openMenu === me) openMenu = null;
+    if (panel.hidden) return;
+    panel.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    if (backToButton) button.focus();
+  }
+  button.addEventListener("click", () => {
+    if (!panel.hidden) return close(true);
+    if (button.getAttribute("aria-disabled") === "true") {
+      return announce(ed.data && ed.data.revision ? `A revised version is waiting ${besideWords()}: use it or discard it first.`
+        : "Write the post first: Restyle works on its text.");
+    }
+    open();
+  });
+  panel.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    close(true);
+  });
+  wrap.addEventListener("focusout", (event) => {
+    if (!wrap.contains(event.relatedTarget)) close(false);
+  });
+  return wrap;
+}
 
 // ---------- the text: shown as LinkedIn shows it, edited where it is ----------
 
@@ -621,6 +680,7 @@ function revisionCard() {
   act(use, true);
   act(discard, false);
   return card("sparkle", "Revised version", h("span", { class: "chip busy" }, r.label),
+    r.how === "style" ? h("div", { class: "soft", "data-restyle": "" }, r.promise) : null,   // the sliders it was asked for
     h("p", { class: "wdiff" }, wordDiff(r.segments)),
     h("div", { class: "soft" }, `${number(r.chars)} characters (yours has ${number(ed.data.chars)}). Green is added, red is removed.`),
     r.changes.length ? h("details", { class: "fold" }, h("summary", null, `Why these changes (${r.changes.length})`),
@@ -696,6 +756,14 @@ async function runRevise(how, button) {
   ed.onChange();
 }
 
+async function runRestyle(chosen, button) {
+  await saveNow();
+  const reply = await whileBusy(button, () => post(`/api/post/${ed.id}/revise`, { how: "style", style: chosen, ...fields() }));
+  if (reply.error) return announce(reply.error, { urgent: true });
+  announce(`Restyling. The restyled version appears ${besideWords()}; nothing changes until you choose it.`);
+  ed.onChange();
+}
+
 // ---------- drawing a post ----------
 
 // Shows the post the studio sent. `onChange` asks for it again (after something here changed it).
@@ -728,8 +796,10 @@ export function renderPost(data, onChange) {
   parts.copyComment.hidden = !(ed.data.first_comment || "").trim();
   parts.audit.hidden = !can;
   parts.revise.hidden = !can;
+  parts.style.hidden = !can;
   parts.audit.setAttribute("aria-disabled", String(!live));
   reviseButton().setAttribute("aria-disabled", String(!live || !!data.revision));
+  styleButton().setAttribute("aria-disabled", String(!live || !!data.revision));
   if (hadText && !parts.body.contains(document.activeElement)) focusFirst(parts.edit, parts.copy, $("postGear"));
   if (!ed.dirty) {
     parts.saved.classList.remove("dirty");

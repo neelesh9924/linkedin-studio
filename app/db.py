@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS posts (
     publora_post_id TEXT,
     publora_payload TEXT,          -- exact JSON body sent, so a retry is byte-identical
     published_url TEXT,            -- the post on LinkedIn, once Publora gives its link (publishing.py)
+    style TEXT,                    -- JSON: the post style it was restyled in (style.py); none: the owner's default
     error TEXT,
     media TEXT,                    -- JSON, picture posts only: the file, then postGroupId, mediaId, upload URL
     media_step TEXT                -- picture posts only: next step (create, upload_url, put, update) or done
@@ -151,6 +152,7 @@ MIGRATIONS = [
     ("posts", "media_step", "TEXT"),                    # the step it reaches next
     ("posts", "trashed_at", "TEXT"),                    # in the Trash since then (api_trash.py)
     ("posts", "published_url", "TEXT"),                 # the post on LinkedIn, once Publora gives its link
+    ("posts", "style", "TEXT"),                         # JSON: the post style it was restyled in (style.py)
 ]
 
 

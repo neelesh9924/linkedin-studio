@@ -70,6 +70,12 @@ works, a post's four states, and an editor to practise in.
 - **Audit and Revise.** Audit findings appear beside the text. New hook, Shorter or More
   technical shows the changes word by word; nothing is replaced until you choose **Use this
   version**.
+- **Post style.** Three sliders: **Hook** (plain to bold: how the first line pulls a reader in),
+  **Tone** (formal to warm) and **Emojis** (none, one or two, never the ones that read as AI).
+  Your default in **Settings › Post style** goes with every run that writes a post: Ask Claude,
+  Revise, the Planner's drafts, Draft all and the Repurposer. A post's own **Style** button has
+  the same sliders and **Restyle**, which writes the same post in them, word by word beside it like
+  a revision; they become that post's own style. Whatever the sliders say, it stays professional.
 - **Publish.** Draft → Approved → Scheduled → Published. Approved text is locked. Scheduling asks
   for a time (the skills' recommended slots one click away), then confirms the final text, time,
   first comment and picture. Before **Schedule it**, the dialog lists anything worth a second
@@ -90,7 +96,7 @@ works, a post's four states, and an editor to practise in.
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them. **Ask me about this** on a filled Story Bank entry starts a short interview about that entry alone, in a new conversation |
 | Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons, and each tool's last ten results under **Earlier results**. **Start a post from this** turns a rewrite, an audited draft (its findings with it), a hook's template or a repurposed post into a new post and opens it |
 | Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
-| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview), light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-profile`, `-appearance`, `-health`, `-runs`, `-app`) |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview), **Post style** (the three sliders new drafts are written with), light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-profile`, `-appearance`, `-health`, `-runs`, `-app`) |
 | Trash | Posts moved there: Put back, Delete forever…, Empty trash |
 
 **Keys.** Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
@@ -334,7 +340,8 @@ in-between state can be looked at without spending anything (`--empty` starts it
   `app\api_posts.py` (posts, their chats, versions, pictures, scheduling) and `app\api_pages.py`
   (the other pages). `app\mcp.py` serves the studio's tools to a post's chat; `app\codex.py`
   makes ChatGPT's pictures; `app\status_check.py` asks Publora, read-only, whether a post whose
-  time has passed went out; `app\profile.py` keeps You in the preview.
+  time has passed went out; `app\profile.py` keeps You in the preview; `app\style.py` says what
+  each step of the Post style sliders tells the writer.
 - The front end is plain HTML, CSS and JavaScript modules with nothing external and no build
   step: `app\static\index.html`, `app.css` (design tokens at the top, light and dark), `app.js`
   and `js\`. The Guide's words live in `app\guide.py`.
