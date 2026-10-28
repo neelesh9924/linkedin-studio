@@ -164,6 +164,13 @@ def test_missing_skill_is_reported(fake_runner, monkeypatch):
     assert res.outcome == "error" and "did not find the skill" in res.error
 
 
+def test_an_error_with_no_text_says_claudes_own_reason(fake_runner, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "gone")
+    res = fake_runner.run(build_request("interview", {"text": "answer", "conversation_id": 1}, "sess-9"))
+    assert res.outcome == "error" and res.num_turns == 0
+    assert res.error == "Claude reported an error (error_during_execution): No conversation found with session ID: sess-9"
+
+
 # ---- parsing ------------------------------------------------------------------------------
 def block(body):
     return f"{MARK_START}\n{body}\n{MARK_END}"

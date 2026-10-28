@@ -375,6 +375,55 @@ def test_the_interviewer_reads_what_is_attached_from_its_own_folder(studio):
     assert client.get(message["files"][0]["url"]).content == b"Role: lead"
 
 
+@pytest.mark.parametrize("mode,skill", [("bank", "linkedin-interviewer skill in --mode bank"),
+                                        ("voice", "linkedin-humanizer skill with --mode profile")])
+def test_a_chat_whose_saved_session_is_gone_goes_on_in_a_new_one_told_what_was_said(studio, mode, skill):
+    client, app, runner = studio
+    db = app.state.db
+    runner.script = lambda req: RunResult(outcome="ok", text="What are you working on?",
+                                          clean_text="What are you working on?", session_id="s-old")
+    first = client.post(f"/api/chat/{mode}/send", json={"text": "Let's start."}).json()
+    wait_for(db, first["job"], 10)
+
+    def gone(req):   # Claude Code cleared the session, or the login folder changed: resuming it does nothing
+        if req.resume_session == "s-old":
+            return RunResult(outcome="error", num_turns=0, error="Claude reported an error (error_during_execution): "
+                             "No conversation found with session ID: s-old")
+        return RunResult(outcome="ok", text="What made it hard?", clean_text="What made it hard?", session_id="s-new",
+                         num_turns=3)
+
+    runner.script = gone
+    sent = client.post(f"/api/chat/{mode}/send", json={"text": "A money tracker", "conversation": first["conversation"]})
+    wait_for(db, sent.json()["job"], 10)
+    tried, fresh = runner.requests[-2:]
+    assert tried.resume_session == "s-old" and fresh.resume_session is None and fresh.persist_session
+    assert skill in fresh.prompt and "could not be resumed" in fresh.prompt
+    assert "The owner: Let's start.\nYou (Claude): What are you working on?" in fresh.prompt
+    assert fresh.prompt.endswith("The owner's new message:\nA money tracker")
+    runs = db.all("SELECT outcome FROM runs WHERE job_id=? ORDER BY id", (sent.json()["job"],))
+    assert [r["outcome"] for r in runs] == ["error", "ok"]                     # both runs are in the log
+    chat = client.get(f"/api/chat/{mode}?c={first['conversation']}").json()
+    assert [(m["role"], m["text"]) for m in chat["messages"]][-2:] == [("user", "A money tracker"), ("claude", "What made it hard?")]
+    then = client.post(f"/api/chat/{mode}/send", json={"text": "Two banks", "conversation": first["conversation"]})
+    wait_for(db, then.json()["job"], 10)
+    assert runner.requests[-1].resume_session == "s-new" and runner.requests[-1].prompt == "Two banks"   # the new one from here
+
+
+def test_a_resumed_run_that_failed_after_it_began_is_said_and_never_run_twice(studio):
+    client, app, runner = studio
+    db = app.state.db
+    runner.script = lambda req: RunResult(outcome="ok", text="Q1", clean_text="Q1", session_id="s-1")
+    first = client.post("/api/chat/bank/send", json={"text": "Let's start."}).json()
+    wait_for(db, first["job"], 10)
+    runner.script = lambda req: RunResult(outcome="error", num_turns=4,
+                                          error="Claude reported an error (error_during_execution): Overloaded")
+    sent = client.post("/api/chat/bank/send", json={"text": "An answer", "conversation": first["conversation"]})
+    wait_for(db, sent.json()["job"], 10)
+    assert len(runner.requests) == 2 and runner.requests[-1].resume_session == "s-1"    # one run for each message
+    last = client.get(f"/api/chat/bank?c={first['conversation']}").json()["messages"][-1]
+    assert last["role"] == "error" and last["text"].endswith("Overloaded") and last["offer"] == "again"
+
+
 def test_mcp_handle_answers_the_protocol(studio):
     _client, app, _runner = studio
     from app.jobs import Run

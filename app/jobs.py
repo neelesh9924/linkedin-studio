@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
 
-from .claude_runner import ClaudeRefused, ClaudeRunner, RunResult
+from .claude_runner import ClaudeRefused, ClaudeRunner, RunRequest, RunResult
 from .db import DB, dumps, loads, utcnow
 from .skills import ACTIONS, build_request
 
@@ -53,6 +53,7 @@ class JobManager:
         self.prepare: dict[str, Prepare] = {}
         self.finish: dict[str, Finish] = {}
         self.session_for: dict[str, Callable[[dict], str | None]] = {}
+        self.carry: dict[str, Callable[[dict], dict]] = {}   # kind -> params for a new session, when its saved one is gone
         self.tools_for: dict[str, Callable[[dict], tuple]] = {}   # kind -> the studio tools a run of it gets
         self.limits: dict[str, tuple[int, int]] = {}             # kind -> (max turns, timeout seconds)
         self.images_per_request = 0     # pictures one chat request may ask ChatGPT for (config: images_per_request)
@@ -184,14 +185,27 @@ class JobManager:
                 self._run = run
             ctx["run"] = run
             mcp = {"url": self.mcp_url, "token": run.token, "tools": tools}
-        req = build_request(kind, params, resume_session=session, mcp=mcp)
-        if kind in self.limits:
-            req.max_turns, req.timeout = self.limits[kind]
-        if action.chat:
-            req.system += self.chat_note
+
+        def request(params: dict, session: str | None) -> RunRequest:
+            req = build_request(kind, params, resume_session=session, mcp=mcp)
+            if kind in self.limits:
+                req.max_turns, req.timeout = self.limits[kind]
+            if action.chat:
+                req.system += self.chat_note
+            return req
+
+        req = request(params, session)
         started = utcnow()
         try:
             result = self.runner.run(req, cancel=cancel, on_progress=progress)
+            if session and kind in self.carry and result.outcome == "error" and not result.num_turns:
+                # The saved session could not be resumed (Claude Code clears old ones, and each login folder keeps
+                # its own): a new one starts with the conversation so far, and the finish hook keeps it from here.
+                self._log_run(job_id, req.skill, started, result)
+                progress("Picking the conversation up in a new session")
+                params = self.carry[kind](params)
+                req, started = request(params, None), utcnow()
+                result = self.runner.run(req, cancel=cancel, on_progress=progress)
         except ClaudeRefused as exc:
             self._log_run(job_id, req.skill, started, RunResult(outcome="refused", error=str(exc)))
             if kind in self.finish:   # a chat says in its thread that the reply did not come

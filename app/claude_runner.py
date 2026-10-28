@@ -390,8 +390,10 @@ class ClaudeRunner:
         if final.get("is_error") or final.get("subtype") != "success":
             result.outcome = "error"
             sub = final.get("subtype")
+            # what went wrong is in the result's text, or else in its errors ("No conversation found with session ID")
+            said = result.text or "; ".join(str(e) for e in final.get("errors") or [])
             result.error = ("Claude hit the turn limit before finishing." if sub == "error_max_turns"
-                            else f"Claude reported an error ({sub}): {result.text[:300]}")
+                            else f"Claude reported an error ({sub}): {said[:300]}")
             result.clean_text = result.text
             return
         if result.skill_listed is False:

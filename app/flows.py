@@ -12,7 +12,7 @@ from .db import DB, dumps, loads, utcnow
 from .jobs import JobManager
 from .publishing import _lib, placeholder_slots, read_env
 
-HISTORY = 16          # the latest messages of a post's chat that go with each request
+HISTORY = 16          # the latest messages of a chat that go with a request (chat_history)
 HISTORY_CHARS = 1500  # each, at most
 
 
@@ -72,6 +72,14 @@ def ended_words(result: RunResult) -> tuple[str, str, str]:
     return "error", result.error or result.parse_error or "Claude did not finish.", "again"
 
 
+def chat_history(db: DB, conversation_id: int, request_id: int) -> list[dict]:
+    """A chat's latest messages before this request, oldest first, for the prompt (skills._conversation): a post's
+    chat sends them with every request; an interview, only when its saved session could not be resumed."""
+    rows = db.all("SELECT role, text FROM messages WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?",
+                  (conversation_id, request_id, HISTORY))
+    return [{"role": r["role"], "text": (r["text"] or "")[:HISTORY_CHARS]} for r in reversed(rows)]
+
+
 def post_chat_context(db: DB, post_id: int, conversation_id: int, request_id: int) -> tuple[dict, list]:
     """The post as it stands and the chat so far, for the prompt (skills._post_chat)."""
     post = db.one("SELECT * FROM posts WHERE id=?", (post_id,))
@@ -93,9 +101,7 @@ def post_chat_context(db: DB, post_id: int, conversation_id: int, request_id: in
         item = db.one("SELECT data FROM plan_items WHERE id=?", (post["plan_item_id"],))
         data = loads(item["data"], {}) if item else {}
         planned = "; ".join(f"{k}: {data[k]}" for k in ("angle", "formula", "pillar", "goal", "cta") if data.get(k))
-    rows = db.all("SELECT role, text FROM messages WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT ?",
-                  (conversation_id, request_id, HISTORY))
-    history = [{"role": r["role"], "text": (r["text"] or "")[:HISTORY_CHARS]} for r in reversed(rows)]
+    history = chat_history(db, conversation_id, request_id)
     return {"status": post["status"], "text": post["text"], "first_comment": post["first_comment"],
             "chars": len(post["text"]), "blanks": len(placeholder_slots(post["text"])), "picture": picture,
             "audit": audit_line, "planned": planned}, history
@@ -188,9 +194,14 @@ def register(jobs: JobManager, db: DB, cfg: Config) -> None:
                 db.run("UPDATE conversations SET session_id=? WHERE id=?", (result.session_id, conv))
             add_message(db, conv, "assistant", result.clean_text or result.text, job_id=job_id, diff=diff or None)
 
+        def carry(params: dict) -> dict:
+            # its saved session is gone (jobs.carry): the new one is told what was said so far
+            return {**params, "history": chat_history(db, params["conversation_id"], params["message_id"])}
+
         jobs.session_for[kind] = session
         jobs.prepare[kind] = before
         jobs.finish[kind] = done
+        jobs.carry[kind] = carry
 
     chat_hooks("interview", cfg.story_bank)
     chat_hooks("voice", cfg.voice_profile)

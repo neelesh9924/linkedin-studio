@@ -4,6 +4,7 @@ echo     emit init + a result whose marker block reports argv, stdin and env
 hang     start a child Python that sleeps, record both pids, then sleep (for kill tests)
 garbage  a result with no marker block
 nolist   init event whose skills list lacks the requested skill
+gone     a --resume whose session the login folder lacks: only an error result, as claude.exe prints it
 
 `auth status --json` answers who the login folder (CLAUDE_CONFIG_DIR) is signed in to: the text of its
 fake-account.json when it has one, otherwise a made-up account. It notes the environment it was given in
@@ -32,6 +33,14 @@ stdin = sys.stdin.read()
 
 def emit(ev):
     print(json.dumps(ev), flush=True)
+
+
+if mode == "gone":
+    said = f"No conversation found with session ID: {sys.argv[sys.argv.index('--resume') + 1]}"
+    print(said, file=sys.stderr, flush=True)
+    emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "num_turns": 0,
+          "errors": [said], "total_cost_usd": 0, "permission_denials": [], "usage": {"output_tokens": 0}})
+    sys.exit(1)
 
 
 skills = [] if mode == "nolist" else ["linkedin-humanizer", "linkedin-interviewer", "linkedin-post-writer"]

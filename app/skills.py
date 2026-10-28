@@ -200,6 +200,8 @@ def _interview(p: dict) -> str:
         return ("Run the linkedin-interviewer skill in --mode bank. Read references/story-bank.md first and "
                 "interview only the thin sections. Start with one broad question.\n\n"
                 + (f"The user opened with: {p['text']}" if p.get("text") else "") + _attached(p))
+    if "history" in p:
+        return _picked_up("Run the linkedin-interviewer skill in --mode bank. Read references/story-bank.md first.", p)
     return p["text"] + _attached(p)
 
 
@@ -209,10 +211,27 @@ def _voice(p: dict) -> str:
                 "update references/voice-profile.md. Ask for 3-6 of the user's real posts, then show the "
                 "filled profile and save it only after the user approves.\n\n"
                 + (f"The user opened with: {p['text']}" if p.get("text") else "") + _attached(p))
+    if "history" in p:
+        return _picked_up("Run the linkedin-humanizer skill with --mode profile (sub-skills/voice-profile.md) to build "
+                          "or update references/voice-profile.md, and save it only after the user approves.", p)
     return p["text"] + _attached(p)
 
 
 WHO = {"user": "The owner", "assistant": "You (Claude)", "info": "The studio", "error": "The studio"}
+
+
+def _conversation(p: dict) -> list[str]:
+    """The conversation so far (flows.chat_history) and the owner's new message, as lines of a prompt."""
+    history = p.get("history") or []
+    said = ["\nThe conversation so far:", *(f"{WHO.get(m['role'], m['role'])}: {m['text']}" for m in history)]
+    return (said if history else []) + ["\nThe owner's new message:", p["text"]]
+
+
+def _picked_up(run: str, p: dict) -> str:
+    """A chat whose saved session could not be resumed, going on in a new one (jobs.carry)."""
+    return "\n".join([run + " This conversation began earlier and its saved session could not be resumed, so here is "
+                      "what was said. Carry on from where it stopped: do not start again, and do not ask what was "
+                      "already answered.", *_conversation(p)]) + _attached(p)
 
 
 def _post_chat(p: dict) -> str:
@@ -229,12 +248,7 @@ def _post_chat(p: dict) -> str:
         lines.append(f"Its last audit: {post['audit']}")
     if post.get("planned"):
         lines.append(f"From the week plan: {post['planned']}")
-    history = p.get("history") or []
-    if history:
-        lines.append("\nThe conversation so far:")
-        lines += [f"{WHO.get(m['role'], m['role'])}: {m['text']}" for m in history]
-    lines += ["\nThe owner's new message:", p["text"]]
-    return "\n".join(lines) + _attached(p)
+    return "\n".join(lines + _conversation(p)) + _attached(p)
 
 
 ACTIONS: dict[str, Action] = {a.kind: a for a in [
