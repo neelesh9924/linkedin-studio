@@ -22,9 +22,11 @@ from launch import find_browser  # noqa: E402
 pytestmark = pytest.mark.skipif(not find_browser(""), reason="needs Chrome or Edge")
 
 # The sidebar's own words, without the posts' (their first lines and times have figures of their own).
+# The sidebar's words, without the posts and without the one count the owner asked for beside Posts (28 Oct 2026):
+# nothing else in the frame counts.
 SIDE_WORDS = """() => {
   const side = document.querySelector('.sidebar').cloneNode(true);
-  side.querySelectorAll('[data-post]').forEach((b) => b.remove());
+  side.querySelectorAll('[data-post], #postsCount').forEach((b) => b.remove());
   return side.textContent + ' ' + [...side.querySelectorAll('[aria-label], [title]')]
     .map((el) => `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`).join(' ');
 }"""

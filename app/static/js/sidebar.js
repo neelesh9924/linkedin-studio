@@ -1,7 +1,7 @@
 // The sidebar: + New post, the posts (each by its first line, with where it stands; the ones done with folded away under
 // Earlier), the studio's pages and the Trash, and light or dark. Nothing in it counts anything: the figures are on the
 // pages.
-import { $, state, h, icon, post, put, go, drawIfChanged, focusFirst, announce, whileBusy, recall, keep } from "./core.js";
+import { $, state, h, icon, post, put, go, drawIfChanged, focusFirst, announce, whileBusy, recall, keep, plural } from "./core.js";
 
 const PAGE_OF = { goPlanner: ["planner"], goBank: ["bank", "voice"], goTools: ["tools"], goGuide: ["guide"], goSettings: ["settings", "setup"],
   goTrash: ["trash"] };
@@ -50,6 +50,12 @@ export function renderList() {
   if (shut !== onEarlier) shut = 0;
   const open = earlier.length > 0 && (recall("earlier") === "1" || (onEarlier > 0 && shut !== onEarlier));
   const under = open ? earlier : earlier.filter((row) => row.current);
+  // Beside Posts: how many drafts, and how many approved or scheduled, when there are any (the list's name says it too)
+  const many = (status) => state.posts.filter((p) => p.status === status).length;
+  const counts = [plural(many("draft"), "draft", "drafts"), ...[["approved", "approved"], ["scheduled", "scheduled"]]
+    .filter(([status]) => many(status)).map(([status, word]) => `${many(status)} ${word}`)];
+  const said = ` · ${counts.join(", ")}`;
+  if ($("postsCount").textContent !== said) $("postsCount").textContent = said;
   const list = $("list");
   drawIfChanged(list, JSON.stringify([now, earlier.length > 0, open, under]), () => {
     const at = list.contains(document.activeElement) ? document.activeElement : null;

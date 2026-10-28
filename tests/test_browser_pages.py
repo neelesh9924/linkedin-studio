@@ -197,3 +197,15 @@ def test_post_style_saved_in_settings_is_a_posts_style_and_its_restyle_waits_bes
     page.click("#settings-style [data-keep='style-save']")
     page.wait_for_function("() => document.querySelector('#style-default-hook').getAttribute('aria-valuetext') === 'Catchy'")
     assert errors == []
+
+
+def test_the_posts_heading_counts_the_drafts_and_what_waits_to_go_out(studio):
+    page, errors = studio
+    statuses = page.evaluate("fetch('/api/state').then((r) => r.json()).then((s) => s.posts.map((p) => p.status))")
+    drafts = statuses.count("draft")
+    said = page.locator("#postsLabel").text_content()
+    assert said.startswith(f"Posts · {drafts} draft{'' if drafts == 1 else 's'}")
+    for status in ("approved", "scheduled"):
+        assert (f"{statuses.count(status)} {status}" in said) == (statuses.count(status) > 0)
+    assert page.locator("#list").evaluate("(nav) => document.getElementById(nav.getAttribute('aria-labelledby')).textContent") == said
+    assert errors == []
