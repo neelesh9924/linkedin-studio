@@ -126,8 +126,12 @@ def remote_state(body: Any) -> tuple[str, str | None, list[str]]:
     return status, link, words
 
 
-# The writer marks facts it does not have as [N], [DD Month YYYY], {slot}. None may reach LinkedIn.
-SLOT = re.compile(r"\[[^\[\]\n]{1,60}\]|\{[A-Za-z_ ]{1,40}\}")
+# The writer marks facts it does not have as [N], [DD Month YYYY], [what you would tell yourself], {slot}. None may reach
+# LinkedIn. Code in a post is not a blank: brackets holding quotes, parentheses, backslashes or operators, a list of
+# numbers, or an index straight after a name (items[0]). An apostrophe inside a word (you'd) is still words. The page
+# compiles the same pattern (/api/state's slot), so it must stay valid as a JavaScript RegExp too.
+SLOT = re.compile(r"(?<![\w)\]])\[(?![\d\s.,]+\])(?:[^\[\]\n\"'`(){}\\^=;<>]|(?<=[A-Za-z])'(?=[A-Za-z])){1,120}\]"
+                  r"|\{[A-Za-z_ ]{1,40}\}")
 
 
 def placeholder_slots(text: str) -> list[str]:

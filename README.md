@@ -65,8 +65,10 @@ works, a post's four states, and an editor to practise in.
   out.
 - **Character meter.** Where the post sits against the 900-1,300 sweet spot and LinkedIn's 3,000
   limit.
-- **Blanks.** The writer marks facts it does not have as `[N]` or `[DD Month YYYY]`. The editor
-  counts them, **Next blank** jumps to each one, and Approve refuses while any remain.
+- **Blanks.** The writer marks facts it does not have as `[N]`, `[DD Month YYYY]` or a short
+  request in brackets. The editor counts them, **Next blank** jumps to each one, and Approve
+  refuses while any remain. Code in a post is not a blank: brackets holding quotes, parentheses
+  or operators, a list of numbers, or an index like `items[0]`.
 - **Audit and Revise.** Audit findings appear beside the text. New hook, Shorter or More
   technical shows the changes word by word; nothing is replaced until you choose **Use this
   version**.

@@ -15,8 +15,8 @@ from fastapi.testclient import TestClient
 from app import publishing
 from app.db import DB, SCHEMA, loads, utcnow
 from app.main import create_app
-from app.publishing import (MEDIA_STEPS, NO_REASON, Publisher, ScheduleError, retry_with_picture, schedule_with_picture,
-                            studio_client_class)
+from app.publishing import (MEDIA_STEPS, NO_REASON, Publisher, ScheduleError, placeholder_slots, retry_with_picture,
+                            schedule_with_picture, studio_client_class)
 from app.status_check import EVERY
 
 NOW = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc)  # 11:30 IST
@@ -160,6 +160,23 @@ def test_refuses_when_a_publora_id_exists(setup):
     with pytest.raises(ScheduleError, match="already exists on Publora"):
         pub.schedule(pid, "2026-10-08T09:00", None)
     assert client.calls == []
+
+
+@pytest.mark.parametrize("text", [
+    "In the [N] weeks after", "On [DD Month YYYY].", "It took ([N] days).", "Hello ({Name})",
+    "That cost me [One real example: a 2023 decision that cost you later, and what you changed.]",
+    "P.S. [Optional: one line on what you'd tell yourself on the first commit.]",
+    "Next time I'd cut [N / what you would skip]."])
+def test_a_blank_is_words_in_brackets_up_to_120_characters(text):
+    assert len(placeholder_slots(text)) == 1
+
+
+@pytest.mark.parametrize("text", [
+    '"relation": ["delegate_permission/common.handle_all_urls"],', '"sha256_cert_fingerprints": ["AA:BB:...:FF"]',
+    "children: [Sidebar(), Expanded(child: Detail())]", r're.sub(r"[^\w\s]", " ", value)', "val first = items[0]",
+    "x = [1, 2, 3]", "fields = ['name', 'email']", 'value = data["key"]', "- [ ] a box to tick"])
+def test_code_in_a_post_is_not_a_blank(text):
+    assert placeholder_slots(text) == []
 
 
 @pytest.mark.parametrize("text", ["[DD Month YYYY], I stopped coding.", "Commits fell from [X] to [Y].",
