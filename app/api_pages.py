@@ -32,6 +32,12 @@ MODES = {"bank": "interview", "voice": "voice"}
 MODE_TITLE = {"bank": "Story Bank", "voice": "Voice profile"}
 HUMANIZE_MODES = ("default", "forensic", "strict", "aesthetic", "all")
 MODEL = re.compile(r"^[A-Za-z0-9._\[\]-]{1,64}$")   # sonnet, opus, haiku, a full name, opus[1m]: what --model takes
+# Settings › Claude's Model dropdown, in this order ("" = the account's own default). A name set by hand in
+# config.local.toml that is not one of these is shown as itself, so it stays chosen.
+MODELS = [("", "Account default", "Whatever the signed-in account uses"),
+          ("sonnet", "Sonnet", "Uses less of your limit"),
+          ("opus", "Opus", "The strongest writing, and the most of your limit"),
+          ("haiku", "Haiku", "The quickest, for light work")]
 REACTIONS = {"LIKE": "Like", "PRAISE": "Celebrate", "EMPATHY": "Love", "INTEREST": "Insightful",
              "APPRECIATION": "Support", "ENTERTAINMENT": "Funny"}
 VERSION_TTL = 60   # seconds the Claude version and its sign-in are kept between visits
@@ -410,6 +416,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "claude": {"version": said, "ready": "Claude Code" in said, "login": str(cfg.claude_config_dir),
                        "sign_in": sign_in(),
                        "model": model_now() or "Account default", "model_value": model_now(),
+                       "models": [{"value": v, "label": label, "hint": hint} for v, label, hint in MODELS],
                        "turns": cfg.max_turns, "seconds": cfg.timeout_seconds,
                        "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
                        "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},

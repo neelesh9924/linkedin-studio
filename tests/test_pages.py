@@ -172,6 +172,7 @@ def test_the_model_box_saves_into_config_local_and_the_next_run_uses_it(web, cfg
     runner = web.app.state.jobs.runner
     shown = web.get("/api/settings").json()["claude"]
     assert (shown["model"], shown["model_value"]) == ("sonnet", "sonnet")
+    assert [m["value"] for m in shown["models"]] == ["", "sonnet", "opus", "haiku"]          # the dropdown's list, in order
     refused = web.post("/api/settings/model", json={"model": "op us; rm"})
     assert refused.status_code == 422 and refused.json()["error"] == "The model is a name like sonnet or opus."
     assert web.post("/api/settings/model", json={"model": "opus"}).json() == {"ok": True, "model": "opus", "model_value": "opus"}

@@ -80,6 +80,10 @@ def test_settings_names_the_account_and_opens_at_a_panel(studio):
     ids = page.eval_on_selector_all("#settingsPage section.panel", "(all) => all.map((s) => s.id)")
     assert ids == [f"settings-{i}" for i in ("claude", "publishing", "posting", "chatgpt", "profile", "style", "appearance", "health",
                                              "runs", "app")]
+    # The Model is a dropdown of the studio's list, on the demo's model
+    assert page.eval_on_selector("#claude-model", "(s) => [s.tagName, s.value]") == ["SELECT", "sonnet"]
+    assert page.locator("#claude-model option").all_inner_texts() == ["Account default", "Sonnet", "Opus", "Haiku"]
+    assert page.locator("#claude-model-hint").inner_text() == "Uses less of your limit"
     assert errors == []
 
 

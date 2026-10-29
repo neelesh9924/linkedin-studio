@@ -16,7 +16,7 @@ export const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["pos
   ["runs", "Recent runs"], ["app", "The app"]];
 const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
 const running = {};       // check -> running at the last draw, so its end is said once
-const typed = {};         // a box's words not yet saved (model, name, headline, codexHome, style, posting), kept through redraws
+const typed = {};         // a box's words not yet saved (name, headline, codexHome, style, posting), kept through redraws
 const PHOTO_PX = 256;     // the photo is made this size here, before it is sent
 
 export async function render(container, { page, sub } = {}) {
@@ -167,36 +167,36 @@ function keepFocus(keep, caret, ...instead) {
   }
 }
 
-// The model every run uses, as the owner's other studios have it: a box with sonnet, opus and haiku to pick from, or any
-// name Claude Code takes; empty is the account's own default. It is used from the next run on.
+// The model every run uses: a dropdown of the studio's list (/api/settings models: the account's own default, Sonnet,
+// Opus, Haiku), saved the moment one is picked and used from the next run on. A name set by hand in config.local.toml
+// that is not on the list shows as itself, so it stays chosen.
 function modelForm(c) {
-  const box = h("input", { class: "input", id: "claude-model", list: "claude-models", placeholder: "Account default",
-    value: typed.model ?? c.model_value, spellcheck: "false", autocomplete: "off", "data-keep": "claude-model",
-    "aria-describedby": "claude-model-hint" });
-  box.addEventListener("input", () => {
-    typed.model = box.value;
-  });
+  const models = c.models.some((m) => m.value === c.model_value) ? c.models
+    : [...c.models, { value: c.model_value, label: c.model_value, hint: "Set in config.local.toml" }];
+  const pick = h("select", { class: "input", id: "claude-model", "data-keep": "claude-model", "aria-describedby": "claude-model-hint" },
+    models.map((m) => h("option", { value: m.value }, m.label)));
+  pick.value = c.model_value;
+  const hint = h("span", { class: "field-hint", id: "claude-model-hint" });
+  const say = () => { hint.textContent = (models.find((m) => m.value === pick.value) || {}).hint || ""; };
+  say();
   const out = h("div", { class: "results" });
-  const save = h("button", { class: "btn small", type: "submit", "data-keep": "model-save" }, "Save");
-  const form = h("form", { class: "model-form" },
-    h("label", { class: "field" }, h("span", { class: "field-label" }, "Model"), box,
-      h("span", { class: "field-hint", id: "claude-model-hint" }, "Empty uses the account’s default. “sonnet” uses less of the limit.")),
-    h("datalist", { id: "claude-models" }, ["sonnet", "opus", "haiku"].map((m) => h("option", { value: m }))),
-    out, h("div", { class: "form-foot" }, save));
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    whileBusy(save, async () => {
-      const reply = await post("/api/settings/model", { model: box.value });
+  pick.addEventListener("change", () => {
+    say();
+    whileBusy(pick, async () => {
+      const reply = await post("/api/settings/model", { model: pick.value });
       if (reply.error) {
+        pick.value = c.model_value;
+        say();
         put(out, note("bad", reply.error));
         return announce(reply.error, { urgent: true });
       }
-      delete typed.model;
-      announce(`Saved. The next run uses ${reply.model_value || "the account’s default"}.`);
+      const name = (models.find((m) => m.value === reply.model_value) || {}).label || reply.model_value;
+      put(out, note("ok", `Saved. The next run uses ${reply.model_value ? name : "the account’s default"}.`));
+      announce(`Saved. The next run uses ${reply.model_value ? name : "the account’s default"}.`);
       await settings(true);
     });
   });
-  return form;
+  return h("div", { class: "model-form" }, h("label", { class: "field" }, h("span", { class: "field-label" }, "Model"), pick, hint), out);
 }
 
 // ---------- you, in the preview ----------

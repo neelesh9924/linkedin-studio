@@ -193,7 +193,7 @@ SCREENS = [
     {"key": "settings", "title": "Settings", "href": "#~settings", "icon": "settings", "shot": None,
      "purpose": "Checking that everything is connected.",
      "points": ["Claude: its version, the account its login folder is signed in to (Check the sign-in asks again), and "
-                "the model every run uses: sonnet, opus, haiku, or empty for the account's own default.",
+                "the Model every run uses, picked from a list: the account's default, Sonnet, Opus or Haiku.",
                 "Change folders: where the skills, the Claude program and its sign-in are on this PC. It names the "
                 "account beside each login folder, and refuses one that is not signed in.",
                 "ChatGPT: who is signed in for pictures, and how many were made today.",

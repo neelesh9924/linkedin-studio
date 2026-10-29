@@ -335,6 +335,9 @@ def main() -> None:
     fresh = not db_path.is_file()
     cfg = Config(skills_dir=skills, claude_bin=Path(sys.executable), claude_config_dir=login, port=port)
     # The stand-in "claude program" is this Python: Settings shows it as Claude Code, as on a PC that has it.
+    # What Settings and the setup screen save (the model, the folders) goes to the demo's own config.local.toml, never
+    # to the app folder's, which is the real studio's.
+    paths.LOCAL = folder / "config.local.toml"
     api_pages.claude_version = paths.claude_version = lambda _cfg: "2.1.292 (Claude Code), the demo's stand-in"
     api_pages.claude_account = paths.claude_account = lambda _cfg, _prefix=None: DEMO_ACCOUNT
     db = DB(db_path)
