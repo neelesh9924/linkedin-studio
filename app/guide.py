@@ -71,8 +71,8 @@ LANES = [
         {"id": "approve", "shot": "post", "title": "Approve and queue", "icon": "check", "where": "The post's top bar",
          "href": "#~posts", "claude": "", "demo": "approve",
          "do": ["Press Approve and queue. It is refused while a blank remains, or past {post_max} characters.",
-                "It takes your next free posting time (Settings, Posting times): one post a day at most, and no more "
-                "than {limit} a month. A link in the text, or a picture kept but not on the post, is worth a second "
+                "It takes your next free posting time (Settings, Posting times): one post a day at most, within your "
+                "Publora plan ({plan_words}). A link in the text, or a picture kept but not on the post, is worth a second "
                 "look: it asks first.",
                 "Approved text and picture are locked. Back to draft unlocks them, and takes the post out of the queue.",
                 "Approve only locks the text with no time: then Add to queue, or Schedule… for a time of its own."],
@@ -83,8 +83,9 @@ LANES = [
                 "line order, and the posting times still free.",
                 "Move up, Move down and First in line change a queued post's place. Take out leaves it approved, "
                 "with no time.",
-                "A queued post goes to Publora by itself {max_days} days before its time, while the studio is open: "
-                "open it at least once a fortnight. A post already at Publora goes out even with this PC off.",
+                "A queued post goes to Publora by itself once its time is {max_days} days away and the plan has room, "
+                "while the studio is open, so open it every few days. A post already at Publora goes out even with this "
+                "PC off.",
                 "Cancel on Publora, in a post's gear, frees its day: the next in line takes it."],
          "gives": "Your posts going out on your own rhythm, with nothing to schedule by hand."},
         {"id": "schedule", "shot": "schedule", "title": "Schedule a time of its own", "icon": "send", "where": "The post's top bar",
@@ -102,7 +103,7 @@ LANES = [
          "href": "#~posts", "claude": "", "demo": "published",
          "do": ["Once its time has passed, the studio asks Publora every few minutes whether it went out; Check now, "
                 "in the post's top bar, asks at once.",
-                "The post shows as Published, with Open on LinkedIn, and counts toward your {limit} for the month."],
+                "The post shows as Published, with Open on LinkedIn, and counts toward this month's posts ({limit_words})."],
          "gives": "It is on LinkedIn. A link you put in First comment appears right under it."},
     ]},
     {"label": "Every day", "note": "Alongside your own posts", "steps": [
@@ -127,13 +128,13 @@ STATES = [
     ("Queued", "Approved, and waiting in the queue for its posting time.",
      ["Move it up or down in the Planner's Coming up", "Take out of the queue: it stays approved",
       "Back to draft, which takes it out of the queue",
-      "It goes to Publora by itself {max_days} days before its time"]),
+      "It goes to Publora by itself once its time is {max_days} days away"]),
     ("Scheduled", "It is waiting at Publora.", ["Check now, which asks Publora whether it went out",
                                                 "Cancel on Publora (the gear)", "Open the Publora dashboard",
                                                 "It stays out of the Trash while it is scheduled"]),
     ("Published", "It is on LinkedIn.", ["Open on LinkedIn, once Publora gave its link",
                                          "New draft from this, for an editable copy",
-                                         "It counts toward this month's {limit}", "It stays out of the Trash"]),
+                                         "It counts toward this month's posts ({limit_words})", "It stays out of the Trash"]),
 ]
 
 SCREENS = [
@@ -200,6 +201,8 @@ SCREENS = [
                 "You in the preview: your name, headline and photo for every post's preview. They stay on this PC.",
                 "Posting times: the days, and a time for each, that the queue gives its posts and the Planner plans "
                 "for. One post a day at most.",
+                "Publishing: your Publora plan, which sets how many posts go out a month, how many wait at Publora at "
+                "a time and how far ahead. Starter is free with 15 a month; Pro has no limits.",
                 "Post style: the hook, tone and emojis every new draft is written with. It always stays professional.",
                 "Connections confirms your Publora key works. Run it after changing .env.",
                 "Recent runs lists every Claude run and how long it took."]},

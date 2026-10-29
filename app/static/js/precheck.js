@@ -99,7 +99,7 @@ function timing(p, value, at) {
 
 // p.used and p.limit are this month's (p.month): a time in another month is counted there, so it says nothing.
 function monthLeft(p, at) {
-  if (!at || typeof p.limit !== "number" || typeof p.used !== "number" || MONTHS[at.month - 1] !== p.month) return "";
+  if (!at || !p.limit || typeof p.used !== "number" || MONTHS[at.month - 1] !== p.month) return "";   // 0: no monthly limit
   const left = p.limit - p.used - 1;
   if (left > FEW) return "";
   if (left < 0) return `Your ${number(p.limit)} posts for ${p.month} are all used, so this one will be refused. Pick a time next month.`;

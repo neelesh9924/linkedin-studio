@@ -6,8 +6,9 @@ at most), in a month that still has room under the monthly limit. A queued post'
 out again each time it is asked for (`lineup`), so the line moves up by itself when a post leaves it, and a day that
 passed with nobody in line is simply gone.
 
-A queued post goes to Publora by itself once its time is within the window the studio schedules in (MAX_AHEAD), through
-the same Publisher.schedule as Schedule… (one transaction, one keyed request), and leaves the line as it is claimed.
+A queued post goes to Publora by itself once its time is within how far ahead the Publora plan schedules
+(Publisher.max_ahead) and the plan has room for another scheduled post (publora_at_once), through the same
+Publisher.schedule as Schedule… (one transaction, one keyed request), and leaves the line as it is claimed.
 That happens when the owner queues a post or changes the posting times, and in the background while the studio runs:
 /api/state kicks a pass at most every minute, one pass at a time, only with check_publora (as the light check), and
 never during setup. A post already at Publora keeps its time; Cancel on Publora frees its day for the next in line.
@@ -27,7 +28,7 @@ from typing import Any, Callable
 
 from . import images
 from .db import DB, utcnow
-from .publishing import COUNTED, MAX_AHEAD, MIN_LEAD, Publisher, ScheduleError
+from .publishing import COUNTED, MIN_LEAD, Publisher, ScheduleError
 from .render import local_time
 
 log = logging.getLogger("studio.posting")
@@ -38,7 +39,7 @@ NAMES = {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday
          "sun": "Sunday"}
 DEFAULT = {"tue": "08:00", "wed": "09:30", "thu": "08:00"}   # the mornings the skills recommend
 LEAD = MIN_LEAD + timedelta(minutes=5)       # a time closer than this is passed over
-SEND_MARGIN = timedelta(minutes=10)          # sent once its time is this much inside MAX_AHEAD
+SEND_MARGIN = timedelta(minutes=10)          # sent once its time is this much inside the plan's days ahead
 HORIZON = 400                                # days ahead a queued post looks for a free time
 EVERY = timedelta(minutes=1)                 # the background pass, at most this often
 TAKES_ITS_DAY = (*COUNTED, "failed")         # a post with a time keeps that day from the queue (failed: Try again)
@@ -147,7 +148,7 @@ class PostingQueue:
         for ahead in range(HORIZON):
             day = first + timedelta(days=ahead)
             at_time = chosen.get(DAYS[day.weekday()])
-            if at_time is None or day in taken or months[(day.year, day.month)] >= limit:
+            if at_time is None or day in taken or (limit and months[(day.year, day.month)] >= limit):
                 continue
             hour, minute = map(int, at_time.split(":"))
             at = datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz).astimezone(timezone.utc)
@@ -165,19 +166,19 @@ class PostingQueue:
         return self._line(self._free_times(now or self.now()))
 
     def coming(self, now: datetime | None = None) -> tuple[list[tuple[int, datetime | None]], list[datetime]]:
-        """The line, and the free posting times left within MAX_AHEAD after it: the Planner's Coming up."""
+        """The line, and the free posting times left within the plan's days ahead after it: the Planner's Coming up."""
         now = now or self.now()
         free = self._free_times(now)
         line = self._line(free)
         left = []
         for at in free:
-            if at > now + MAX_AHEAD:
+            if at > now + self.pub.max_ahead:
                 break
             left.append(at)
         return line, left
 
     def next_free(self, count: int = 4, now: datetime | None = None) -> list[datetime]:
-        """The first free posting times after the line, within MAX_AHEAD: Schedule…'s recommended times."""
+        """The first free posting times after the line, within the plan's days ahead: Schedule…'s recommended times."""
         return self.coming(now)[1][:count]
 
     # ---- the owner's changes ----
@@ -209,16 +210,20 @@ class PostingQueue:
 
     # ---- going to Publora ----
     def send_due(self) -> list[dict]:
-        """Hand each queued post whose time is within the window to Publora, in line order. What happened to each one
-        sent or refused: {"id", "ok", "error"}. A refusal before anything was sent (no key, a missing picture) stays on
-        the post as its error, and the post stays in line."""
+        """Hand each queued post whose time is within the plan's days ahead to Publora, in line order, while the plan
+        has room for another scheduled post. What happened to each one sent or refused: {"id", "ok", "error"}. A refusal
+        before anything was sent (no key, a missing picture) stays on the post as its error, and the post stays in line."""
         out = []
         with self.lock:
             now = self.now()
+            room = self.cfg.publora_at_once - self.pub.waiting_there() if self.cfg.publora_at_once else None
             for post_id, at in self.lineup(now):
-                if at is None or at > now + MAX_AHEAD - SEND_MARGIN:
-                    break
-                out.append(self._send(post_id, at))
+                if at is None or at > now + self.pub.max_ahead - SEND_MARGIN or room is not None and room <= 0:
+                    break                      # beyond the plan's reach, or its at-a-time limit: it waits in line
+                sent = self._send(post_id, at)
+                out.append(sent)
+                if room is not None and sent["sent"] and sent["ok"]:
+                    room -= 1
         return out
 
     def _send(self, post_id: int, at: datetime) -> dict:

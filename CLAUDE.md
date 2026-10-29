@@ -18,7 +18,12 @@ username in them).
   and the line: an approved post with `posts.queue_pos`. A queued post's time is worked out afresh
   every time (`PostingQueue.lineup`: the next free posting time, one post a day, under the monthly
   limit) and never stored. It goes to Publora only through `Publisher.schedule`, once its time is
-  inside `MAX_AHEAD`, and leaves the line as it is claimed; Back to draft and the Trash take it out.
+  inside the plan's days ahead (`Publisher.max_ahead`) and the plan has room for another scheduled
+  post (`publora_at_once`), and leaves the line as it is claimed; Back to draft and the Trash take it out.
+- **Never ask Publora for more than the plan allows.** `publishing.PLANS` holds Publora's plans (Starter:
+  15 a month, 3 scheduled at a time, 7 days ahead; Pro: none, kept to 14 days here); config.local.toml
+  keeps the three numbers (0 = no limit) and Settings › Publishing writes them and restarts the studio.
+  `Publisher.schedule` refuses past any of them before anything is sent, so nothing fails at Publora.
   The background pass, like the light check, runs only with `check_publora` and never during setup.
   Schedule…'s recommended times, the Planner's Coming up and the plan's days all come from it.
 - **Publora exactly once.** Scheduling is one transaction (approved → scheduling) and one request

@@ -24,7 +24,7 @@ from .config import ConfigError, path_problems, problems
 from .db import dumps, loads, utcnow
 from .health import claude_account, claude_version
 from .main import ACTIVE, PROBLEM, TARGET, Studio
-from .publishing import MAX_AHEAD, MIN_LEAD, POST_MAX
+from .publishing import MIN_LEAD, PLANS, POST_MAX, limit_words, plan_of
 from .skills import ACTIONS, TOOL_KINDS
 
 GOALS = ("comments", "reposts", "likes", "saves")
@@ -175,7 +175,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "next": next_post,
             "upcoming": [s.post_summary(p) for p in upcoming],
             "coming": coming, "posting": posting.words(s.queue.times()), "posting_days": len(s.queue.times()),
-            "window": MAX_AHEAD.days,
+            "window": pub.max_ahead.days, "at_once": cfg.publora_at_once,
             "claude": {"working": ACTIONS[active[0]["kind"]].doing if active else "",
                        "login": str(cfg.claude_config_dir), "model": model_now() or "Account default",
                        "sign_in": sign_in(),
@@ -421,6 +421,9 @@ def register(app: FastAPI, s: Studio) -> None:
                        "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
                        "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},
             "publora": pub.status(), "limit": cfg.monthly_post_limit, "timezone": cfg.timezone, "tz": s.tz_label,
+            "plan": plan_of(cfg), "plan_words": limit_words(cfg), "restarts": s.on_restart is not None,
+            "plans": [{"value": key, "label": plan["label"], "hint": limit_words(dataclasses.replace(cfg, **{
+                k: v for k, v in plan.items() if k != "label"}))} for key, plan in PLANS.items()],
             "protection": {"ok": p.ok, "state": p.state, "detail": p.detail},
             "problems": problems(cfg), "data_dir": str(s.db.path.parent), "checks": checks,
             "runs": [{"when": s.ago(r["started_at"]), "what": ACTIONS[r["kind"]].title if r["kind"] in ACTIONS else r["skill"],
@@ -454,6 +457,21 @@ def register(app: FastAPI, s: Studio) -> None:
         except codex.CodexError as exc:
             return fail(str(exc))
         return {"ok": True, "home": text}
+
+    # Settings › Publishing's Publora plan: its three limits go into config.local.toml, and the studio restarts to use
+    # them (they are read once, at start, by everything that schedules).
+    @app.post("/api/settings/publora-plan")
+    def settings_plan(data: dict = Body(default={})):
+        plan = PLANS.get(str(data.get("plan") or ""))
+        if plan is None:
+            return fail("Pick Starter or Pro.")
+        try:
+            paths.save_values({k: v for k, v in plan.items() if k != "label"})
+        except ConfigError as exc:
+            return fail(str(exc), 500)
+        if s.on_restart:
+            threading.Timer(0.8, s.on_restart).start()     # after this answer has reached the window
+        return {"ok": True, "restarts": s.on_restart is not None}
 
     @app.post("/api/settings/claude/check")
     def settings_sign_in():
@@ -494,7 +512,8 @@ def register(app: FastAPI, s: Studio) -> None:
     # Settings › Posting times (posting.py): the days and times the queue gives its posts, and the Planner plans for.
     def posting_public() -> dict:
         return {"times": s.queue.times(), "studio": posting.DEFAULT, "days": [[d, posting.NAMES[d]] for d in posting.DAYS],
-                "words": posting.words(s.queue.times()), "limit": cfg.monthly_post_limit, "window": MAX_AHEAD.days}
+                "words": posting.words(s.queue.times()), "limit": cfg.monthly_post_limit, "window": pub.max_ahead.days,
+                "at_once": cfg.publora_at_once}
 
     @app.get("/api/posting")
     def posting_get():
@@ -609,8 +628,10 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.get("/api/guide")
     def guide_page():
         # The figures the guide quotes come from the code that enforces them.
-        numbers = {"limit": cfg.monthly_post_limit, "post_max": f"{POST_MAX:,}",
-                   "min_lead": int(MIN_LEAD.total_seconds() // 60), "max_days": MAX_AHEAD.days,
+        numbers = {"limit": cfg.monthly_post_limit or "no", "post_max": f"{POST_MAX:,}",
+                   "limit_words": f"{cfg.monthly_post_limit} a month" if cfg.monthly_post_limit else "no monthly limit",
+                   "plan_words": limit_words(cfg),
+                   "min_lead": int(MIN_LEAD.total_seconds() // 60), "max_days": pub.max_ahead.days,
                    "target_min": f"{TARGET['min']:,}", "target_max": f"{TARGET['max']:,}", "fold": TARGET["fold"],
                    "timeout": cfg.timeout_seconds, "tz": s.tz_label, "per_request": jobs.images_per_request}
         screens = guide.fill(guide.SCREENS, numbers)

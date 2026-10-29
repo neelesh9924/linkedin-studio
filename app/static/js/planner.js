@@ -75,8 +75,9 @@ function draw() {
     h("div", { class: "section-title" }, h("h2", null, "This month")),
     h("div", { class: "grid cols-3" },
       h("section", { class: "panel" }, h("div", { class: "panel-body" },
-        h("div", { class: "ring-row" }, ring(d.used, d.limit),
-          h("div", { class: "stat" }, h("span", { class: "label" }, `Posts in ${d.month}`), h("span", { class: "big" }, `${d.used} `, h("small", null, `of ${d.limit}`)))),
+        h("div", { class: "ring-row" }, ring(d.used, d.limit || d.used || 1),
+          h("div", { class: "stat" }, h("span", { class: "label" }, `Posts in ${d.month}`), h("span", { class: "big" }, `${d.used} `,
+            h("small", null, d.limit ? `of ${d.limit}` : "no limit")))),
         h("p", { class: "soft" }, `Scheduled or published from here, counted by ${d.tz} month. Publora keeps its own count.`))),
       h("section", { class: "panel" }, h("div", { class: "panel-body stat" },
         h("span", { class: "label" }, "Next post"),
@@ -115,8 +116,8 @@ function comingUp(d) {
     h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("calendar", 17)),
       h("div", null, h("h2", { id: "coming-title" }, "Coming up"),
         h("p", null, `Your posting times: ${d.posting}. Each post you queue takes the next free one, a post a day at most, and `
-          + `goes to Publora by itself ${d.window} days before, while the studio is open. Once a post’s time has passed, the `
-          + "studio asks Publora whether it went out.")),
+          + `goes to Publora by itself once its time is ${d.window} days away${d.at_once ? ` and fewer than ${d.at_once} are waiting there` : ""}, `
+          + "while the studio is open. Once a post’s time has passed, the studio asks Publora whether it went out.")),
       h("span", { class: "panel-tools" }, times, check)),
     d.coming.length ? h("ol", { class: "coming" }, d.coming.map(comingRow))
       : h("div", { class: "panel-body soft" }, "Nothing is coming up. Approve and queue a post: it takes your next free posting time."));

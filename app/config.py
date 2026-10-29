@@ -21,7 +21,10 @@ class Config:
     claude_bin: Path
     claude_config_dir: Path
     port: int = 8765
+    # The Publora plan's limits (publishing.PLANS; Settings › Publishing picks one). 0: no limit. Starter's by default.
     monthly_post_limit: int = 15
+    publora_at_once: int = 3        # scheduled posts Publora holds at a time
+    publora_days_ahead: int = 7     # how far ahead a post can be scheduled
     timezone: str = "Asia/Kolkata"
     browser_path: str = ""
     # ChatGPT's pictures (codex.py). codex_home has no default: empty = pictures off.
@@ -74,6 +77,8 @@ def load_config(path: Path | None = None) -> Config:
             claude_config_dir=Path(raw.get("claude_config_dir") or ""),
             port=int(raw.get("port", 8765)),
             monthly_post_limit=int(raw.get("monthly_post_limit", 15)),
+            publora_at_once=int(raw.get("publora_at_once", 3)),
+            publora_days_ahead=max(1, int(raw.get("publora_days_ahead", 7))),
             timezone=str(raw.get("timezone", "Asia/Kolkata")),
             browser_path=str(raw.get("browser_path", "")),
             codex_home=str(raw.get("codex_home", "")),

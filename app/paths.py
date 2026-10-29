@@ -131,7 +131,7 @@ def save(chosen: dict[str, Path], local: Path | None = None, example: Path | Non
     return save_values({key: str(path) for key, path in chosen.items()}, local, example)
 
 
-def save_values(values: dict[str, str], local: Path | None = None, example: Path | None = None) -> Path:
+def save_values(values: dict[str, str | int], local: Path | None = None, example: Path | None = None) -> Path:
     """Write these settings into config.local.toml, starting it from the example the first time.
 
     Only the lines for these settings change; comments and every other setting stay.
@@ -144,7 +144,7 @@ def save_values(values: dict[str, str], local: Path | None = None, example: Path
         raise ConfigError(f"Cannot read {source.name}: {exc}") from exc
     eol = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
     for key, value in values.items():
-        entry = f"{key} = {toml_string(value)}"
+        entry = f"{key} = {value}" if isinstance(value, int) and not isinstance(value, bool) else f"{key} = {toml_string(value)}"
         for i, line in enumerate(lines):
             if re.match(rf"{key}\s*=", line):
                 lines[i] = entry + (line[len(line.rstrip("\r\n")):] or eol)

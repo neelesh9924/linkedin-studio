@@ -7,11 +7,11 @@ from conftest import TOKEN, add_post, with_
 from fastapi.testclient import TestClient
 from test_publishing import FakeClient
 
-from app import posting, skills
+from app import paths, posting, skills
 from app.db import DB, utcnow
 from app.main import create_app
 from app.posting import DEFAULT, PostingQueue, Refused
-from app.publishing import Publisher, ScheduleError
+from app.publishing import PLANS, Publisher, ScheduleError, limit_words, plan_of
 
 NOW = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc)   # Wednesday 7 October, 11:30 am IST: Wednesday's 9:30 has passed
 IST = timedelta(hours=5, minutes=30)
@@ -22,11 +22,16 @@ def ist(text: str) -> datetime:
     return (datetime.fromisoformat(text) - IST).replace(tzinfo=timezone.utc)
 
 
+def pro(cfg):
+    """The Pro plan's limits: none at Publora, 14 days ahead in the studio. Most tests here are about the line itself."""
+    return with_(cfg, **{k: v for k, v in PLANS["pro"].items() if k != "label"})
+
+
 @pytest.fixture
 def line(cfg, tmp_path):
     db = DB(tmp_path / "q.db")
     client = FakeClient()
-    pub = Publisher(db, cfg, client_factory=lambda: client, now=lambda: NOW)
+    pub = Publisher(db, pro(cfg), client_factory=lambda: client, now=lambda: NOW)
     return db, PostingQueue(db, pub), client
 
 
@@ -73,7 +78,7 @@ def test_each_queued_post_takes_the_next_free_posting_day_in_line_order(line):
 
 def test_a_full_month_passes_to_the_next_and_the_trash_and_drafts_leave_the_line(line, cfg):
     db, queue, client = line
-    queue.pub.cfg = queue.cfg = with_(cfg, monthly_post_limit=3)
+    queue.pub.cfg = queue.cfg = with_(pro(cfg), monthly_post_limit=3)
     ids = queued(db, queue, 4)
     assert [at for _pid, at in queue.lineup()] == [ist("2026-10-08 08:00"), ist("2026-10-13 08:00"), ist("2026-10-14 09:30"),
                                                    ist("2026-11-03 08:00")]    # October's three are its limit
@@ -136,11 +141,12 @@ def studio(cfg, tmp_path, fake_runner):
     """A studio whose Publora is the stand-in and whose clock is NOW; `check` is passed as check_publora."""
     made = []
 
-    def make(check=None):
+    def make(check=None, plan=None):
         path = tmp_path / f"s{len(made)}.db"
         client = FakeClient()
-        pub = Publisher(DB(path), cfg, client_factory=lambda: client, now=lambda: NOW)
-        app = create_app(cfg, TOKEN, db_path=path, runner=fake_runner, publisher=pub,
+        chosen = with_(cfg, **{k: v for k, v in PLANS[plan].items() if k != "label"}) if plan else pro(cfg)
+        pub = Publisher(DB(path), chosen, client_factory=lambda: client, now=lambda: NOW)
+        app = create_app(chosen, TOKEN, db_path=path, runner=fake_runner, publisher=pub,
                          **({} if check is None else {"check_publora": check}))
         http = TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin})
         http.__enter__()
@@ -187,8 +193,9 @@ def test_a_post_beyond_the_window_waits_in_line_with_its_time_and_can_be_taken_o
         http.post(f"/api/post/{add_post(db, 'approved')}/queue", json={})
     pid = add_post(db, "approved")
     said = http.post(f"/api/post/{pid}/queue", json={}).json()
-    assert said["status"] == "approved" and said["said"].startswith("Queued: it goes out Thu 22 Oct, 8:00 am IST. It goes "
-                                                                   "to Publora by itself 14 days before")
+    assert said["status"] == "approved" and said["said"] == ("Queued: it goes out Thu 22 Oct, 8:00 am IST. It goes to "
+                                                             "Publora by itself once its time is 14 days away, while the "
+                                                             "studio is open.")
     shown = http.get(f"/api/post/{pid}").json()
     assert (shown["label"], shown["queued"], shown["when"], shown["can_queue"]) == ("Queued", True, "Thu 22 Oct, 8:00 am IST", False)
     assert shown["posting"] == "Tue 8:00 am, Wed 9:30 am and Thu 8:00 am" and shown["window"] == 14
@@ -266,3 +273,63 @@ def test_schedules_recommended_times_are_the_free_posting_times(studio):
     pid = add_post(app.state.db, "approved")
     quick = http.get(f"/api/post/{pid}").json()["schedule"]["quick"]
     assert [q["value"] for q in quick] == ["2026-10-08T08:00", "2026-10-13T08:00", "2026-10-14T09:30", "2026-10-15T08:00"]
+
+
+# ---- the Publora plan's limits -----------------------------------------------------------------------------------
+EVERY_DAY = {d: "08:00" for d in posting.DAYS}
+
+
+def test_the_plans_are_publoras_and_name_their_limits(cfg):
+    starter = with_(cfg, **{k: v for k, v in PLANS["starter"].items() if k != "label"})
+    assert plan_of(starter) == "starter" and plan_of(pro(cfg)) == "pro" and plan_of(with_(cfg, publora_at_once=5)) == "custom"
+    assert limit_words(starter) == "15 posts a month, 3 scheduled at a time, 7 days ahead" and limit_words(pro(cfg)) == "no limits"
+    assert (cfg.monthly_post_limit, cfg.publora_at_once, cfg.publora_days_ahead) == (15, 3, 7)   # Starter's, by default
+
+
+def test_on_starter_the_queue_hands_over_three_at_a_time_and_seven_days_ahead(cfg, tmp_path):
+    """Starter holds 3 scheduled posts at a time and schedules 7 days ahead: the queue never asks Publora for more, so
+    nothing is refused there. The rest wait in line, in order, and go once one has gone out."""
+    db = DB(tmp_path / "starter.db")
+    client = FakeClient()
+    pub = Publisher(db, cfg, client_factory=lambda: client, now=lambda: NOW)
+    queue = PostingQueue(db, pub)
+    posting.save(db, EVERY_DAY)
+    ids = queued(db, queue, 9)
+    assert [r["id"] for r in queue.send_due()] == ids[:3] and len(client.calls) == 3       # three at a time
+    assert queue.send_due() == []
+    db.run("UPDATE posts SET status='published' WHERE id=?", (ids[0],))                  # one went out
+    assert [r["id"] for r in queue.send_due()] == [ids[3]]
+    pub.cfg = queue.cfg = with_(cfg, publora_at_once=0)                                  # only the 7 days now
+    sent = queue.send_due()
+    assert [payload["scheduledTime"][:10] for payload, _key in client.calls][-len(sent):] == [
+        "2026-10-12", "2026-10-13", "2026-10-14"]                                         # 14 Oct 8:00 is inside 7 days
+    assert [pid for pid, _at in queue.lineup()] == ids[7:]                              # 15 Oct and later wait
+
+
+def test_schedule_refuses_before_publora_would(cfg, tmp_path):
+    db = DB(tmp_path / "refuse.db")
+    client = FakeClient()
+    pub = Publisher(db, cfg, client_factory=lambda: client, now=lambda: NOW)
+    for day in ("08", "09", "10"):
+        add_post(db, "scheduled", scheduled_at=f"2026-10-{day}T02:30:00+00:00", publora_post_id=f"pg-{day}")
+    pid = add_post(db, "approved")
+    with pytest.raises(ScheduleError, match="holds 3 scheduled posts at a time, and 3 are waiting there now"):
+        pub.schedule(pid, "2026-10-11T08:00", None)
+    with pytest.raises(ScheduleError, match="up to 7 days ahead"):
+        pub.schedule(pid, "2026-10-15T08:00", None)
+    assert client.calls == [] and db.one("SELECT status FROM posts WHERE id=?", (pid,))["status"] == "approved"
+
+
+def test_picking_a_plan_writes_its_limits_as_numbers(studio, tmp_path, monkeypatch):
+    local = tmp_path / "config.local.toml"
+    local.write_text("# kept\nport = 8799\nmonthly_post_limit = 15\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "LOCAL", local)
+    http, _app, _client = studio(plan="starter")
+    shown = http.get("/api/settings").json()
+    assert (shown["plan"], shown["plan_words"]) == ("starter", "15 posts a month, 3 scheduled at a time, 7 days ahead")
+    assert [p["value"] for p in shown["plans"]] == ["starter", "pro"]
+    assert http.post("/api/settings/publora-plan", json={"plan": "gold"}).status_code == 422
+    assert http.post("/api/settings/publora-plan", json={"plan": "pro"}).json() == {"ok": True, "restarts": False}
+    assert local.read_text(encoding="utf-8") == ("# kept\nport = 8799\nmonthly_post_limit = 0\npublora_at_once = 0\n"
+                                                 "publora_days_ahead = 14\n")
+

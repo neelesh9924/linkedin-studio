@@ -121,11 +121,12 @@ async function settings(quiet = false) {
       h("div", { class: "form-foot" }, check, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
         icon("folder", 14), h("span", null, "Change folders")))),
     section("publishing", "plane", "Publishing", "Keys live in linkedin-skills\\.env. The app reads them and never shows them.",
+      planForm(data),
       facts(["Publora key", data.publora.key ? "Set" : "Missing"],
         ["LinkedIn channel", data.publora.platform_id ? "Set" : "Worked out from the key when you schedule"],
         ["Apify token", data.publora.apify ? "Set: post links can be fetched" : "Not set: paste post text instead of links"],
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
-        ["Monthly limit", `${data.limit} posts`], ["Times shown in", `${data.timezone} (${data.tz})`])),
+        ["Times shown in", `${data.timezone} (${data.tz})`])),
     postingSection(times),
     chatgpt(codex),
     profileSection(me),
@@ -331,14 +332,49 @@ function styleSection(look) {
   return section("style", "sliders", title, lede, form);
 }
 
+// The Publora plan (Starter or Pro, from /api/settings plans): what the studio may ask of Publora, a month and at a time.
+// Picked, it goes into config.local.toml and the studio restarts to use it. Limits set by hand in that file show as Custom.
+function planForm(data) {
+  const plans = data.plan === "custom" ? [...data.plans, { value: "custom", label: "Custom (set in config.local.toml)", hint: data.plan_words }]
+    : data.plans;
+  const pick = h("select", { class: "input", id: "publora-plan", "data-keep": "publora-plan", "aria-describedby": "publora-plan-hint" },
+    plans.map((p) => h("option", { value: p.value }, p.label)));
+  pick.value = data.plan;
+  const hint = h("span", { class: "field-hint", id: "publora-plan-hint" });
+  const say = () => {
+    const chosen = plans.find((p) => p.value === pick.value) || {};
+    hint.textContent = `${chosen.hint || ""}. Pick the plan you have on Publora: the studio never asks it for more.`;
+  };
+  say();
+  const out = h("div", { class: "results" });
+  pick.addEventListener("change", () => {
+    say();
+    if (pick.value === "custom") return;
+    whileBusy(pick, async () => {
+      const reply = await post("/api/settings/publora-plan", { plan: pick.value });
+      if (reply.error) {
+        pick.value = data.plan;
+        say();
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      const words = reply.restarts ? "Saved. LinkedIn Studio is restarting with this plan: this window closes and a new one opens."
+        : "Saved in config.local.toml. Close LinkedIn Studio and open it again to use this plan.";
+      put(out, note("ok", words));
+      announce(words);
+    });
+  });
+  return h("div", { class: "model-form" }, h("label", { class: "field" }, h("span", { class: "field-label" }, "Publora plan"), pick, hint), out);
+}
+
 // Posting times: the days and times the queue gives its posts, one a day at most, and the Planner plans for. Each day is
 // on or off, with its own time. What is changed and not yet saved stays through redraws.
 function postingSection(pt) {
   const title = "Posting times";
   if (!pt || pt.error) return section("posting", "clock", title, "", note("bad", (pt && pt.error) || "The studio did not answer."));
-  const lede = `Each post you queue takes the next free one of these: one post a day at most, and no more than ${pt.limit} `
-    + `a month. It goes to Publora by itself ${pt.window} days before its time, while the studio is open. The Planner plans `
-    + "one post for each day.";
+  const lede = `Each post you queue takes the next free one of these: one post a day at most${pt.limit ? `, and no more than ${pt.limit} a month` : ""}. `
+    + `It goes to Publora by itself once its time is ${pt.window} days away${pt.at_once ? ` and fewer than ${pt.at_once} are waiting there` : ""}, `
+    + "while the studio is open. The Planner plans one post for each day.";
   const now = { ...(typed.posting || pt.times) };
   const keep = () => { typed.posting = { ...now }; };
   const boxes = {};

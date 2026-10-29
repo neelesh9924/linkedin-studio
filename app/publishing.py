@@ -30,8 +30,32 @@ from .config import Config
 from .db import DB, dumps, loads, utcnow
 
 MIN_LEAD = timedelta(minutes=2)
-MAX_AHEAD = timedelta(days=14)
 COUNTED = ("scheduling", "scheduled", "published")
+WAITING_THERE = ("scheduling", "scheduled")     # held by Publora until they go out: its "scheduled posts at a time"
+# Publora's plans as its pricing page gives them (Oct 2026). Settings › Publishing picks one, and config.local.toml keeps
+# its three numbers. 0: no limit. Pro has none at Publora; the studio still schedules at most 14 days ahead, so the
+# queue keeps what lies further out in its own order.
+PLANS = {
+    "starter": {"label": "Starter (free)", "monthly_post_limit": 15, "publora_at_once": 3, "publora_days_ahead": 7},
+    "pro": {"label": "Pro", "monthly_post_limit": 0, "publora_at_once": 0, "publora_days_ahead": 14},
+}
+
+
+def plan_of(cfg: Config) -> str:
+    """The plan whose limits the config holds: "starter", "pro", or "custom" for numbers set by hand."""
+    for key, plan in PLANS.items():
+        if all(getattr(cfg, name) == value for name, value in plan.items() if name != "label"):
+            return key
+    return "custom"
+
+
+def limit_words(cfg: Config) -> str:
+    """The plan's limits in a line: "15 posts a month, 3 scheduled at a time, 7 days ahead", or "no limits"."""
+    parts = [f"{cfg.monthly_post_limit} posts a month" if cfg.monthly_post_limit else "",
+             f"{cfg.publora_at_once} scheduled at a time" if cfg.publora_at_once else "",
+             f"{cfg.publora_days_ahead} days ahead" if cfg.publora_days_ahead < PLANS["pro"]["publora_days_ahead"] else ""]
+    said = [p for p in parts if p]
+    return ", ".join(said) if said else "no limits"
 FIRST_COMMENT_MAX = 1250
 POST_MAX = 3000
 DASHBOARD_URL = "https://app.publora.com"
@@ -228,6 +252,17 @@ class Publisher:
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._platform_id: str | None = None
 
+    @property
+    def max_ahead(self) -> timedelta:
+        """How far ahead a post can be scheduled: the Publora plan's limit (config publora_days_ahead)."""
+        return timedelta(days=self.cfg.publora_days_ahead)
+
+    def waiting_there(self, con=None) -> int:
+        """Posts Publora holds until they go out: sending or scheduled, and not yet heard back as published."""
+        sql = f"SELECT COUNT(*) FROM posts WHERE status IN ({','.join('?' * len(WAITING_THERE))})"
+        row = con.execute(sql, WAITING_THERE).fetchone() if con is not None else self.db.one(sql, WAITING_THERE)
+        return int(row[0])
+
     # ---- configuration -------------------------------------------------------
     def status(self) -> dict:
         env = read_env(self.cfg)
@@ -259,8 +294,9 @@ class Publisher:
         now = self.now()
         if when < now + MIN_LEAD:
             raise ScheduleError("That time is in the past (or under 2 minutes away). Pick a later time.")
-        if when > now + MAX_AHEAD:
-            raise ScheduleError("Publora scheduling here is limited to 14 days ahead. Pick an earlier time.")
+        if when > now + self.max_ahead:
+            raise ScheduleError(f"Your Publora plan schedules up to {self.cfg.publora_days_ahead} days ahead. Pick an "
+                                "earlier time.")
         return when
 
     def month_bounds(self, when: datetime) -> tuple[str, str]:
@@ -331,9 +367,14 @@ class Publisher:
             if row["status"] != "approved":
                 raise ScheduleError(f"Only an approved post can be scheduled; this one is {row['status']}.")
             used = self.quota_used(when, con)
-            if used >= self.cfg.monthly_post_limit:
+            if self.cfg.monthly_post_limit and used >= self.cfg.monthly_post_limit:
                 raise ScheduleError(f"Monthly limit reached: {used}/{self.cfg.monthly_post_limit} posts are already "
                                     f"scheduled or published in {when.astimezone(self.cfg.tz):%B %Y}.")
+            held = self.waiting_there(con)
+            if self.cfg.publora_at_once and held >= self.cfg.publora_at_once:
+                raise ScheduleError(f"Your Publora plan holds {self.cfg.publora_at_once} scheduled posts at a time, and "
+                                    f"{held} are waiting there now. Schedule this one once one has gone out, or queue it: "
+                                    "the queue sends it then.")
             payload: dict[str, Any] = {"content": row["text"], "platforms": [platform_id]}
             if media is None:  # with a picture it is created as a draft and scheduled by update-post
                 payload["scheduledTime"] = when.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -373,7 +414,7 @@ class Publisher:
             if when < self.now() + MIN_LEAD:
                 raise ScheduleError("The scheduled time has passed. Move it back to draft and pick a new time.")
             used = self.quota_used(when, con)
-            if used >= self.cfg.monthly_post_limit:
+            if self.cfg.monthly_post_limit and used >= self.cfg.monthly_post_limit:
                 raise ScheduleError("Monthly limit reached.")
             con.execute("UPDATE posts SET status='scheduling', error=NULL, updated_at=? WHERE id=? AND status='failed'",
                         (utcnow(), post_id))

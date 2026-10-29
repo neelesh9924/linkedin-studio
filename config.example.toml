@@ -22,6 +22,10 @@ port = 8765
 
 # Publora free tier: 15 posts per month.
 monthly_post_limit = 15
+# Your Publora plan's other limits (Settings › Publishing picks Starter or Pro and writes all three; 0 = no limit).
+# Starter, the free plan: 15 posts a month, 3 scheduled at a time, 7 days ahead.
+publora_at_once = 3
+publora_days_ahead = 7
 
 # All times in the UI are shown in this zone; the database stores UTC.
 timezone = 'Asia/Kolkata'

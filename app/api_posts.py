@@ -16,8 +16,8 @@ from . import attached, attachments, images, posting, render, style, versions
 from .db import dumps, loads, utcnow
 from .flows import add_message
 from .main import ACTIVE, PROBLEM, Studio
-from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MAX_AHEAD, MIN_LEAD, NO_REASON, ScheduleError,
-                         placeholder_slots, retry_with_picture, schedule_with_picture)
+from .publishing import (DASHBOARD_URL, FIRST_COMMENT_MAX, MIN_LEAD, NO_REASON, ScheduleError, placeholder_slots,
+                         retry_with_picture, schedule_with_picture)
 from .skills import REVISION_LABELS, REVISIONS
 from .status_check import failure_words
 
@@ -148,7 +148,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "picture": images.public(chosen, row["picture_id"]) if chosen else None,
             "pictures": [images.public(p, row["picture_id"]) for p in pictures],
             "schedule": {"min": (now_local + MIN_LEAD + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M"),
-                         "max": (now_local + MAX_AHEAD).strftime("%Y-%m-%dT%H:%M"),
+                         "max": (now_local + pub.max_ahead).strftime("%Y-%m-%dT%H:%M"),
                          "quick": quick_times(now_local)} if status == "approved" else None,
             "publora": pub.status(), "used": pub.quota_used(now), "limit": cfg.monthly_post_limit,
             "month": now_local.strftime("%B"), "dashboard": DASHBOARD_URL, "first_comment_max": FIRST_COMMENT_MAX,
@@ -157,7 +157,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "plan": plan, "versions": db.one("SELECT COUNT(*) AS n FROM versions WHERE post_id=?", (pid,))["n"],
             # The posting queue: Approve and queue on a draft, Add to queue on an approved post, Take out on a queued one
             "can_queue": status in ("draft", "approved") and not summary["queued"],
-            "posting": posting.words(s.queue.times()), "window": MAX_AHEAD.days,
+            "posting": posting.words(s.queue.times()), "window": pub.max_ahead.days, "at_once": cfg.publora_at_once,
             # A scheduled post whose time has passed: what the light check last heard (status_check.py), for its notice.
             "waiting": s.checker.notice(pid, s.clock) if due else None,
         }
@@ -355,8 +355,9 @@ def register(app: FastAPI, s: Studio) -> None:
         if not summary["when"]:
             return {"ok": True, "status": "approved",
                     "said": "Queued, but no posting time is free within a year. Settings › Posting times adds days."}
-        later = (f" It goes to Publora by itself {MAX_AHEAD.days} days before, while the studio is open."
-                 if not row["error"] else f" {row['error']}")
+        room = f" and your Publora plan has room (it holds {cfg.publora_at_once} at a time)" if cfg.publora_at_once else ""
+        later = (f" It goes to Publora by itself once its time is {pub.max_ahead.days} days away{room}, while the studio is "
+                 "open." if not row["error"] else f" {row['error']}")
         return {"ok": True, "status": "approved", "said": f"Queued: it goes out {summary['when']}.{later}"}
 
     @app.post("/api/post/{post_id}/unqueue")

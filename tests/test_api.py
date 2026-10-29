@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app import guide, images, render
 from app.db import DB, dumps, utcnow
 from app.main import create_app
-from app.publishing import MAX_AHEAD, MIN_LEAD, POST_MAX, Publisher, placeholder_slots
+from app.publishing import MIN_LEAD, POST_MAX, Publisher, placeholder_slots
 from app.skills import ACTIONS, TOOL_KINDS
 
 STATIC = Path(__file__).resolve().parents[1] / "app" / "static"
@@ -460,8 +460,8 @@ def test_the_guide_quotes_the_limits_the_app_enforces(cfg, tmp_path, fake_runner
     with TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin}) as client:
         client.cookies.set("studio_session", TOKEN)
         body = client.get("/api/guide").text
-    assert "counts toward your 7 for the month" in body and f"past {POST_MAX:,} characters" in body
-    assert f"between {int(MIN_LEAD.total_seconds() // 60)} minutes and {MAX_AHEAD.days} days ahead" in body
+    assert "counts toward this month's posts (7 a month)" in body and f"past {POST_MAX:,} characters" in body
+    assert f"between {int(MIN_LEAD.total_seconds() // 60)} minutes and {cfg.publora_days_ahead} days ahead" in body
     assert not re.search(r"\{[a-z_]+\}", body)
 
 

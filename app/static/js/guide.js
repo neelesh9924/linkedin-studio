@@ -107,7 +107,7 @@ function draw() {
       h("div", { class: "panel-body grid cols-2" },
         h("dl", { class: "facts" }, data.shortcuts.map(([keys, what]) => [h("dt", null, h("kbd", null, keys)), h("dd", null, what)])),
         h("dl", { class: "facts" },
-          h("dt", null, "Posts a month"), h("dd", null, `${n.limit}, counted by ${n.tz} calendar month`),
+          h("dt", null, "Your Publora plan"), h("dd", null, `${n.plan_words}; months are counted by the ${n.tz} calendar`),
           h("dt", null, "Post length"), h("dd", null, `${n.target_min} to ${n.target_max} characters reads best; ${n.post_max} is LinkedIn’s limit`),
           h("dt", null, "Before “more”"), h("dd", null, `about ${n.fold} characters`),
           h("dt", null, "Scheduling"), h("dd", null, `${n.min_lead} minutes to ${n.max_days} days ahead`),

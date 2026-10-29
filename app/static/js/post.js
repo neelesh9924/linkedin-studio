@@ -220,7 +220,8 @@ function renderNotice(p) {
   } else if (p.status === "approved" && p.queued) {
     kind = "soft";
     words = [icon("clock", 16), h("div", null, p.when
-      ? `In the queue: it goes out ${p.when}. It goes to Publora by itself ${p.window} days before, while the studio is open; `
+      ? `In the queue: it goes out ${p.when}. It goes to Publora by itself once its time is ${p.window} days away`
+        + `${p.at_once ? ` and your Publora plan has room (it holds ${p.at_once} at a time)` : ""}, while the studio is open; `
         + "the Planner's Coming up moves it. The text and picture are locked: Back to draft unlocks them, and takes it out of the queue."
       : "In the queue, but none of your posting times is free within a year. Settings › Posting times adds days.")];
   } else if (p.status === "approved") {
@@ -331,8 +332,9 @@ function openSchedule() {
   const next = h("button", { class: "btn primary", type: "button" }, "Continue");
   next.addEventListener("click", () => {
     if (!when.value || !when.checkValidity()) {
-      put(err, h("div", { class: "result bad" }, icon("alert", 15), h("div", null, "Pick a time between 2 minutes and 14 days from now.")));
-      announce("Pick a time between 2 minutes and 14 days from now.", { urgent: true });
+      const words = `Pick a time between 2 minutes and ${p.window} days from now.`;
+      put(err, h("div", { class: "result bad" }, icon("alert", 15), h("div", null, words)));
+      announce(words, { urgent: true });
       return void when.focus();
     }
     confirmSchedule(when.value);
@@ -342,7 +344,8 @@ function openSchedule() {
   // The recommended times are your free posting times (Settings › Posting times), after the queue's
   const free = sch.quick.length ? null : h("p", { class: "soft" }, `Every one of your posting times in the next ${p.window} days has a post. Pick any time.`);
   showDialog(h("h2", null, "When should it go out?"),
-    h("p", { class: "soft" }, `${p.used} of ${p.limit} posts used in ${p.month}. Between 2 minutes and 14 days ahead.`),
+    h("p", { class: "soft" }, `${p.limit ? `${p.used} of ${p.limit} posts used in ${p.month}` : `${p.used} posts in ${p.month}`}. `
+      + `Between 2 minutes and ${p.window} days ahead.`),
     publora,
     h("div", { class: "form" }, h("label", { class: "field" }, h("span", { class: "field-label" }, `Date and time (${state.tz})`), when), picks, free),
     err,
@@ -375,7 +378,8 @@ function confirmSchedule(value) {
     focusFirst($("topActions").querySelector("button"), $("postGear"));
   }));
   showDialog(h("h2", null, "Schedule this post?"),
-    h("p", null, h("b", null, inWords(value)), ` ${state.tz}, through Publora. This uses 1 of your ${p.limit} posts for the month (${p.used} used so far).`),
+    h("p", null, h("b", null, inWords(value)), ` ${state.tz}, through Publora.${p.limit
+      ? ` This uses 1 of your ${p.limit} posts for the month (${p.used} used so far).` : ""}`),
     beforeYouConfirm(p, value),
     h("div", { class: "textbox confirm-text", tabindex: "0", "aria-label": "The final text" }, p.text),
     p.picture ? h("img", { class: "confirm-picture", src: p.picture.url, alt: "The picture that goes out with it" }) : null,

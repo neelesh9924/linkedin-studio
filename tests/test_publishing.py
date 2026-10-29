@@ -99,7 +99,8 @@ class FakeClient:
 def setup(cfg, tmp_path):
     db = DB(tmp_path / "t.db")
     client = FakeClient()
-    pub = Publisher(db, with_(cfg, monthly_post_limit=3), client_factory=lambda: client, now=lambda: NOW)
+    # No at-a-time limit here: these tests are about the monthly one (test_posting has the plan's others)
+    pub = Publisher(db, with_(cfg, monthly_post_limit=3, publora_at_once=0), client_factory=lambda: client, now=lambda: NOW)
     return db, pub, client
 
 
@@ -260,7 +261,7 @@ def test_studio_client_makes_exactly_one_http_request_even_on_timeout():
 @pytest.mark.parametrize("value,needle", [
     ("2026-10-07T11:00", "past"),        # 30 min ago IST
     ("2026-10-07T11:31", "past"),        # 1 minute ahead: under the 2-minute lead
-    ("2026-10-21T12:00", "14 days"),     # 14 days + 30 min
+    ("2026-10-14T12:00", "up to 7 days ahead"),     # 7 days + 30 min: Starter's limit
     ("", "Pick a date"),
     ("2026-10-08T09:00+05:30", "without a zone"),
 ])
@@ -272,7 +273,7 @@ def test_bad_times_are_rejected(setup, value, needle):
 
 def test_ist_is_converted_to_utc(setup):
     _db, pub, _c = setup
-    assert pub.parse_local("2026-10-20T23:45") == datetime(2026, 10, 20, 18, 15, tzinfo=timezone.utc)
+    assert pub.parse_local("2026-10-12T23:45") == datetime(2026, 10, 12, 18, 15, tzinfo=timezone.utc)
 
 
 # ---- quota -------------------------------------------------------------------------------
@@ -403,8 +404,8 @@ def test_picture_post_keeps_the_time_window_and_the_quota(setup, picture):
     pid = new_post(db)
     with pytest.raises(ScheduleError, match="past"):
         schedule_with_picture(pub, pid, "2026-10-07T11:00", None, picture)
-    with pytest.raises(ScheduleError, match="14 days"):
-        schedule_with_picture(pub, pid, "2026-10-21T12:00", None, picture)
+    with pytest.raises(ScheduleError, match="7 days"):
+        schedule_with_picture(pub, pid, "2026-10-14T12:00", None, picture)
     for _ in range(3):
         new_post(db, status="scheduled", scheduled_at="2026-10-03T03:30:00+00:00")
     with pytest.raises(ScheduleError, match="Monthly limit reached: 3/3"):
