@@ -2,7 +2,8 @@
 
 The page asks /api/state every two seconds (the posts, the jobs under way, `rev`, which changes
 whenever something it shows was written) and fetches what it shows again only when that changed.
-With check_publora, each ask also kicks the light check (status_check.py), which never holds it up.
+With check_publora, each ask also kicks the light check (status_check.py) and the posting queue's
+pass (posting.py), which never hold it up.
 Each area of the API is its own module: api_posts (a post, its chat, versions and picture),
 api_trash (the posts moved to the Trash), api_pages (Planner, Story Bank & Voice, Tools, Settings,
 setup, the Guide).
@@ -23,7 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import codex, flows, images, mcp, privacy, render
+from . import codex, flows, images, mcp, posting, privacy, render
 from .claude_runner import ClaudeRunner
 from .config import DATA_DIR, HOST, Config, path_problems
 from .db import DB, loads
@@ -39,6 +40,7 @@ ACTIVE = ("queued", "running")
 PROBLEM = ("failed", "unparsed")
 STATUS_LABEL = {"draft": "Draft", "approved": "Approved", "scheduling": "Sending", "scheduled": "Scheduled",
                 "published": "Published", "failed": "Failed", "cancelled": "Cancelled"}
+QUEUED_LABEL = "Queued"     # an approved post waiting in the posting queue; it takes a scheduled post's colour
 STATUS_KIND = {"draft": "", "approved": "ready", "scheduling": "busy", "scheduled": "ok", "published": "ok",
                "failed": "bad", "cancelled": "warn"}
 ORDER = {"draft": 0, "approved": 1, "failed": 2, "scheduling": 3, "scheduled": 4, "published": 5, "cancelled": 6}
@@ -64,6 +66,7 @@ class Studio:
     needs_setup: bool
     tz_label: str
     checker: StatusCheck
+    queue: posting.PostingQueue
     instance: str = field(default_factory=lambda: uuid.uuid4().hex)
     on_quit: Callable[[], None] | None = None
     on_restart: Callable[[], None] | None = None
@@ -84,16 +87,24 @@ class Studio:
         return render.ago(value, self.cfg.tz) if value else ""
 
     # ---- rows the page reads ----
-    def post_summary(self, row) -> dict:
+    def post_summary(self, row, spots: dict | None = None) -> dict:
         """A post as the list, the Planner and the Trash show it. One in the Trash says so (the Planner's card). `link`:
-        a published post on LinkedIn, once Publora gave its address (only ever a https://www.linkedin.com/ one)."""
+        a published post on LinkedIn, once Publora gave its address (only ever a https://www.linkedin.com/ one).
+        A queued post (approved, waiting in the posting queue) says Queued, and `when` is the time the queue gives it:
+        from `spots` (the queue's lineup as a dict) when the caller has it, else worked out here."""
         busy = self.post_busy(row["id"])
         keys = row.keys()
         trashed = bool(row["trashed_at"]) if "trashed_at" in keys else False
         link = linkedin_link(row["published_url"]) if "published_url" in keys and row["status"] == "published" else None
+        queued = not trashed and row["status"] == "approved" and "queue_pos" in keys and row["queue_pos"] is not None
+        label = TRASHED_LABEL if trashed else QUEUED_LABEL if queued else STATUS_LABEL.get(row["status"], row["status"])
+        kind = "" if trashed else STATUS_KIND["scheduled"] if queued else STATUS_KIND.get(row["status"], "")
+        when = self.when(row["scheduled_at"])
+        if queued:
+            at = (spots if spots is not None else dict(self.queue.lineup())).get(row["id"])
+            when = posting.time_words(at, self.cfg.tz, self.tz_label)
         return {"id": row["id"], "title": row["title"], "first": first_line(row["text"]) or "Nothing written yet",
-                "status": row["status"], "label": TRASHED_LABEL if trashed else STATUS_LABEL.get(row["status"], row["status"]),
-                "kind": "" if trashed else STATUS_KIND.get(row["status"], ""), "when": self.when(row["scheduled_at"]),
+                "status": row["status"], "label": label, "kind": kind, "when": when, "queued": queued,
                 "scheduled_at": row["scheduled_at"], "picture": bool(row["picture_id"]), "busy": busy, "trashed": trashed,
                 "link": link}
 
@@ -156,7 +167,8 @@ class Studio:
 def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: ClaudeRunner | None = None,
                publisher: Publisher | None = None, check_publora: bool = False,
                on_quit: Callable[[], None] | None = None, on_restart: Callable[[], None] | None = None) -> FastAPI:
-    """`check_publora`: the light check asks Publora whether due posts went out (status_check.py). Off unless asked
+    """`check_publora`: the studio reaches Publora by itself: the light check asks whether due posts went out
+    (status_check.py), and the posting queue sends a queued post once its time is near (posting.py). Off unless asked
     for: launch.py, `python -m app` and the demo turn it on; the tests' studios never reach Publora by themselves."""
     if HOST != "127.0.0.1":
         raise RuntimeError("LinkedIn Studio only binds 127.0.0.1.")
@@ -172,9 +184,10 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
     pub = publisher or Publisher(db, cfg)
     health = Health(db, cfg)
     checker = StatusCheck(db, pub, enabled=check_publora and not needs_setup)   # never during setup
+    queue = posting.PostingQueue(db, pub, enabled=check_publora and not needs_setup)
     studio = Studio(cfg=cfg, db=db, jobs=jobs, pub=pub, health=health, protection=protection,
                     needs_setup=needs_setup, tz_label=datetime.now(cfg.tz).tzname() or "", checker=checker,
-                    on_quit=on_quit, on_restart=on_restart)
+                    queue=queue, on_quit=on_quit, on_restart=on_restart)
     tools = mcp.Studio(db=db, cfg=cfg, fetch_post=flows.fetch_post_text)
 
     @asynccontextmanager
@@ -199,7 +212,7 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     app.state.studio, app.state.tools = studio, tools
     app.state.db, app.state.jobs, app.state.publisher, app.state.health = db, jobs, pub, health
-    app.state.checker = checker
+    app.state.checker, app.state.queue = checker, queue
 
     @app.get("/health")
     def health_check():
@@ -214,14 +227,24 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
         studio.seq += 1
         rows = db.all("SELECT * FROM posts WHERE trashed_at IS NULL")   # the Trash's are on its own page
         checker.kick(rows)   # in the background, when a scheduled post is due: this answer never waits for Publora
-        rows.sort(key=lambda r: (ORDER.get(r["status"], 9),
-                                 (r["scheduled_at"] or "") if r["status"] in ("scheduling", "scheduled") else "",
-                                 -r["id"] if r["status"] not in ("scheduling", "scheduled") else 0))
+        queue.kick()         # likewise, when a queued post's time is near
+        spots = dict(queue.lineup())
+
+        def goes_out(r) -> str:
+            """A scheduled post's time, or the time the queue gives a queued one; "" for any other post."""
+            if r["status"] in ("scheduling", "scheduled"):
+                return r["scheduled_at"] or ""
+            spot = spots.get(r["id"]) if r["status"] == "approved" else None
+            return spot.isoformat(timespec="seconds") if spot else ""
+
+        # Drafts first, newest first, then approved and failed ones; then what goes out, in time order (the queued
+        # posts among the scheduled ones); then published and cancelled.
+        rows.sort(key=lambda r: (ORDER["scheduled"], goes_out(r), 0) if goes_out(r) else (ORDER.get(r["status"], 9), "", -r["id"]))
         active = [studio.job_public(r) for r in jobs.active()]
         ended = db.all("SELECT * FROM jobs WHERE status NOT IN ('queued','running') AND finished_at IS NOT NULL "
                        "ORDER BY finished_at DESC, id DESC LIMIT 12")
         return {"seq": studio.seq, "rev": db.rev, "instance": studio.instance, "setup": needs_setup,
-                "tz": studio.tz_label, "posts": [studio.post_summary(r) for r in rows], "jobs": active,
+                "tz": studio.tz_label, "posts": [studio.post_summary(r, spots) for r in rows], "jobs": active,
                 "ended": [studio.job_public(r) for r in ended], "chatgpt": codex.chatgpt_ready(),
                 "target": TARGET, "slot": SLOT.pattern}
 

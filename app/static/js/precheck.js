@@ -1,8 +1,10 @@
-// Before you confirm: in the Schedule… dialog's final check, what is worth a second look before the post goes to Publora,
-// each with what to do about it. It only warns: nothing here stops Schedule it, and the studio's own refusals stay as
-// they are. It reads the post as the page already has it, with the studio's blanks pattern and LinkedIn's limit
-// (state.slot, state.target), and the time picked as the dialog has it: "YYYY-MM-DDTHH:MM", in the studio's time zone,
-// which is this PC's own (the studio and its window run on the same PC).
+// Before you confirm: in the Schedule… dialog's final check, and before a post joins the posting queue, what is worth a
+// second look before the post goes to Publora, each with what to do about it. It only warns: nothing here stops Schedule
+// it or the queue, and the studio's own refusals stay as they are. It reads the post as the page already has it, with
+// the studio's blanks pattern and LinkedIn's limit (state.slot, state.target), and the time picked as the dialog has it:
+// "YYYY-MM-DDTHH:MM", in the studio's time zone, which is this PC's own (the studio and its window run on the same PC).
+// The queue picks no time (value null): nothing is said about one. A draft (Approve and queue) is told what to do in a
+// draft's words: Not yet, then the fix, where an approved post goes Back to draft first.
 import { state, h, icon, number, plural } from "./core.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -12,6 +14,10 @@ const DAY = 24 * 60;            // minutes
 const WEEK = 7 * DAY;
 const LINK = /\bhttps?:\/\/[^\s<>"]+|\bwww\.[a-z0-9-]+\.[^\s<>"]+/i;
 const FEW = 3;                  // this month's posts left after this one, at most, before it says so
+
+// How a fix starts: an approved post goes back to draft first; a draft waits (Not yet) and is fixed as it is.
+const fix = (p, words, again = true) => (p.status === "draft" ? `Press Not yet, then ${words}.`
+  : `Back to draft to ${words}${again ? ", then approve it again" : ""}.`);
 
 // The section, or null when nothing applies.
 export function beforeYouConfirm(p, value) {
@@ -39,8 +45,8 @@ function blanks(p) {
   const where = inText.length && inComment.length ? "The text and the first comment still have"
     : inText.length ? "The text still has" : "The first comment still has";
   const one = all.length === 1;
-  return `${where} ${one ? "a blank" : `${number(all.length)} blanks, such as`} ${all[0]}. Back to draft to fill `
-    + `${one ? "it in or cut it" : "them in or cut them"}, then approve it again.`;
+  return `${where} ${one ? "a blank" : `${number(all.length)} blanks, such as`} ${all[0]}. `
+    + fix(p, `fill ${one ? "it in or cut it" : "them in or cut them"}`);
 }
 
 function tooLong(p) {
@@ -48,14 +54,13 @@ function tooLong(p) {
   const hard = state.target && state.target.hard;
   const chars = String(p.text || "").length;
   if (hard && chars > hard) {
-    out.push(`The text is ${number(chars)} characters; LinkedIn takes ${number(hard)}. Back to draft to cut `
-      + `${number(chars - hard)}, then approve it again.`);
+    out.push(`The text is ${number(chars)} characters; LinkedIn takes ${number(hard)}. ${fix(p, `cut ${number(chars - hard)}`)}`);
   }
   const max = p.first_comment_max;
   const comment = String(p.first_comment || "").trim().length;
   if (max && comment > max) {
-    out.push(`The first comment is ${number(comment)} characters; LinkedIn takes ${number(max)}. Back to draft to cut `
-      + `${number(comment - max)} from it.`);
+    out.push(`The first comment is ${number(comment)} characters; LinkedIn takes ${number(max)}. `
+      + fix(p, `cut ${number(comment - max)} from it`, false));
   }
   return out;
 }
@@ -65,14 +70,14 @@ function link(p) {
   if (!found) return "";
   const url = found[0].replace(/[).,;:!?'"’”]+$/, "");
   return `The text has a link in it (${url.length > 48 ? `${url.slice(0, 47)}…` : url}). A link reads better as the `
-    + "first comment: Back to draft to move it there.";
+    + `first comment. ${fix(p, "move it there", false)}`;
 }
 
 function picture(p) {
   const kept = Array.isArray(p.pictures) ? p.pictures.length : 0;
   if (!kept || p.picture) return "";
-  return `It goes out without a picture, though ${kept === 1 ? "one is" : `${number(kept)} are`} kept with it. To send one, `
-    + "Back to draft and choose Use as the picture beside the post.";
+  return `It goes out without a picture, though ${kept === 1 ? "one is" : `${number(kept)} are`} kept with it. To send one: `
+    + fix(p, "choose Use as the picture beside the post", false);
 }
 
 // A time already gone, and one far from the week plan's day and time for this post (a weekday and a time: the nearest

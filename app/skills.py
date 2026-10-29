@@ -130,12 +130,16 @@ def _profile(p: dict) -> str:
 
 
 def _plan(p: dict) -> str:
+    days = p.get("days") or {}     # the owner's posting times (posting.py): one post for each day, at its time
+    count = (f"Number of posts: {len(days)}, one for each of the owner's posting days, on that day and at that time: "
+             + ", ".join(f"{d.capitalize()} {_am_pm(t)}" for d, t in days.items()) if days
+             else f"Number of posts: {p['max_posts']} (the skill's 3-5 per week rule)")
     lines = [
         "Run the linkedin-content-planner skill to plan the next 7 days.",
         f"Audience: {p['audience']}",
         f"Goal for the week: {p['goal']}",
         f"Theme: {p.get('theme') or 'none given; draw on the Story Bank'}",
-        f"Number of posts: {p['max_posts']} (the skill's 3-5 per week rule)",
+        count,
         f"Plan type: {'founders edition' if p.get('founder') else 'general'}",
     ]
     return "\n".join(lines) + _json_spec(
@@ -143,6 +147,12 @@ def _plan(p: dict) -> str:
         '"angle": "<one line>", "cta": "...", "goal": "comments|reposts|likes|saves", "bank_section": "<or null>"}], '
         '"comment_targets": [{"day": "Tue", "who": "<3-5 creators or archetypes>", "pattern": "<comment pattern>"}], '
         '"readiness": [{"check": "<one inbound-readiness check>", "ok": true}], "notes": ["...", ...]}')
+
+
+def _am_pm(hhmm: str) -> str:
+    """"08:00" as the plan's own way of writing a time, "8:00 AM"."""
+    hour, minute = map(int, hhmm.split(":"))
+    return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
 
 def _draft(p: dict) -> str:

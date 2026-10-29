@@ -1,8 +1,9 @@
-// A post at the top: its title, where it stands (the chip, drawn again after each poll), and the one next step (Approve
-// this text, then Schedule…, then Check now, which asks Publora whether it went out; Open on LinkedIn and New draft from
-// this once it is published); the gear (its title, its versions to compare with now and go back to, its earlier chats,
-// Cancel on Publora, New draft from this, Move to Trash…); and the Schedule… dialog (a time, then the final text,
-// picture, time and first comment to confirm).
+// A post at the top: its title, where it stands (the chip, drawn again after each poll), and the next step (Approve and
+// queue, which gives it the next free posting time, or Approve only, then Add to queue or Schedule… for a time of its
+// own; Take out of the queue while it waits; Check now once it is at Publora, which asks whether it went out; Open on
+// LinkedIn and New draft from this once it is published); the gear (its title, its versions to compare with now and go
+// back to, its earlier chats, Cancel on Publora, New draft from this, Move to Trash…); and the Schedule… dialog (a time,
+// then the final text, picture, time and first comment to confirm).
 import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, drawIfChanged, showDialog,
   closeDialog, closeButton, setTitle, go, toast, onPoll, currentPost } from "./core.js";
 import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor.js";
@@ -76,7 +77,7 @@ function renderTop(p) {
   drawChip(p);
   $("postGear").hidden = false;
   const actions = $("topActions");
-  drawIfChanged(actions, JSON.stringify([p.id, p.status, p.busy, p.when, p.can_retry, p.can_back, p.slots, p.link]), () => {
+  drawIfChanged(actions, JSON.stringify([p.id, p.status, p.queued, p.busy, p.when, p.can_retry, p.can_back, p.slots, p.link]), () => {
     const on = actions.contains(document.activeElement) ? document.activeElement.dataset.act : null;
     put(actions, ...mainActions(p));
     if (on) focusFirst(actions.querySelector(`[data-act="${on}"]`), actions.querySelector("button, a"), $("postGear"));
@@ -114,10 +115,16 @@ function act(label, kind, name, work, glyph) {
 function mainActions(p) {
   switch (p.status) {
     case "draft":
-      return [act("Approve this text", "primary", "approve", approve, "check")];
+      return [act("Approve only", "", "approve", approve),
+        act("Approve and queue", "primary", "queue", queueIt, "check")];
     case "approved":
+      if (p.queued) {
+        return [act("Back to draft", "ghost", "back", () => change("unapprove", "Back in draft, and out of the queue. You can edit it again.")),
+          act("Take out of the queue", "", "unqueue", () => change("unqueue", "Out of the queue. It stays approved."), "x")];
+      }
       return [act("Back to draft", "ghost", "back", () => change("unapprove", "Back in draft. You can edit it again.")),
-        act("Schedule…", "primary", "schedule", () => openSchedule(), "clock")];
+        act("Schedule…", "", "schedule", () => openSchedule(), "clock"),
+        act("Add to queue", "primary", "queue", queueIt, "list")];
     case "scheduling":
       return [h("span", { class: "top-when" }, h("i", { class: "pulse" }), "Sending to Publora…")];
     case "scheduled": {   // its time is in the chip, once
@@ -210,11 +217,18 @@ function renderNotice(p) {
   } else if (p.waiting) {
     kind = "soft";
     words = [icon(p.waiting.failed ? "alert" : "clock", 16), h("div", null, p.waiting.text)];
+  } else if (p.status === "approved" && p.queued) {
+    kind = "soft";
+    words = [icon("clock", 16), h("div", null, p.when
+      ? `In the queue: it goes out ${p.when}. It goes to Publora by itself ${p.window} days before, while the studio is open; `
+        + "the Planner's Coming up moves it. The text and picture are locked: Back to draft unlocks them, and takes it out of the queue."
+      : "In the queue, but none of your posting times is free within a year. Settings › Posting times adds days.")];
   } else if (p.status === "approved") {
     kind = "soft";
-    words = [icon("lock", 16), h("div", null, "Approved: the text and picture are locked. Back to draft unlocks them.")];
+    words = [icon("lock", 16), h("div", null, "Approved: the text and picture are locked. Add to queue gives it your next free "
+      + `posting time (${p.posting}); Schedule… picks a time of its own. Back to draft unlocks them.`)];
   }
-  drawIfChanged(box, JSON.stringify([refused, p.busy, p.error, p.status, p.slots, heard && heard.words, p.waiting]), () => {
+  drawIfChanged(box, JSON.stringify([refused, p.busy, p.error, p.status, p.queued, p.when, p.slots, heard && heard.words, p.waiting]), () => {
     box.hidden = !words;
     box.className = `notice ${kind}`.trim();
     if (words) put(box, words);
@@ -236,11 +250,49 @@ async function approve() {
     refuse(reply.error);
     announce(reply.error, { urgent: true });
   } else {
-    announce("Approved. Pick a time and schedule it.");
+    announce("Approved. Add it to the queue, or pick a time with Schedule….");
     window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
   }
   await refresh();
-  if (!reply.error) focusFirst($("topActions").querySelector('[data-act="schedule"]'));
+  if (!reply.error) focusFirst($("topActions").querySelector('[data-act="queue"]'));
+}
+
+// Approve and queue (a draft) and Add to queue (an approved post): one press. It goes in at the end of the line and takes
+// the next free posting time; one inside the window goes to Publora at once. Before you confirm's warnings come first,
+// when there are any (a link in the text, a picture kept but not on the post): then it asks. A draft with a blank left is
+// refused by the studio as Approve refuses it, with Next blank.
+async function queueIt() {
+  if (!shown) return;
+  refused = "";
+  const p = shown;
+  if (p.status === "draft") {
+    const saved = await saveNow();
+    if (saved && saved.error) return;
+  }
+  const check = p.status === "draft" && p.slots ? null : beforeYouConfirm(p, null);
+  if (!check) return sendToQueue(p);
+  const yes = h("button", { class: "btn primary", type: "button" }, icon("check", 15), h("span", null, p.status === "draft" ? "Approve and queue" : "Add to queue"));
+  yes.addEventListener("click", () => whileBusy(yes, async () => {
+    closeDialog();
+    await sendToQueue(p);
+  }));
+  showDialog(h("h2", null, "Queue it as it is?"), h("p", null, `It takes your next free posting time (${p.posting}).`), check,
+    h("div", { class: "dialog-foot" }, closeButton("Not yet"), yes));
+}
+
+async function sendToQueue(p) {
+  const reply = await post(`/api/post/${p.id}/queue`, {});
+  if (reply.error && reply.ok === undefined) {
+    refuse(reply.error);
+    announce(reply.error, { urgent: true });
+  } else if (reply.ok === false) {
+    announce(`It did not go through: ${reply.error} Try again resends the very same request.`, { urgent: true });
+  } else {
+    announce(reply.said);
+    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
+  }
+  await refresh();
+  focusFirst($("topActions").querySelector("button"), $("postGear"));
 }
 
 async function change(what, said) {
@@ -287,10 +339,12 @@ function openSchedule() {
   });
   const publora = p.publora.key ? null : h("div", { class: "result warn" }, icon("alert", 15),
     h("div", null, "Add your Publora key to linkedin-skills\\.env before scheduling."));
+  // The recommended times are your free posting times (Settings › Posting times), after the queue's
+  const free = sch.quick.length ? null : h("p", { class: "soft" }, `Every one of your posting times in the next ${p.window} days has a post. Pick any time.`);
   showDialog(h("h2", null, "When should it go out?"),
     h("p", { class: "soft" }, `${p.used} of ${p.limit} posts used in ${p.month}. Between 2 minutes and 14 days ahead.`),
     publora,
-    h("div", { class: "form" }, h("label", { class: "field" }, h("span", { class: "field-label" }, `Date and time (${state.tz})`), when), picks),
+    h("div", { class: "form" }, h("label", { class: "field" }, h("span", { class: "field-label" }, `Date and time (${state.tz})`), when), picks, free),
     err,
     h("div", { class: "dialog-foot" }, closeButton("Cancel"), next));
 }

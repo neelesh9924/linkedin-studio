@@ -1,4 +1,4 @@
-// The Guide: the routine as steps to click through, what happens while Claude works, a post's four states, an editor
+// The Guide: the routine as steps to click through, what happens while Claude works, a post's five states, an editor
 // to practise in, each screen with its picture, and the keys and limits. Its words come from app/guide.py, with the
 // figures the code enforces; its pictures (static/guide/, taken on the demo by dev/guide_shots.py) follow the theme,
 // and a click shows one large.
@@ -85,7 +85,7 @@ function draw() {
   put(box, h("div", { class: "page-width" },
     h("p", { class: "lede" }, "LinkedIn Studio turns what you know into LinkedIn posts. The routine has four rhythms: once, every week, every post and every day. Click a step to see what you do there."),
     h("nav", { class: "jump", "aria-label": "On this page" }, [["routine", "The routine"], ["working", "When Claude is working"],
-      ["states", "A post’s four states"], ["try", "Try the editor"], ["screens", "Screen by screen"], ["numbers", "Keys and limits"]]
+      ["states", "A post’s five states"], ["try", "Try the editor"], ["screens", "Screen by screen"], ["numbers", "Keys and limits"]]
       .map(([id, label]) => h("a", { href: "#~guide", onclick: (event) => {
         event.preventDefault();
         box.querySelector(`#guide-${id}`).scrollIntoView({ block: "start" });
@@ -156,7 +156,7 @@ function states() {
   });
   pick(0);
   return h("section", { class: "panel", id: "guide-states" }, h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("check", 17)),
-    h("div", null, h("h2", null, "A post’s four states"), h("p", null, "The chip beside a post’s title says which."))),
+    h("div", null, h("h2", null, "A post’s five states"), h("p", null, "The chip beside a post’s title says which."))),
     h("div", { class: "panel-body" }, tabs, panel,
       h("div", { class: "result soft" }, icon("info", 15), h("div", null, "If the request to Publora fails, the post shows Failed with Try again. Try again resends the very same request, so it cannot post twice."))));
 }

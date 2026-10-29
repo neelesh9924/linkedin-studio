@@ -1,5 +1,5 @@
-"""The API of one post: the editor's actions, its chat, its versions and its picture, sending it to Publora, and
-moving it to the Trash (api_trash.py has the Trash itself).
+"""The API of one post: the editor's actions, its chat, its versions and its picture, sending it to Publora or putting
+it in the posting queue (posting.py), and moving it to the Trash (api_trash.py has the Trash itself).
 
 Every endpoint of a post asks `find` for it: one that is gone, or in the Trash, is refused in the same words. A post
 in the Trash keeps everything (its state, versions, chat, pictures and plan link) and nothing here can change it.
@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 
-from . import attached, attachments, images, render, style, versions
+from . import attached, attachments, images, posting, render, style, versions
 from .db import dumps, loads, utcnow
 from .flows import add_message
 from .main import ACTIVE, PROBLEM, Studio
@@ -80,22 +80,15 @@ def register(app: FastAPI, s: Studio) -> None:
         return job["status"] in ACTIVE or (job["status"] in PROBLEM and not job["acked"])
 
     def quick_times(now_local: datetime) -> list[dict]:
-        """Posting slots the skills recommend (Tue-Thu mornings), plus tomorrow morning."""
-        slots = []
-        for weekday, hour, minute in ((1, 8, 0), (2, 9, 30), (3, 8, 0)):
-            slot = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            slot += timedelta(days=(weekday - slot.weekday()) % 7)
-            if slot <= now_local + MIN_LEAD + timedelta(minutes=5):
-                slot += timedelta(days=7)
-            slots.append(slot)
+        """Schedule…'s recommended times: the first free posting times (Settings › Posting times) after the queue's,
+        within the window. None when every posting day in it has a post."""
         tomorrow = (now_local + timedelta(days=1)).date()
-        if all(slot.date() != tomorrow for slot in slots):
-            slots.append((now_local + timedelta(days=1)).replace(hour=8, minute=30, second=0, microsecond=0))
         picks = []
-        for slot in sorted(slots):
-            text = render.local_time(slot.astimezone(timezone.utc).isoformat(), cfg.tz)
-            day = "Today" if slot.date() == now_local.date() else "Tomorrow" if slot.date() == tomorrow else None
-            picks.append({"value": slot.strftime("%Y-%m-%dT%H:%M"), "label": f"{day}, {text.split(', ')[1]}" if day else text})
+        for slot in s.queue.next_free(4):
+            local = slot.astimezone(cfg.tz)
+            text = render.local_time(slot.isoformat(), cfg.tz)
+            day = "Today" if local.date() == now_local.date() else "Tomorrow" if local.date() == tomorrow else None
+            picks.append({"value": local.strftime("%Y-%m-%dT%H:%M"), "label": f"{day}, {text.split(', ')[1]}" if day else text})
         return picks
 
     def revision_public(job, post) -> dict:
@@ -139,8 +132,9 @@ def register(app: FastAPI, s: Studio) -> None:
         status = row["status"]
         trash_why = trash_refusal(row, s.post_working(pid))
         due = due_now(row, now)
+        summary = s.post_summary(row)
         return {
-            **s.post_summary(row),
+            **summary,
             "text": row["text"], "first_comment": row["first_comment"] or "", "formula": row["formula"] or "",
             "notes": [str(n) for n in loads(row["notes"], []) or [] if n],
             "audit": audit, "audit_job": s.job_public(audit_job) if audit_job else None,
@@ -161,6 +155,9 @@ def register(app: FastAPI, s: Studio) -> None:
             "can_retry": status == "failed" and not row["publora_post_id"] and bool(row["publora_payload"]),
             "can_back": status in ("approved", "failed") and not row["publora_post_id"],
             "plan": plan, "versions": db.one("SELECT COUNT(*) AS n FROM versions WHERE post_id=?", (pid,))["n"],
+            # The posting queue: Approve and queue on a draft, Add to queue on an approved post, Take out on a queued one
+            "can_queue": status in ("draft", "approved") and not summary["queued"],
+            "posting": posting.words(s.queue.times()), "window": MAX_AHEAD.days,
             # A scheduled post whose time has passed: what the light check last heard (status_check.py), for its notice.
             "waiting": s.checker.notice(pid, s.clock) if due else None,
         }
@@ -301,15 +298,7 @@ def register(app: FastAPI, s: Studio) -> None:
         return {"ok": True}
 
     def picture_of(row) -> dict | None:
-        """The post's chosen picture as publishing.py takes it: {path, name, mime, sha256}; None for none."""
-        if not row["picture_id"]:
-            return None
-        image = db.one("SELECT * FROM images WHERE id=? AND post_id=?", (row["picture_id"], row["id"]))
-        path = images.path_of(db, image)
-        if path is None:
-            raise ScheduleError("The post's picture is missing from the images folder. Take it off the post, or choose another.")
-        return {"path": str(path), "name": f"linkedin-studio-{row['id']}-{image['id']}{path.suffix}", "mime": image["mime"],
-                "sha256": image["sha256"]}
+        return posting.picture_of(db, row)
 
     @app.post("/api/post/{post_id}/approve")
     def post_approve(post_id: int, data: dict = Body(default={})):
@@ -327,7 +316,76 @@ def register(app: FastAPI, s: Studio) -> None:
 
     @app.post("/api/post/{post_id}/unapprove")
     def post_unapprove(post_id: int):
-        return transition(post_id, lambda: pub.back_to_draft(post_id))
+        return transition(post_id, lambda: pub.back_to_draft(post_id))   # a queued post leaves the queue with it
+
+    # ---- the posting queue (posting.py) ------------------------------------------------
+    @app.post("/api/post/{post_id}/queue")
+    def post_queue(post_id: int, data: dict = Body(default={})):
+        """Approve and queue (a draft: saved and approved as Approve does it, then queued) or Add to queue (an approved
+        post): at the end of the line, where it takes the next free posting time. A post whose time is inside the
+        window goes to Publora at once; the answer says when it goes out, in words."""
+        row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        # No final dialog shows the first comment here, so what Schedule… only warns about is refused: a blank left in
+        # it, or more than LinkedIn takes.
+        comment = str((data["first_comment"] if isinstance(data.get("first_comment"), str) else row["first_comment"]) or "").strip()
+        fix = "first" if row["status"] == "draft" else "after Back to draft"
+        if placeholder_slots(comment):
+            return fail(f"The first comment still has a blank, such as {placeholder_slots(comment)[0]}. Fill it in or cut it "
+                        f"{fix}.", 409)
+        if len(comment) > FIRST_COMMENT_MAX:
+            return fail(f"The first comment is {len(comment):,} characters; LinkedIn takes {FIRST_COMMENT_MAX:,}. Cut it {fix}.", 409)
+        if row["status"] == "draft":
+            done = post_approve(post_id, data)
+            if not isinstance(done, dict):
+                return done                    # refused as Approve is: a blank left, too long, Claude at work on it
+        elif row["status"] != "approved" or row["queue_pos"] is not None:
+            return fail("It is in the queue already." if row["queue_pos"] is not None
+                        else "Only a draft or an approved post can join the queue.", 409)
+        if not s.queue.add(post_id):
+            return fail("The post changed just now, so it did not join the queue. Look at it again.", 409)
+        s.queue.send_due()
+        row = get_post(post_id)
+        summary = s.post_summary(row)
+        if row["status"] in ("scheduling", "scheduled"):
+            return {"ok": True, "status": row["status"], "said": f"Queued, and handed to Publora: it goes out {summary['when']}."}
+        if row["status"] == "failed":
+            return {"ok": False, "status": "failed", "error": row["error"] or "Publora did not take it."}
+        if not summary["when"]:
+            return {"ok": True, "status": "approved",
+                    "said": "Queued, but no posting time is free within a year. Settings › Posting times adds days."}
+        later = (f" It goes to Publora by itself {MAX_AHEAD.days} days before, while the studio is open."
+                 if not row["error"] else f" {row['error']}")
+        return {"ok": True, "status": "approved", "said": f"Queued: it goes out {summary['when']}.{later}"}
+
+    @app.post("/api/post/{post_id}/unqueue")
+    def post_unqueue(post_id: int):
+        """Take out of the queue: it stays approved, with no time."""
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        if not s.queue.take_out(post_id):
+            return fail("This post is not waiting in the queue.", 409)
+        return {"ok": True}
+
+    @app.post("/api/queue/move")
+    def queue_move(data: dict = Body(default={})):
+        """A queued post one place up or down the line, or to its front; the others keep their order."""
+        how = str(data.get("how") or "")
+        if how not in ("up", "down", "first"):
+            return fail("Move it up, down or to the front.")
+        try:
+            post_id = int(data.get("id") or 0)
+        except (TypeError, ValueError):
+            return fail("Say which post.")
+        _row, refusal = find(post_id)
+        if refusal is not None:
+            return refusal
+        if not s.queue.move(post_id, how):
+            return fail("It cannot move that way: it is not waiting in the queue, or it is at that end already.", 409)
+        s.queue.send_due()                     # one moved to the front may now be inside the window
+        return {"ok": True}
 
     # A post's picture goes out with it through Publora's own upload (publishing.py); without one it is the single
     # keyed request as before. Either way exactly once, and Retry carries on from where it stopped.
@@ -386,7 +444,7 @@ def register(app: FastAPI, s: Studio) -> None:
         if why:
             return fail(why, 409)
         # Checked again in the one statement that moves it, so nothing that started meanwhile is overtaken.
-        moved = db.run("UPDATE posts SET trashed_at=? WHERE id=? AND trashed_at IS NULL "
+        moved = db.run("UPDATE posts SET trashed_at=?, queue_pos=NULL WHERE id=? AND trashed_at IS NULL "
                        "AND status NOT IN ('scheduling','scheduled','published') "
                        "AND (media IS NULL OR NOT json_valid(media) OR json_extract(media, '$.postGroupId') IS NULL) "
                        "AND NOT EXISTS (SELECT 1 FROM jobs WHERE status IN ('queued','running') "

@@ -3,10 +3,10 @@
     .venv\\Scripts\\python dev\\guide_shots.py [--port 8795]
 
 It starts dev/demo_server.py itself, in a folder with no user name in its path, uses the page the way a person would
-and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Schedule…, the Planner's week board
-with Draft all,
-Story Bank & Voice, Tools with a result, and the Trash when the page has one (a demo draft is moved there through the
-API first). Each picture is the window at 1200 x 750, saved small as WebP by Chrome's own capture into app/static/guide/,
+and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Schedule…, the Planner (Coming up,
+with the demo's approved post and a few made-up ones queued on two posting days, so one waits beyond the window, then
+the week board with Draft all), Story Bank & Voice, Tools with a result, and the Trash when the page has one (a demo
+draft is moved there through the API first). Each picture is the window at 1200 x 750, saved small as WebP by Chrome's own capture into app/static/guide/,
 where the Guide shows them (app/guide.py SHOT_WORDS). Retake them when a screen changes.
 
 It never pictures Settings, the setup screen or the Planner's Claude card (they show folders and the account), and it
@@ -38,6 +38,13 @@ QUALITY = 72                      # WebP quality: about 30 to 60 KB a picture
 # The Trash's API, when the page has one: its list, and moving a post there.
 TRASH_LIST, TRASH_MOVE = "/api/trash", "/api/post/{id}/trash"
 DRAFT = "On 14 March"            # the demo's draft (dev/demo_server.py seed)
+# Made-up posts for the queue's picture: approved and queued after the demo's own, as many as fill the window and one more.
+QUEUED = ["A retry without a limit is an outage waiting for a reason.\n\nThree rules I now put on every retry loop.",
+          "Feature flags are cheap to add and expensive to forget.\n\nHow we clear ours out every quarter.",
+          "The review comment I leave most often is one word: why?\n\nWhat it does to a pull request.",
+          "Every dashboard starts with one chart nobody asked for.\n\nHow we decide which ones stay.",
+          "Writing the rollback plan first makes the release plan shorter.\n\nThe three lines we write before a deploy.",
+          "A meeting with no written question at the top is a status update in disguise.\n\nWhat we put there instead."]
 
 
 def neutral_folder() -> Path:
@@ -170,16 +177,23 @@ def take(page: Page) -> list[Path]:
     cam.both("schedule")
     page.keyboard.press("Escape")
 
-    # The Planner's week board from This week's title down, Draft all's bar under it (the demo's plan has two cards
-    # without a draft); whatever is above the title stays out of the window.
+    # The queue: two posting days; the approved post queued, then made-up ones until one waits beyond the window.
+    api(page, "POST", "/api/posting", {"times": {"tue": "08:00", "thu": "08:00"}})
+    api(page, "POST", f"/api/post/{post_id(page, status='approved')}/queue")
+    _code, planner = api(page, "GET", "/api/planner")
+    for text in QUEUED[: sum(1 for c in planner["coming"] if c["kind"] == "free") + 1]:
+        _code, made = api(page, "POST", "/api/posts/new")
+        api(page, "POST", f"/api/post/{made['id']}/save", {"text": text})
+        api(page, "POST", f"/api/post/{made['id']}/queue")
+
+    # The Planner from the top: Coming up (the posts at Publora, the one queued beyond the window with its buttons), then
+    # This week's title, Draft all's bar and the cards (the demo's plan has two cards without a draft).
     open_(page, "#~planner")
-    page.wait_for_selector("#plannerPage .board")
+    page.wait_for_selector("#coming-up .coming-row.queued")
     page.wait_for_selector("#plannerPage .draft-all")
-    page.evaluate("""() => {
-      let el = document.querySelector('#plannerPage .board');
-      while (el.previousElementSibling && !el.classList.contains('section-title')) el = el.previousElementSibling;
-      el.scrollIntoView({ block: 'start' });
-    }""")
+    page.wait_for_function("""() => [...document.querySelectorAll('#list .sub')].some((s) => s.textContent.startsWith('Queued'))
+      && ![...document.querySelectorAll('#list .sub')].some((s) => s.textContent.startsWith('Sending'))""")
+    page.evaluate("() => document.querySelector('#plannerPage').scrollTo(0, 0)")
     page.wait_for_timeout(300)
     cam.both("planner")
 

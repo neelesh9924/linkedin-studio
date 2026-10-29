@@ -31,7 +31,8 @@ LANES = [
     {"label": "Every week", "note": "Under a minute of waiting", "steps": [
         {"id": "plan", "shot": "planner", "title": "Plan the week", "icon": "calendar", "where": "Planner", "href": "#~planner",
          "claude": "Runs Claude, under a minute", "demo": "plan",
-         "do": ["Say who you write for and what the week should achieve.", "Pick 3, 4 or 5 posts.",
+         "do": ["Say who you write for and what the week should achieve.",
+                "It plans one post for each of your posting days (Settings, Posting times), on that day and at its time.",
                 "Press Plan the week. You can leave the page while it runs."],
          "gives": "One card per post with a day, an angle and a hook formula, plus who to comment on each day."},
     ]},
@@ -67,14 +68,29 @@ LANES = [
                 "writes the same post in them, and they become that post's own style.",
                 "A revision shows every change word by word. Nothing is replaced until you choose Use this version."],
          "gives": "Either a pass, or a short list of concrete fixes."},
-        {"id": "approve", "shot": "post", "title": "Approve", "icon": "check", "where": "The post's top bar", "href": "#~posts",
-         "claude": "", "demo": "approve",
-         "do": ["Press Approve this text.", "It is refused while a blank remains, or past {post_max} characters.",
-                "Approved text and picture are locked. Back to draft unlocks them."],
-         "gives": "A final post that cannot change by accident."},
-        {"id": "schedule", "shot": "schedule", "title": "Schedule", "icon": "send", "where": "The post's top bar", "href": "#~posts",
-         "claude": "", "demo": "schedule",
-         "do": ["Press Schedule…, pick a time or tap a recommended slot.",
+        {"id": "approve", "shot": "post", "title": "Approve and queue", "icon": "check", "where": "The post's top bar",
+         "href": "#~posts", "claude": "", "demo": "approve",
+         "do": ["Press Approve and queue. It is refused while a blank remains, or past {post_max} characters.",
+                "It takes your next free posting time (Settings, Posting times): one post a day at most, and no more "
+                "than {limit} a month. A link in the text, or a picture kept but not on the post, is worth a second "
+                "look: it asks first.",
+                "Approved text and picture are locked. Back to draft unlocks them, and takes the post out of the queue.",
+                "Approve only locks the text with no time: then Add to queue, or Schedule… for a time of its own."],
+         "gives": "A final post with its day, and no time to pick."},
+        {"id": "queue", "shot": "planner", "title": "The queue", "icon": "calendar", "where": "Planner, Coming up",
+         "href": "#~planner", "claude": "", "demo": "queue",
+         "do": ["Coming up lists what goes out when: the posts at Publora with their times, then your queued posts in "
+                "line order, and the posting times still free.",
+                "Move up, Move down and First in line change a queued post's place. Take out leaves it approved, "
+                "with no time.",
+                "A queued post goes to Publora by itself {max_days} days before its time, while the studio is open: "
+                "open it at least once a fortnight. A post already at Publora goes out even with this PC off.",
+                "Cancel on Publora, in a post's gear, frees its day: the next in line takes it."],
+         "gives": "Your posts going out on your own rhythm, with nothing to schedule by hand."},
+        {"id": "schedule", "shot": "schedule", "title": "Schedule a time of its own", "icon": "send", "where": "The post's top bar",
+         "href": "#~posts", "claude": "", "demo": "schedule", "optional": True,
+         "do": ["For a post with a day of its own (an event, a launch): Approve only, then Schedule…. Pick a time, or "
+                "tap one of your free posting times.",
                 "Check the final text, the picture, the time and the first comment, then confirm.",
                 "Before you confirm lists what is worth a second look: a blank, a link that reads better as the first "
                 "comment, a picture not on the post, a time far from the plan's, the month's last posts. It never "
@@ -104,9 +120,14 @@ STATES = [
     ("Draft", "You are still writing.", ["Edit the text in place; it saves by itself, and your own edits are kept "
                                          "as versions", "Ask Claude, Audit and Revise", "Choose or remove its picture",
                                          "Approve, once no blank remains", "Move to Trash…"]),
-    ("Approved", "The text and picture are final and locked.", ["Schedule… and pick a time", "Back to draft to edit again",
+    ("Approved", "The text and picture are final and locked.", ["Add to queue, for your next free posting time",
+                                                                "Schedule… and pick a time", "Back to draft to edit again",
                                                                 "Ask Claude to audit it; the text stays as it is",
                                                                 "Move to Trash…"]),
+    ("Queued", "Approved, and waiting in the queue for its posting time.",
+     ["Move it up or down in the Planner's Coming up", "Take out of the queue: it stays approved",
+      "Back to draft, which takes it out of the queue",
+      "It goes to Publora by itself {max_days} days before its time"]),
     ("Scheduled", "It is waiting at Publora.", ["Check now, which asks Publora whether it went out",
                                                 "Cancel on Publora (the gear)", "Open the Publora dashboard",
                                                 "It stays out of the Trash while it is scheduled"]),
@@ -124,8 +145,8 @@ SCREENS = [
                 "sweet spot.",
                 "Edit text opens the editor from the keyboard. Copy and Copy first comment copy the words as they "
                 "will go out.",
-                "The top bar says where it stands and holds the next step: Approve, then Schedule…, then Check now; "
-                "once it is out, Open on LinkedIn.",
+                "The top bar says where it stands and holds the next step: Approve and queue (or Approve only, then "
+                "Add to queue or Schedule…), then Check now once it is at Publora; once it is out, Open on LinkedIn.",
                 "The gear holds the title, Versions to compare with now and go back to (your own edits are kept too), "
                 "New draft from this and Move to Trash…; scheduled and published posts stay out of the Trash.",
                 "The sidebar lists your posts as they are today; published and cancelled ones fold away under "
@@ -141,14 +162,18 @@ SCREENS = [
                 "Drag the panel's left edge to make it wider or narrower, or focus the edge and use ← and →; a "
                 "double-click puts it back."]},
     {"key": "planner", "title": "Planner", "href": "#~planner", "icon": "calendar",
-     "purpose": "The week in one go, and this month at a glance.",
-     "points": ["This week comes first: one card per planned post; Draft this writes it. Who to comment on and the "
+     "purpose": "What goes out when, the week's plan, and this month at a glance.",
+     "points": ["Coming up comes first: the posts at Publora with their times, then the queue in line order with Move "
+                "up, Move down, First in line and Take out, then the posting times still free. Check Publora asks "
+                "about the posts whose time has passed.",
+                "This week: one card per planned post; Draft this writes it. Who to comment on and the "
                 "inbound-readiness checklist sit under the cards.",
                 "Draft all, above the cards, writes every planned post that has no draft, one at a time, while you "
                 "work; at the end it says how many it wrote, and Try again is on any card that did not finish.",
                 "Getting set up stays until each of its steps is done.",
-                "Then this month: posts used, the next scheduled post, Claude's status and the scheduled posts.",
-                "Plan the next 7 days makes a new week; older plans move to Earlier plans."]},
+                "Then this month: posts used, the next post out and Claude's status.",
+                "Plan the next 7 days makes a new week, one post for each posting day; older plans move to Earlier "
+                "plans."]},
     {"key": "bank", "title": "Story Bank & Voice", "href": "#~bank", "icon": "book",
      "purpose": "What the skills know about you, and the interviews that fill it.",
      "points": ["Read-only, so the format stays what the skills expect.",
@@ -172,6 +197,8 @@ SCREENS = [
                 "account beside each login folder, and refuses one that is not signed in.",
                 "ChatGPT: who is signed in for pictures, and how many were made today.",
                 "You in the preview: your name, headline and photo for every post's preview. They stay on this PC.",
+                "Posting times: the days, and a time for each, that the queue gives its posts and the Planner plans "
+                "for. One post a day at most.",
                 "Post style: the hook, tone and emojis every new draft is written with. It always stays professional.",
                 "Connections confirms your Publora key works. Run it after changing .env.",
                 "Recent runs lists every Claude run and how long it took."]},
@@ -213,7 +240,7 @@ SHOT_WORDS = {
     "post": "A post as LinkedIn shows it, with Ask Claude beside it",
     "chat": "Ask Claude at work: each step numbered while it runs",
     "schedule": "Schedule…: the time, the recommended slots and the final check",
-    "planner": "The Planner's week board: Draft all, then one card per post",
+    "planner": "The Planner: Coming up, then the week board with Draft all and one card per post",
     "bank": "Story Bank & Voice, with the interviewer beside it",
     "tools": "Tools, with a result to copy",
     "trash": "The Trash, with Put back and Delete forever…",

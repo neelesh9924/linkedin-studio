@@ -1,6 +1,7 @@
 """Publishing through linkedin-skills\\lib\\publora_client.py, with exactly-once scheduling.
 
-State machine: draft -> approved -> scheduling -> scheduled -> published | failed | cancelled.
+State machine: draft -> approved -> scheduling -> scheduled -> published | failed | cancelled. An approved post may wait
+in the posting queue (posting.py, posts.queue_pos) for its time; it leaves the queue as it is claimed, or goes back.
 The approved -> scheduling step is one BEGIN IMMEDIATE transaction, so a double-click or
 a second tab finds the post already claimed and never reaches Publora. The one HTTP call
 carries an Idempotency-Key stored with the post, and a retry after an unclear failure
@@ -305,7 +306,7 @@ class Publisher:
                     raise ScheduleError(f"Publora would not delete its draft of this post: {exc}. Delete it in "
                                         f"the Publora dashboard ({DASHBOARD_URL}), then try again.") from exc
         n = self.db.run("UPDATE posts SET status='draft', idempotency_key=NULL, publora_payload=NULL, "
-                        "scheduled_at=NULL, error=NULL, media=NULL, media_step=NULL, updated_at=? WHERE id=? "
+                        "scheduled_at=NULL, error=NULL, media=NULL, media_step=NULL, queue_pos=NULL, updated_at=? WHERE id=? "
                         "AND publora_post_id IS NULL AND status IN ('approved','failed')", (utcnow(), post_id))
         if n != 1:
             raise ScheduleError("Only an approved post, or one whose scheduling failed, can go back to draft.")
@@ -340,7 +341,7 @@ class Publisher:
                 payload["firstComment"] = {"text": comment, "platforms": ["linkedin"]}
             key = f"linkedin-studio-{post_id}-{uuid.uuid4().hex}"
             con.execute("UPDATE posts SET status='scheduling', scheduled_at=?, idempotency_key=?, publora_payload=?, "
-                        "first_comment=?, error=NULL, media=?, media_step=?, updated_at=? WHERE id=? "
+                        "first_comment=?, error=NULL, media=?, media_step=?, queue_pos=NULL, updated_at=? WHERE id=? "
                         "AND status='approved' AND publora_post_id IS NULL",
                         (utc_iso(when), key, dumps(payload), comment, dumps(media) if media else None,
                          "create" if media else None, utcnow(), post_id))

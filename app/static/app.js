@@ -18,7 +18,7 @@ const PAGES = { planner: ["Planner", planner], bank: ["Story Bank & Voice", bank
   tools: ["Tools", tools], guide: ["Guide", guide], settings: ["Settings", settings], trash: ["Trash", trash],
   setup: ["Set up LinkedIn Studio", settings] };
 const BOXES = ["postPage", "emptyPage", "plannerPage", "bankPage", "toolsPage", "guidePage", "settingsPage", "trashPage", "setupPage"];
-const SUMMARY = ["id", "title", "first", "status", "label", "kind", "when", "scheduled_at", "picture", "busy", "trashed"];
+const SUMMARY = ["id", "title", "first", "status", "label", "kind", "when", "queued", "scheduled_at", "picture", "busy", "trashed"];
 
 // ---------- pages ----------
 

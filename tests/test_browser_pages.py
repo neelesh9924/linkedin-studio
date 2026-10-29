@@ -1,7 +1,9 @@
 """The pages beside the posts in Chrome (headless, through Playwright), on the demo studio with its stand-ins: Ask Claude
 on a locked post, Settings' sections and the account, You in the preview, the Planner's order, the Guide's pictures and
-its practice editor. Skipped without Playwright or without Chrome or Edge. Made-up words only."""
+its practice editor, the post style, the count beside Posts, and the posting queue. Skipped without Playwright or
+without Chrome or Edge. Made-up words only."""
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -76,7 +78,8 @@ def test_settings_names_the_account_and_opens_at_a_panel(studio):
     page.wait_for_function("() => document.activeElement && document.activeElement.id === 'settings-health-title'")
     assert "signed in as you@example.com (Max)" in page.locator("#settings-claude").inner_text()
     ids = page.eval_on_selector_all("#settingsPage section.panel", "(all) => all.map((s) => s.id)")
-    assert ids == [f"settings-{i}" for i in ("claude", "publishing", "chatgpt", "profile", "style", "appearance", "health", "runs", "app")]
+    assert ids == [f"settings-{i}" for i in ("claude", "publishing", "posting", "chatgpt", "profile", "style", "appearance", "health",
+                                             "runs", "app")]
     assert errors == []
 
 
@@ -134,14 +137,16 @@ def test_a_name_headline_and_photo_saved_in_settings_show_in_the_open_post_at_on
     assert errors == []
 
 
-def test_the_planner_shows_this_week_first_and_no_getting_set_up_once_every_step_is_done(studio):
+def test_the_planner_shows_coming_up_then_this_week_and_no_getting_set_up_once_every_step_is_done(studio):
     page, errors = studio
     page.evaluate("location.hash = '#~planner'")
     page.wait_for_selector("#plannerPage .board .plan-card")
     titles = page.eval_on_selector_all("#plannerPage .section-title h2", "(all) => all.map((t) => t.textContent)")
     assert titles[0] == "This week" and titles.index("This week") < titles.index("This month")
+    assert page.evaluate("() => !!(document.querySelector('#coming-up').compareDocumentPosition("
+                         "document.querySelector('#plannerPage .section-title')) & Node.DOCUMENT_POSITION_FOLLOWING)")
     assert "Getting set up" not in page.locator("#plannerPage").inner_text()
-    assert "asks Publora by itself every few minutes" in page.locator("#plannerPage").inner_text()
+    assert "the studio asks Publora whether it went out" in page.locator("#coming-up").inner_text()
     assert errors == []
 
 
@@ -205,7 +210,40 @@ def test_the_posts_heading_counts_the_drafts_and_what_waits_to_go_out(studio):
     drafts = statuses.count("draft")
     said = page.locator("#postsLabel").text_content()
     assert said.startswith(f"Posts · {drafts} draft{'' if drafts == 1 else 's'}")
-    for status in ("approved", "scheduled"):
+    for status in ("approved", "scheduled"):     # the demo queues nothing before this test: approved is not queued
         assert (f"{statuses.count(status)} {status}" in said) == (statuses.count(status) > 0)
     assert page.locator("#list").evaluate("(nav) => document.getElementById(nav.getAttribute('aria-labelledby')).textContent") == said
+    assert errors == []
+
+
+STATE = "fetch('/api/state').then((r) => r.json()).then((s) => s.posts)"
+
+
+def test_add_to_queue_takes_the_next_free_posting_time_and_coming_up_and_settings_show_the_queue(studio):
+    """The demo's approved post, queued with one press: no dialog, and with free posting days inside the window it goes
+    to (the stand-in) Publora at once, on a Tuesday, Wednesday or Thursday morning. A draft has Approve only and Approve
+    and queue; Coming up lists the post at Publora and the free posting times; Settings › Posting times has a row a day."""
+    page, errors = studio
+    draft = next(p for p in page.evaluate(STATE) if p["status"] == "draft")
+    page.evaluate("(mark) => { location.hash = mark; }", f"#post-{draft['id']}")
+    page.wait_for_selector('#topActions [data-act="queue"]')
+    assert page.locator("#topActions button").all_inner_texts() == ["Approve only", "Approve and queue"]
+    approved = next(p for p in page.evaluate(STATE) if p["status"] == "approved" and not p["queued"])
+    page.evaluate("(mark) => { location.hash = mark; }", f"#post-{approved['id']}")
+    page.wait_for_selector('#topActions [data-act="schedule"]')
+    assert page.locator("#topActions button").all_inner_texts() == ["Back to draft", "Schedule…", "Add to queue"]
+    assert "Add to queue gives it your next free posting time (Tue 8:00 am, Wed 9:30 am and Thu 8:00 am)" in \
+        page.locator("#postPage .notice").inner_text()
+    page.click('#topActions [data-act="queue"]')
+    page.wait_for_function("() => document.querySelector('#status').innerText.startsWith('Scheduled')")
+    assert page.locator("dialog[open]").count() == 0
+    assert re.fullmatch(r"Scheduled · (Tue|Wed|Thu) \d{1,2} [A-Z][a-z]{2}, (8:00|9:30) am", page.locator("#status").inner_text().strip())
+    page.evaluate("() => { location.hash = '#~planner'; }")
+    page.locator("#coming-up .coming-row.publora", has_text=approved["first"]).wait_for()   # drawn again with it at Publora
+    assert page.locator("#coming-up .coming-row.free").count() >= 1
+    page.evaluate("() => { location.hash = '#~settings-posting'; }")
+    page.wait_for_selector("#settings-posting .posting-row")
+    assert page.locator("#settings-posting .posting-row").count() == 7
+    assert [page.locator(f"#posting-{d}").is_checked() for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")] == \
+        [False, True, True, True, False, False, False]
     assert errors == []

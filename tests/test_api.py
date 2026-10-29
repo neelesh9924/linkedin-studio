@@ -451,7 +451,7 @@ def test_the_guide_covers_every_step_and_screen_with_links_the_page_opens(web):
     assert all(f"{ACTIONS[k].title}: {ACTIONS[k].blurb}" in tools["points"] for k in TOOL_KINDS)
     icons = set(re.findall(r'^\s*"?([\w-]+)"?: \[', (STATIC / "js" / "core.js").read_text(encoding="utf-8"), re.M))
     assert {s["icon"] for s in steps} | {s["icon"] for s in data["screens"]} <= icons
-    assert [name for name, _meaning, _can in data["states"]] == ["Draft", "Approved", "Scheduled", "Published"]
+    assert [name for name, _meaning, _can in data["states"]] == ["Draft", "Approved", "Queued", "Scheduled", "Published"]
     assert len(placeholder_slots(data["sample"])) == 2
 
 

@@ -16,6 +16,7 @@ export function statusOf(p) {
     return { text: minutes >= 1 ? `Claude is working · ${minutes} min` : "Claude is working", kind: "busy" };
   }
   if (p.status === "scheduled" && p.when) return { text: `Scheduled · ${p.when.replace(/ [A-Z]{2,5}$/, "")}`, kind: "ok" };
+  if (p.queued && p.when) return { text: `Queued · ${p.when.replace(/ [A-Z]{2,5}$/, "")}`, kind: p.kind };
   return { text: p.label, kind: p.kind };
 }
 
@@ -50,10 +51,12 @@ export function renderList() {
   if (shut !== onEarlier) shut = 0;
   const open = earlier.length > 0 && (recall("earlier") === "1" || (onEarlier > 0 && shut !== onEarlier));
   const under = open ? earlier : earlier.filter((row) => row.current);
-  // Beside Posts: how many drafts, and how many approved or scheduled, when there are any (the list's name says it too)
-  const many = (status) => state.posts.filter((p) => p.status === status).length;
-  const counts = [plural(many("draft"), "draft", "drafts"), ...[["approved", "approved"], ["scheduled", "scheduled"]]
-    .filter(([status]) => many(status)).map(([status, word]) => `${many(status)} ${word}`)];
+  // Beside Posts: how many drafts, and how many approved, queued or scheduled, when there are any (the list's name says
+  // it too)
+  const many = (test) => state.posts.filter(test).length;
+  const counts = [plural(many((p) => p.status === "draft"), "draft", "drafts"),
+    ...[[(p) => p.status === "approved" && !p.queued, "approved"], [(p) => p.queued, "queued"], [(p) => p.status === "scheduled", "scheduled"]]
+      .filter(([test]) => many(test)).map(([test, word]) => `${many(test)} ${word}`)];
   const said = ` · ${counts.join(", ")}`;
   if ($("postsCount").textContent !== said) $("postsCount").textContent = said;
   const list = $("list");

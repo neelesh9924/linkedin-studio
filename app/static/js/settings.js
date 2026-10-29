@@ -1,5 +1,5 @@
-// Settings (Claude and who it is signed in as, publishing, ChatGPT, you in the preview, post style, appearance, the health checks,
-// recent runs, quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder
+// Settings (Claude and who it is signed in as, publishing, posting times, ChatGPT, you in the preview, post style, appearance,
+// the health checks, recent runs, quitting) and the setup screen (the three folders: found on this PC, Browse…, or pasted, each login folder
 // with the account it is signed in to; Save checks them, writes config.local.toml and restarts).
 // Each panel has an address, #~settings-<id>: the jump links at the top use it, and it opens with that panel's heading
 // focused. The focus stays where it was through every redraw (data-keep), with what was typed and not yet saved, and a
@@ -11,11 +11,12 @@ import { ALWAYS, styleSliders } from "./style.js";
 
 let box = null;
 let polling = 0;
-const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["profile", "You in the preview"],
-  ["style", "Post style"], ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
+export const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["posting", "Posting times"], ["chatgpt", "ChatGPT"],
+  ["profile", "You in the preview"], ["style", "Post style"], ["appearance", "Appearance"], ["health", "Health checks"],
+  ["runs", "Recent runs"], ["app", "The app"]];
 const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
 const running = {};       // check -> running at the last draw, so its end is said once
-const typed = {};         // a box's words not yet saved (name, headline, codexHome), kept through redraws
+const typed = {};         // a box's words not yet saved (name, headline, codexHome, style, posting), kept through redraws
 const PHOTO_PX = 256;     // the photo is made this size here, before it is sent
 
 export async function render(container, { page, sub } = {}) {
@@ -58,7 +59,8 @@ const OUTCOME = { ok: ["Done", "ok"], unparsed: ["Unreadable reply", "warn"], er
 
 let last = "";
 async function settings(quiet = false) {
-  const [data, codex, me, look] = await Promise.all([api("/api/settings"), api("/api/codex"), api("/api/profile"), api("/api/style")]);
+  const [data, codex, me, look, times] = await Promise.all([api("/api/settings"), api("/api/codex"), api("/api/profile"),
+    api("/api/style"), api("/api/posting")]);
   if (data.error || state.page !== "settings") return;
   for (const [name, title] of Object.entries(CHECKS)) {        // a check that was running has ended: say how
     const check = data.checks[name];
@@ -67,7 +69,7 @@ async function settings(quiet = false) {
     }
     running[name] = check.running;
   }
-  const key = JSON.stringify([data, codex, me, look]);
+  const key = JSON.stringify([data, codex, me, look, times]);
   if (quiet && key === last) return;
   last = key;
   const on = box.contains(document.activeElement) ? document.activeElement.dataset.keep : null;
@@ -123,6 +125,7 @@ async function settings(quiet = false) {
         ["Apify token", data.publora.apify ? "Set: post links can be fetched" : "Not set: paste post text instead of links"],
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
         ["Monthly limit", `${data.limit} posts`], ["Times shown in", `${data.timezone} (${data.tz})`])),
+    postingSection(times),
     chatgpt(codex),
     profileSection(me),
     styleSection(look),
@@ -293,6 +296,70 @@ function styleSection(look) {
     });
   });
   return section("style", "sliders", title, lede, form);
+}
+
+// Posting times: the days and times the queue gives its posts, one a day at most, and the Planner plans for. Each day is
+// on or off, with its own time. What is changed and not yet saved stays through redraws.
+function postingSection(pt) {
+  const title = "Posting times";
+  if (!pt || pt.error) return section("posting", "clock", title, "", note("bad", (pt && pt.error) || "The studio did not answer."));
+  const lede = `Each post you queue takes the next free one of these: one post a day at most, and no more than ${pt.limit} `
+    + `a month. It goes to Publora by itself ${pt.window} days before its time, while the studio is open. The Planner plans `
+    + "one post for each day.";
+  const now = { ...(typed.posting || pt.times) };
+  const keep = () => { typed.posting = { ...now }; };
+  const boxes = {};
+  const rows = pt.days.map(([day, name]) => {
+    const on = h("input", { type: "checkbox", id: `posting-${day}`, "data-keep": `posting-${day}` });
+    on.checked = day in now;
+    const at = h("input", { class: "input time", type: "time", step: 60, value: now[day] || pt.studio[day] || "08:30",
+      disabled: !(day in now), "aria-label": `${name}: time`, "data-keep": `posting-${day}-time` });
+    on.addEventListener("change", () => {
+      at.disabled = !on.checked;
+      if (on.checked) now[day] = at.value;
+      else delete now[day];
+      keep();
+    });
+    at.addEventListener("input", () => {
+      if (!on.checked || !at.value) return;
+      now[day] = at.value;
+      keep();
+    });
+    boxes[day] = { on, at };
+    return h("div", { class: "posting-row" }, h("label", { class: "check", for: `posting-${day}` }, on, name), at);
+  });
+  const out = h("div", { class: "results" });
+  const save = h("button", { class: "btn primary small", type: "submit", "data-keep": "posting-save" }, icon("check", 14), h("span", null, "Save"));
+  const studio = h("button", { class: "btn small", type: "button", "data-keep": "posting-studio",
+    title: "Puts back the studio’s own times. Save keeps them." }, icon("refresh", 14), h("span", null, "Studio default"));
+  studio.addEventListener("click", () => {
+    for (const day of Object.keys(now)) delete now[day];
+    for (const [day, { on, at }] of Object.entries(boxes)) {
+      on.checked = day in pt.studio;
+      at.disabled = !on.checked;
+      if (on.checked) {
+        at.value = pt.studio[day];
+        now[day] = pt.studio[day];
+      }
+    }
+    keep();
+  });
+  const form = h("form", { class: "posting-form" }, h("div", { class: "posting-days" }, rows), out,
+    h("div", { class: "form-foot" }, save, studio, h("span", { class: "soft" }, `Saved: ${pt.words}.`)));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    whileBusy(save, async () => {
+      const reply = await post("/api/posting", { times: now });
+      if (reply.error) {
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      delete typed.posting;
+      announce(`Saved: ${reply.words}. Every queued post's time follows them.`);
+      await settings(true);
+    });
+  });
+  return section("posting", "clock", title, lede, form);
 }
 
 // A change was saved: every preview takes it at once (studio:profile), and this section is drawn again from the answer.

@@ -36,15 +36,18 @@ works, a post's four states, and an editor to practise in.
 *Made-up demo data; the Guide's own pictures, retaken by `dev\guide_shots.py`.*
 
 - **The sidebar** lists your posts, each with its first line and its state: drafts first, then
-  approved and scheduled (soonest first). Published and cancelled posts fold away under
+  approved ones, then what goes out, soonest first (scheduled and queued together). The
+  **Posts** heading counts the drafts, and the approved, queued and scheduled posts when there
+  are any. Published and cancelled posts fold away under
   **Earlier**, which stays as you leave it; the post you have open always shows. **New post**
   starts one. Below the list: Planner, Story Bank & Voice, Tools, Guide, Settings, Trash, and the
   light/dark switch.
 - **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
   "…more" fold at about 210 characters and its picture), under your name, headline and photo
   from **Settings › You in the preview** (they stay on this PC). The top bar has its title, its
-  state and the next step: **Approve this text**, then **Schedule…**, then **Check now** (it asks
-  Publora whether the post went out) and, once it is out, **Open on LinkedIn**. The gear holds its
+  state and the next step: **Approve and queue** (or **Approve only**, then **Add to queue** or
+  **Schedule…**), **Take out of the queue** while it waits, then **Check now** once it is at
+  Publora (it asks whether the post went out) and, once it is out, **Open on LinkedIn**. The gear holds its
   versions (your own edits are kept as versions too; **Compare with now** shows an earlier one's
   words against the post's now), earlier chats, **New draft from this** (an editable copy of any
   post) and **Move to Trash…**.
@@ -78,9 +81,20 @@ works, a post's four states, and an editor to practise in.
   Revise, the Planner's drafts, Draft all and the Repurposer. A post's own **Style** button has
   the same sliders and **Restyle**, which writes the same post in them, word by word beside it like
   a revision; they become that post's own style. Whatever the sliders say, it stays professional.
-- **Publish.** Draft → Approved → Scheduled → Published. Approved text is locked. Scheduling asks
-  for a time (the skills' recommended slots one click away), then confirms the final text, time,
-  first comment and picture. Before **Schedule it**, the dialog lists anything worth a second
+- **The queue.** Set your posting days, and a time for each, once in **Settings › Posting
+  times** (it starts with the skills' mornings: Tuesday 8:00, Wednesday 9:30, Thursday 8:00).
+  **Approve and queue** on a draft, or **Add to queue** on an approved post, puts it at the end of
+  the line, where it takes your next free posting time: one post a day at most, and no more than
+  the monthly limit (a full month passes to the next). There is no dialog and no time to pick;
+  only a link in the text, or a picture kept but not on the post, makes it ask first. A queued
+  post goes to Publora by itself once its time is 14 days away (the furthest the studio
+  schedules), while the studio is open, so open it at least once a fortnight; a post already at
+  Publora goes out even with the PC off. The Planner's **Coming up** lists what goes out when,
+  with **Move up**, **Move down**, **First in line** and **Take out** on each queued post, and
+  the posting times still free. **Plan the week** plans one post for each posting day.
+- **Publish.** Draft → Approved (→ Queued) → Scheduled → Published. Approved text is locked.
+  Scheduling a time of its own asks for a time (your free posting times one click away), then
+  confirms the final text, time, first comment and picture. Before **Schedule it**, the dialog lists anything worth a second
   look (a blank, a link better in the first comment, a picture not on the post, a time far from
   the plan's, the month's last posts); it never stops you. Once a post's time has passed, the
   studio asks Publora every few minutes whether it went out (it only reads; nothing is sent) and
@@ -94,11 +108,11 @@ works, a post's four states, and an editor to practise in.
 
 | Page | What it does |
 |---|---|
-| Planner | This week first: the plan's board of post cards (**Draft this** on any card; **Draft all** writes every planned post without a draft, one at a time, after asking, with "Writing 2 of 5" and Stop), comment targets and the inbound-readiness checklist. Then Getting set up (until its steps are done), posts used this month (x of 15), the next scheduled post, the scheduled posts (**Check Publora** asks now), and audience + goal (+ theme, 3-5 posts) for a new week |
+| Planner | **Coming up** first: the posts at Publora with their times, the queue in line order (**Move up**, **Move down**, **First in line**, **Take out**), the posting times still free, and **Check Publora**. Then this week: the plan's board of post cards (**Draft this** on any card; **Draft all** writes every planned post without a draft, one at a time, after asking, with "Writing 2 of 5" and Stop), comment targets and the inbound-readiness checklist. Then Getting set up (until its steps are done), posts used this month (x of 15), the next post out, and audience + goal (+ theme) for a new week, one post for each posting day |
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them. **Ask me about this** on a filled Story Bank entry starts a short interview about that entry alone, in a new conversation |
 | Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons, and each tool's last ten results under **Earlier results**. **Start a post from this** turns a rewrite, an audited draft (its findings with it), a hook's template or a repurposed post into a new post and opens it |
 | Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
-| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview), **Post style** (the three sliders new drafts are written with), light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-chatgpt`, `-profile`, `-appearance`, `-health`, `-runs`, `-app`) |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again) and **Change folders**; publishing keys (set or missing, never shown), **Posting times** (the days and times the queue gives its posts), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview), **Post style** (the three sliders new drafts are written with), light/dark/auto, the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-posting`, `-chatgpt`, `-profile`, `-style`, `-appearance`, `-health`, `-runs`, `-app`) |
 | Trash | Posts moved there: Put back, Delete forever…, Empty trash |
 
 **Keys.** Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
@@ -205,6 +219,11 @@ limits, `codex_home`) are explained there.
     upload link, upload the file, schedule it. Each step is recorded, so Retry carries on from the
     one that failed and never makes a second post; Back to draft deletes the Publora draft.
   - Times must be between 2 minutes and 14 days ahead.
+  - The queue (`app\posting.py`) sends through the very same path: a queued post's time is worked
+    out afresh each time (never stored), and the post is handed over, once, when that time is
+    inside the 14 days. A refusal before anything is sent (no key, a missing picture) stays on the
+    post and it keeps its place. It runs only while the studio does: when you queue a post, change
+    the posting times or move one, and every minute in the background.
   - Once a post's time has passed, the studio only reads Publora's answer for it (get-post, at
     most every 3 minutes, never for a post in the Trash). The only link it keeps is a
     `https://www.linkedin.com/` one.
@@ -342,8 +361,9 @@ in-between state can be looked at without spending anything (`--empty` starts it
   `app\api_posts.py` (posts, their chats, versions, pictures, scheduling) and `app\api_pages.py`
   (the other pages). `app\mcp.py` serves the studio's tools to a post's chat; `app\codex.py`
   makes ChatGPT's pictures; `app\status_check.py` asks Publora, read-only, whether a post whose
-  time has passed went out; `app\profile.py` keeps You in the preview; `app\style.py` says what
-  each step of the Post style sliders tells the writer.
+  time has passed went out; `app\posting.py` is the posting times and the queue; `app\profile.py`
+  keeps You in the preview; `app\style.py` says what each step of the Post style sliders tells
+  the writer.
 - The front end is plain HTML, CSS and JavaScript modules with nothing external and no build
   step: `app\static\index.html`, `app.css` (design tokens at the top, light and dark), `app.js`
   and `js\`. The Guide's words live in `app\guide.py`.

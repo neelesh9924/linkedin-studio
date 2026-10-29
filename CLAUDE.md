@@ -9,9 +9,18 @@ username in them).
 
 ## Standing rules
 
-- **A post goes out only on the owner's word**: Schedule… and its confirmation. Nothing Claude
-  does in a chat schedules or publishes anything; comments and replies are drafted to copy, never
+- **A post goes out only on the owner's word**: Schedule… and its confirmation, or the owner's own
+  press of Approve and queue / Add to queue. Nothing Claude does in a chat schedules, queues or
+  publishes anything (no tool of `app/mcp.py` does); comments and replies are drafted to copy, never
   posted.
+- **The posting queue is one definition.** `app/posting.py` holds the posting times
+  (`data\posting.json` beside the database; the default is the skills' Tue 8:00, Wed 9:30, Thu 8:00)
+  and the line: an approved post with `posts.queue_pos`. A queued post's time is worked out afresh
+  every time (`PostingQueue.lineup`: the next free posting time, one post a day, under the monthly
+  limit) and never stored. It goes to Publora only through `Publisher.schedule`, once its time is
+  inside `MAX_AHEAD`, and leaves the line as it is claimed; Back to draft and the Trash take it out.
+  The background pass, like the light check, runs only with `check_publora` and never during setup.
+  Schedule…'s recommended times, the Planner's Coming up and the plan's days all come from it.
 - **Publora exactly once.** Scheduling is one transaction (approved → scheduling) and one request
   with an `Idempotency-Key`; Retry resends it with the same key. A post with a picture records
   each of Publora's four media steps (`posts.media`, `posts.media_step`), and Retry carries on
@@ -77,7 +86,8 @@ username in them).
 | `app/main.py` | `create_app`: the middleware, `/api/state` (posts, jobs, what changed), jobs, images, `/mcp` |
 | `app/api_posts.py` | A post: save, audit, revise, approve, schedule, retry, Check now, cancel, versions (compared with now), picture, its chat and attachments, Move to Trash, New draft from this |
 | `app/api_trash.py` | The Trash: its list, Put back, Delete forever and Empty trash (confirmed); a post in the Trash is `posts.trashed_at`, and `api_posts.find` refuses it everywhere |
-| `app/api_pages.py` | Planner, Story Bank & Voice chats, Tools (each tool's earlier results, Start a post from this), Settings (ChatGPT card, Claude's account, You in the preview), setup, Guide (its pictures) |
+| `app/api_pages.py` | Planner (Coming up), Story Bank & Voice chats, Tools (each tool's earlier results, Start a post from this), Settings (ChatGPT card, Claude's account, You in the preview, Posting times), setup, Guide (its pictures) |
+| `app/posting.py` | The posting queue: the posting times, each queued post's time (worked out, never stored), handing the ones inside the window to Publora through `Publisher.schedule`, the background pass |
 | `app/draft_all.py` | Draft all on the Planner: every planned post without a draft, one ordinary `draft` job at a time (`draft_params`, shared with Draft this); `flows.draft_done` chains the next; Stop through `jobs.cancel`; each board's `draft_all` |
 | `app/ask_about.py` | Ask me about this on a Story Bank entry: the `focus` checked against the file's own entries (`render.doc_sections`), capped; the new conversation's opening message |
 | `app/profile.py` | You in the preview: the name, headline and photo kept beside the database |

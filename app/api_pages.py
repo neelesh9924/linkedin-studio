@@ -1,7 +1,7 @@
-"""The API of the pages beside the posts: Planner (with Draft all, draft_all.py), Story Bank & Voice (with its two chats,
-and Ask me about this, ask_about.py), Tools (with each tool's
-earlier results, and Start a post from this), Settings (with ChatGPT, the health checks and You in the preview), the
-setup screen and the Guide."""
+"""The API of the pages beside the posts: Planner (Coming up from the posting queue, posting.py; Draft all,
+draft_all.py), Story Bank & Voice (with its two chats, and Ask me about this, ask_about.py), Tools (with each tool's
+earlier results, and Start a post from this), Settings (with ChatGPT, the health checks, You in the preview and the
+posting times), the setup screen and the Guide."""
 from __future__ import annotations
 
 import dataclasses
@@ -17,7 +17,8 @@ from typing import Any
 from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse, Response
 
-from . import ask_about, attached, attachments, codex, draft_all, flows, guide, paths, profile, render, style, versions
+from . import (ask_about, attached, attachments, codex, draft_all, flows, guide, paths, posting, profile, render, style,
+               versions)
 from .api_posts import fail
 from .config import ConfigError, path_problems, problems
 from .db import dumps, loads, utcnow
@@ -94,12 +95,32 @@ def register(app: FastAPI, s: Studio) -> None:
         return account_of(str(cfg.claude_config_dir), fresh=fresh)
 
     # ---- planner (and this month) ---------------------------------------------------------
+    def coming_up(upcoming: list) -> list[dict]:
+        """Coming up: what goes out and when, earliest first. The posts at Publora with their time, the queued posts
+        with the time the queue gives each (in line order, with their place), and the posting times still free within
+        the window."""
+        line, free = s.queue.coming()
+        spots = dict(line)
+        waiting = posts_by_id([pid for pid, _at in line])
+        out = [{"kind": "publora", "at": p["scheduled_at"] or "", "when": s.when(p["scheduled_at"]), "post": s.post_summary(p)}
+               for p in upcoming]
+        for place, (pid, at) in enumerate(line, start=1):
+            row = waiting[pid]
+            out.append({"kind": "queued", "at": at.isoformat(timespec="seconds") if at else "",
+                        "when": posting.time_words(at, cfg.tz, s.tz_label), "place": place, "of": len(line),
+                        "error": row["error"] or "", "post": s.post_summary(row, spots)})
+        out += [{"kind": "free", "at": at.isoformat(timespec="seconds"), "when": posting.time_words(at, cfg.tz, s.tz_label)}
+                for at in free]
+        return sorted(out, key=lambda c: (not c["at"], c["at"]))
+
     @app.get("/api/planner")
     def planner():
         now = datetime.now(timezone.utc)
         now_iso = now.isoformat(timespec="seconds")
-        upcoming = db.all("SELECT * FROM posts WHERE status IN ('scheduling','scheduled') ORDER BY scheduled_at")
-        next_post = next((p for p in upcoming if (p["scheduled_at"] or "") >= now_iso), None)
+        upcoming = db.all("SELECT * FROM posts WHERE status IN ('scheduling','scheduled') AND trashed_at IS NULL "
+                          "ORDER BY scheduled_at")
+        coming = coming_up(upcoming)
+        next_post = next((c["post"] for c in coming if c["kind"] != "free" and c["at"] >= now_iso), None)
         bank, voice = doc_status(flows.read_text(cfg.story_bank)), doc_status(flows.read_text(cfg.voice_profile))
         publora = pub.status()
         plans = db.all("SELECT * FROM plans ORDER BY id DESC LIMIT 6")
@@ -135,13 +156,15 @@ def register(app: FastAPI, s: Studio) -> None:
             {"done": publora["key"], "title": "Connect Publora", "href": "#~settings",
              "text": "Add your key to linkedin-skills\\.env to schedule from here."},
             {"done": bool(plans), "title": "Plan your week", "href": "#~planner",
-             "text": "Three to five posts, each with a formula and an angle."},
+             "text": "One post for each posting day, each with a formula and an angle."},
         ]
         return {
             "month": now.astimezone(cfg.tz).strftime("%B"), "used": pub.quota_used(now), "limit": cfg.monthly_post_limit,
             "tz": s.tz_label,
-            "next": {**s.post_summary(next_post)} if next_post else None,
+            "next": next_post,
             "upcoming": [s.post_summary(p) for p in upcoming],
+            "coming": coming, "posting": posting.words(s.queue.times()), "posting_days": len(s.queue.times()),
+            "window": MAX_AHEAD.days,
             "claude": {"working": ACTIONS[active[0]["kind"]].doing if active else "",
                        "login": str(cfg.claude_config_dir), "model": cfg.model or "Account default",
                        "sign_in": sign_in(),
@@ -162,12 +185,9 @@ def register(app: FastAPI, s: Studio) -> None:
             return fail("Say who you are writing for and what the week should achieve.")
         if db.one("SELECT 1 FROM jobs WHERE kind='plan' AND status IN ('queued','running')"):
             return fail("A plan is already being made.")
-        try:
-            posts = max(3, min(5, int(data.get("max_posts") or 4)))
-        except (TypeError, ValueError):
-            posts = 4
+        days = s.queue.times()           # one post for each posting day, on that day and at its time
         return {"job": jobs.submit("plan", {"audience": audience, "goal": goal, "theme": str(data.get("theme") or "").strip(),
-                                            "max_posts": posts, "founder": bool(data.get("founder"))})}
+                                            "max_posts": len(days), "days": days, "founder": bool(data.get("founder"))})}
 
     @app.post("/api/planner/items/{item_id}/draft")
     def planner_draft(item_id: int):
@@ -443,6 +463,27 @@ def register(app: FastAPI, s: Studio) -> None:
         except OSError as exc:
             return fail(f"It could not be saved ({exc.strerror or exc}).", 500)
         return style_public()
+
+    # Settings › Posting times (posting.py): the days and times the queue gives its posts, and the Planner plans for.
+    def posting_public() -> dict:
+        return {"times": s.queue.times(), "studio": posting.DEFAULT, "days": [[d, posting.NAMES[d]] for d in posting.DAYS],
+                "words": posting.words(s.queue.times()), "limit": cfg.monthly_post_limit, "window": MAX_AHEAD.days}
+
+    @app.get("/api/posting")
+    def posting_get():
+        return posting_public()
+
+    @app.post("/api/posting")
+    def posting_save(data: dict = Body(default={})):
+        try:
+            posting.save(db, data.get("times"))
+        except posting.Refused as exc:
+            return fail(str(exc))
+        except OSError as exc:
+            return fail(f"They could not be saved ({exc.strerror or exc}).", 500)
+        db.touch()                       # every queued post's time moves with them
+        s.queue.send_due()               # and one may now be inside the window
+        return posting_public()
 
     # Settings › You in the preview (profile.py): kept beside the database, read by the preview alone.
     @app.get("/api/profile")

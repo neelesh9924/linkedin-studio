@@ -1,8 +1,10 @@
-// The Planner: this week first (Draft all's bar, draftall.js; the latest plan's cards, each drafted with one press; a
-// card whose post is in the Trash says so, with Put back; who to comment on and the inbound-readiness checklist), then
-// getting set up until every step is done, this month (posts used against the limit, the next post, Claude's status),
-// the scheduled posts with Check Publora, the form for a new week and earlier plans. Drawn again, a card keeps the focus
-// that was in it: on its Cancel while it is being drafted, else on its first button.
+// The Planner: Coming up first (what goes out when: the posts at Publora, then the posting queue in line order with Move
+// up, Move down, First and Take out, and the posting times still free; Check Publora), then this week (Draft all's bar,
+// draftall.js; the latest plan's cards, each drafted with one press; a card whose post is in the Trash says so, with Put
+// back; who to comment on and the inbound-readiness checklist), getting set up until every step is done, this month
+// (posts used against the limit, the next post, Claude's status), the form for a new week (one post for each posting
+// day) and earlier plans. Drawn again, a card keeps the focus that was in it: on its Cancel while it is being drafted,
+// else on its first button; a row of Coming up keeps it on the same button of the same post.
 import { $, state, h, icon, api, post, put, plural, announce, whileBusy, drawIfChanged, focusFirst, go } from "./core.js";
 import { drawWorking, problemCard } from "./jobs.js";
 import { draftAllBar } from "./draftall.js";
@@ -22,10 +24,14 @@ export async function refresh() {
   if (reply.error || state.page !== "planner") return;
   data = reply;
   const card = box.contains(document.activeElement) && document.activeElement.closest(".plan-card");
+  const kept = box.contains(document.activeElement) ? document.activeElement.dataset.keep : null;
   const drew = drawIfChanged(box, JSON.stringify(data, (k, v) => (k === "seconds" || k === "quiet" || k === "progress" || k === "activity" ? undefined : v)), draw);
   tick();
   if (drew && card && card.id) {
     focusFirst(`#${card.id} .job-box button`, `#${card.id} .foot button`, `#${card.id}`);
+  } else if (drew && kept) {
+    const [, post] = kept.split(":");
+    focusFirst(box.querySelector(`[data-keep="${kept}"]:not([disabled])`), box.querySelector(`[data-keep$=":${post}"]:not([disabled])`));
   }
 }
 
@@ -56,14 +62,9 @@ function ring(used, limit) {
 function draw() {
   const d = data;
   const left = d.steps.filter((s) => !s.done);
-  const checkPublora = d.upcoming.length ? h("button", { class: "btn small ghost", type: "button" }, icon("refresh", 14), h("span", null, "Check Publora")) : null;
-  if (checkPublora) checkPublora.addEventListener("click", () => whileBusy(checkPublora, async () => {
-    const reply = await post("/api/posts/refresh", {});
-    announce(reply.error || reply.said, { urgent: !!reply.error });
-    window.dispatchEvent(new Event("studio:poll"));
-  }));
   put(box, h("div", { class: "page-width" },
     d.problems.map((p) => h("div", { class: "notice bad" }, icon("alert", 16), h("div", null, p))),
+    comingUp(d),
     weekOf(d),
     left.length ? h("section", { class: "panel" },
       h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("check", 17)),
@@ -82,7 +83,7 @@ function draw() {
         d.next ? [h("span", { class: "big", style: "font-size:19px" }, d.next.when),
           h("a", { href: `#post-${d.next.id}` }, d.next.first)]
           : [h("span", { class: "big", style: "font-size:19px;color:var(--text-3)" }, "Nothing scheduled"),
-            h("span", { class: "soft" }, "Approve a post and pick a time.")])),
+            h("span", { class: "soft" }, "Approve and queue a post: it takes your next free posting time.")])),
       h("section", { class: "panel" }, h("div", { class: "panel-body" },
         h("div", { class: "seg-row" }, h("span", { class: "stat" }, h("span", { class: "label" }, "Claude")),
           h("span", { class: `chip ${d.claude.working ? "busy" : ""}` }, d.claude.working || "Idle")),
@@ -93,14 +94,75 @@ function draw() {
           h("dt", null, "Health check"), h("dd", null, d.claude.health
             ? h("a", { href: "#~settings-health" }, `${d.claude.health.ok ? "All good" : "Found a problem"}, ${d.claude.health.when}`)
             : h("a", { href: "#~settings-health" }, "Not run yet")))))),
-    h("section", { class: "panel" },
-      h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("clock", 17)),
-        h("div", null, h("h2", null, "Scheduled posts"), h("p", null, "Waiting at Publora. Once a post’s time has passed, the studio asks Publora by itself every few minutes; Check Publora asks now.")), checkPublora),
-      d.upcoming.length ? h("div", { class: "rows" }, d.upcoming.map((p) => h("button", { class: "row-link", type: "button", onclick: () => go(`#post-${p.id}`) },
-        h("b", null, p.first), h("small", null, p.when), h("span", { class: `chip ${p.kind}` }, p.label))))
-        : h("div", { class: "panel-body soft" }, "Nothing is scheduled. Approve a post, then pick a time.")),
     planForm(d),
     earlierOf(d)));
+}
+
+// Coming up: what goes out and when, earliest first. A post at Publora keeps its time (Cancel on Publora, in its gear,
+// frees the day); a queued one shows its place in line and the time that gives it, with Move up, Move down, First and
+// Take out; a posting time nobody has yet says Free. Each button names its post to a screen reader.
+function comingUp(d) {
+  const atPublora = d.coming.some((c) => c.kind === "publora");
+  const check = atPublora ? h("button", { class: "btn small ghost", type: "button", "data-keep": "check-publora" }, icon("refresh", 14), h("span", null, "Check Publora")) : null;
+  if (check) check.addEventListener("click", () => whileBusy(check, async () => {
+    const reply = await post("/api/posts/refresh", {});
+    announce(reply.error || reply.said, { urgent: !!reply.error });
+    window.dispatchEvent(new Event("studio:poll"));
+  }));
+  const times = h("button", { class: "btn small ghost", type: "button", onclick: () => go("#~settings-posting") }, icon("clock", 14),
+    h("span", null, "Posting times"));
+  return h("section", { class: "panel", id: "coming-up", "aria-labelledby": "coming-title" },
+    h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("calendar", 17)),
+      h("div", null, h("h2", { id: "coming-title" }, "Coming up"),
+        h("p", null, `Your posting times: ${d.posting}. Each post you queue takes the next free one, a post a day at most, and `
+          + `goes to Publora by itself ${d.window} days before, while the studio is open. Once a post’s time has passed, the `
+          + "studio asks Publora whether it went out.")),
+      h("span", { class: "panel-tools" }, times, check)),
+    d.coming.length ? h("ol", { class: "coming" }, d.coming.map(comingRow))
+      : h("div", { class: "panel-body soft" }, "Nothing is coming up. Approve and queue a post: it takes your next free posting time."));
+}
+
+function comingRow(c) {
+  if (c.kind === "free") {
+    return h("li", { class: "coming-row free" }, h("span", { class: "coming-when" }, c.when),
+      h("span", { class: "coming-what soft" }, "Free: no post yet"));
+  }
+  const p = c.post;
+  const open = h("button", { class: "coming-what", type: "button", title: p.first, "data-keep": `open:${p.id}`, onclick: () => go(`#post-${p.id}`) },
+    h("b", null, p.first));
+  const chip = c.kind === "publora" ? h("span", { class: `chip ${p.kind}` }, p.status === "scheduling" ? "Sending" : "At Publora")
+    : h("span", { class: "chip ok" }, `Queued · ${c.place} of ${c.of}`);
+  const tools = c.kind === "queued" ? h("span", { class: "coming-tools" },
+    moveButton(c, "up", "arrow-up", "Move up", c.place === 1),
+    moveButton(c, "down", "arrow-down", "Move down", c.place === c.of),
+    moveButton(c, "first", "chevrons-up", "First in line", c.place === 1),
+    takeOut(c)) : null;
+  return h("li", { class: `coming-row ${c.kind}` }, h("span", { class: "coming-when" }, c.when || "No free time"), open, chip, tools,
+    c.error ? h("small", { class: "coming-note" }, icon("alert", 13), c.error) : null);
+}
+
+function moveButton(c, how, glyph, words, off) {
+  const b = h("button", { class: "btn small ghost square", type: "button", disabled: off, title: words,
+    "aria-label": `${words}: ${c.post.first}`, "data-keep": `${how}:${c.post.id}` }, icon(glyph, 14));
+  b.addEventListener("click", () => whileBusy(b, async () => {
+    const reply = await post("/api/queue/move", { id: c.post.id, how });
+    announce(reply.error || `${words}.`, { urgent: !!reply.error });
+    window.dispatchEvent(new Event("studio:poll"));
+    await refresh();
+  }));
+  return b;
+}
+
+function takeOut(c) {
+  const b = h("button", { class: "btn small ghost", type: "button", "aria-label": `Take out of the queue: ${c.post.first}`,
+    "data-keep": `out:${c.post.id}` }, h("span", null, "Take out"));
+  b.addEventListener("click", () => whileBusy(b, async () => {
+    const reply = await post(`/api/post/${c.post.id}/unqueue`, {});
+    announce(reply.error || "Out of the queue. It stays approved, in your posts.", { urgent: !!reply.error });
+    window.dispatchEvent(new Event("studio:poll"));
+    await refresh();
+  }));
+  return b;
 }
 
 // Who Claude runs as: "Signed in as <account> (<plan>)", or a link to Settings › Claude when it is not (or can't tell).
@@ -115,15 +177,6 @@ function planForm(d) {
   const audience = h("input", { class: "input", name: "audience", value: last.audience || "", placeholder: "e.g. engineering managers at Indian SaaS startups", required: true });
   const goal = h("input", { class: "input", name: "goal", value: last.goal || "", placeholder: "e.g. inbound conversations about platform work", required: true });
   const theme = h("input", { class: "input", name: "theme", value: last.theme || "", placeholder: "Left empty, the plan draws on your Story Bank" });
-  let count = Number(last.max_posts || 4);
-  const counts = h("div", { class: "segmented", role: "group", "aria-label": "Posts this week" }, [3, 4, 5].map((n) => {
-    const b = h("button", { class: "btn small", type: "button", "aria-pressed": String(n === count) }, String(n));
-    b.addEventListener("click", () => {
-      count = n;
-      counts.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-    });
-    return b;
-  }));
   const founder = h("input", { type: "checkbox", checked: !!last.founder });
   const out = h("div", { class: "results" });
   const go_ = h("button", { class: "btn primary", type: "submit" }, icon("sparkle", 15), h("span", null, "Plan the week"));
@@ -131,13 +184,14 @@ function planForm(d) {
     h("p", { class: "soft" }, d.bank_filled ? "Angles come from your Story Bank." : "Your Story Bank is empty, so angles will be general until the interviewer fills it."),
     h("div", { class: "fields" }, field("Who you are writing for", audience), field("What the week should achieve", goal),
       field("Theme", theme, true), h("div", { class: "field" }, h("span", { class: "field-label" }, "Posts this week"),
-        h("div", { class: "seg-row" }, counts, h("label", { class: "check" }, founder, "Founders edition")))),
+        h("div", { class: "seg-row" }, h("span", null, `${plural(d.posting_days, "post", "posts")}, one for each posting day: ${d.posting}. `,
+          h("a", { href: "#~settings-posting" }, "Posting times")), h("label", { class: "check" }, founder, "Founders edition")))),
     out,
     h("div", { class: "form-foot" }, go_, h("span", { class: "soft" }, "About a minute. You can leave this page while it runs.")));
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     whileBusy(go_, async () => {
-      const reply = await post("/api/planner", { audience: audience.value, goal: goal.value, theme: theme.value, max_posts: count, founder: founder.checked });
+      const reply = await post("/api/planner", { audience: audience.value, goal: goal.value, theme: theme.value, founder: founder.checked });
       if (reply.error) {
         put(out, h("div", { class: "result bad" }, icon("alert", 15), h("div", null, reply.error)));
         return announce(reply.error, { urgent: true });
@@ -149,7 +203,7 @@ function planForm(d) {
   });
   return h("section", { class: "panel", id: "plan-form" },
     h("header", { class: "panel-head" }, h("span", { class: "panel-mark" }, icon("calendar", 17)),
-      h("div", null, h("h2", null, "Plan the next 7 days"), h("p", null, "Three to five posts from the content planner, each with a pillar, a hook formula and an angle."))),
+      h("div", null, h("h2", null, "Plan the next 7 days"), h("p", null, "One post for each of your posting days, from the content planner, each with a pillar, a hook formula and an angle."))),
     form);
 }
 

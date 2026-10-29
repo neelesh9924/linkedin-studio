@@ -4,10 +4,9 @@
 // search button beside light or dark. An accessible combobox: the input owns a listbox and points at the active option
 // with aria-activedescendant, so the focus never leaves the input. It starts itself once, however often it is loaded.
 import { $, state, h, icon, api, go, showDialog, closeButton, announce, focusFirst, onPoll } from "./core.js";
+import { PANELS as SETTINGS } from "./settings.js";
 
 const GROUPS = ["Posts", "Pages", "Actions"];
-const SETTINGS = [["claude", "Claude"], ["publishing", "Publishing"], ["chatgpt", "ChatGPT"], ["profile", "You in the preview"],
-  ["appearance", "Appearance"], ["health", "Health checks"], ["runs", "Recent runs"], ["app", "The app"]];
 let openNow = null;
 let tools = null;        // Tools' tools, from /api/tools the first time the palette opens
 
@@ -41,7 +40,10 @@ function items() {
   };
   press($("newPost"), "New post", "plus", "Alt+N", "add create draft");
   const top = $("topActions");
-  press(top.querySelector('[data-act="approve"]'), "Approve this text", "check", "", "lock ready");
+  press(top.querySelector('[data-act="queue"]'), top.querySelector('[data-act="approve"]') ? "Approve and queue" : "Add to queue", "check", "",
+    "approve queue lock ready next free time");
+  press(top.querySelector('[data-act="approve"]'), "Approve only", "check", "", "approve lock ready");
+  press(top.querySelector('[data-act="unqueue"]'), "Take out of the queue", "x", "", "queue remove");
   press(top.querySelector('[data-act="schedule"]'), "Schedule…", "clock", "", "publish publora time");
   press(top.querySelector('[data-act="back"]'), "Back to draft", "arrow-left", "", "unapprove unlock edit");
   if (state.page === "post") {
