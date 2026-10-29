@@ -16,7 +16,7 @@ export const PANELS = [["claude", "Claude"], ["publishing", "Publishing"], ["pos
   ["runs", "Recent runs"], ["app", "The app"]];
 const CHECKS = { check_config: "Connections", selftest: "Full self-test" };
 const running = {};       // check -> running at the last draw, so its end is said once
-const typed = {};         // a box's words not yet saved (name, headline, codexHome, style, posting), kept through redraws
+const typed = {};         // a box's words not yet saved (model, name, headline, codexHome, style, posting), kept through redraws
 const PHOTO_PX = 256;     // the photo is made this size here, before it is sent
 
 export async function render(container, { page, sub } = {}) {
@@ -114,7 +114,8 @@ async function settings(quiet = false) {
     data.problems.map((p) => h("div", { class: "notice bad" }, icon("alert", 16), h("div", null, p))),
     section("claude", "sparkle", "Claude", "Every run uses the login in the folder below, whatever started the app.",
       signedNote,
-      facts(["Login folder", h("code", null, c.login)], ["Model", c.model], ["Per run", `up to ${c.turns} turns and ${c.seconds} seconds`],
+      modelForm(c),
+      facts(["Login folder", h("code", null, c.login)], ["Per run", `up to ${c.turns} turns and ${c.seconds} seconds`],
         ["Ask Claude", `up to ${c.chat_turns} turns and ${c.chat_seconds} seconds a request`], ["Program", h("code", null, c.program)],
         ["Skills", h("code", null, c.skills)]),
       h("div", { class: "form-foot" }, check, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
@@ -164,6 +165,38 @@ function keepFocus(keep, caret, ...instead) {
       el.setSelectionRange(...caret);
     } catch {}
   }
+}
+
+// The model every run uses, as the owner's other studios have it: a box with sonnet, opus and haiku to pick from, or any
+// name Claude Code takes; empty is the account's own default. It is used from the next run on.
+function modelForm(c) {
+  const box = h("input", { class: "input", id: "claude-model", list: "claude-models", placeholder: "Account default",
+    value: typed.model ?? c.model_value, spellcheck: "false", autocomplete: "off", "data-keep": "claude-model",
+    "aria-describedby": "claude-model-hint" });
+  box.addEventListener("input", () => {
+    typed.model = box.value;
+  });
+  const out = h("div", { class: "results" });
+  const save = h("button", { class: "btn small", type: "submit", "data-keep": "model-save" }, "Save");
+  const form = h("form", { class: "model-form" },
+    h("label", { class: "field" }, h("span", { class: "field-label" }, "Model"), box,
+      h("span", { class: "field-hint", id: "claude-model-hint" }, "Empty uses the account’s default. “sonnet” uses less of the limit.")),
+    h("datalist", { id: "claude-models" }, ["sonnet", "opus", "haiku"].map((m) => h("option", { value: m }))),
+    out, h("div", { class: "form-foot" }, save));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    whileBusy(save, async () => {
+      const reply = await post("/api/settings/model", { model: box.value });
+      if (reply.error) {
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      delete typed.model;
+      announce(`Saved. The next run uses ${reply.model_value || "the account’s default"}.`);
+      await settings(true);
+    });
+  });
+  return form;
 }
 
 // ---------- you, in the preview ----------

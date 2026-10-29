@@ -571,7 +571,8 @@ button.coming-what:focus-visible { outline: 2px solid var(--accent); outline-off
 .coming-tools { display: flex; align-items: center; gap: 2px; }
 .coming-note { grid-column: 2 / -1; display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--warn); }
 .coming-note .icon { flex: none; margin-top: 2px; }
-/* Settings › Posting times: a row a day, the day ticked on or off and its time */
+/* Settings › Claude's Model, and Posting times: a row a day, the day ticked on or off and its time */
+.model-form { display: grid; gap: 8px; max-width: 520px; }
 .posting-form { display: grid; gap: 14px; max-width: 520px; }
 .posting-days { display: grid; gap: 6px; }
 .posting-row { display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 130px); align-items: center; gap: 12px; }

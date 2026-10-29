@@ -30,7 +30,7 @@ timezone = 'Asia/Kolkata'
 browser_path = ''
 
 # Model passed to `claude --model`. "sonnet" goes easier on Pro limits;
-# "opus" for the strongest drafts; "" = the account default.
+# "opus" for the strongest drafts; "" = the account default. Settings › Claude changes it too.
 model = 'sonnet'
 
 # Per-run caps. --max-turns is accepted by Claude Code 2.1.292 but not listed

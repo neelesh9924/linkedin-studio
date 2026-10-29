@@ -9,7 +9,9 @@ import pytest
 from conftest import TOKEN
 from fastapi.testclient import TestClient
 
-from app import api_pages, guide, render
+from app import api_pages, guide, paths, render
+from app.claude_runner import build_command
+from app.skills import build_request
 from app.main import create_app
 
 STATIC = Path(__file__).resolve().parents[1] / "app" / "static"
@@ -158,3 +160,26 @@ def test_the_picture_taker_refuses_the_user_name_settings_and_the_claude_card(tm
     guide_shots.Camera(FakePage("all made up")).shoot("post", "light")
     assert [p.name for p in tmp_path.iterdir()] == ["post-light.webp"]
     assert "Public" in str(guide_shots.neutral_folder())
+
+
+# ---- the model -------------------------------------------------------------------------------
+def test_the_model_box_saves_into_config_local_and_the_next_run_uses_it(web, cfg, tmp_path, monkeypatch):
+    """Settings › Claude's Model, as the owner's other studios have it: a name --model takes, or empty for the account's
+    default. Only the model line of config.local.toml changes, and every run from then on uses it."""
+    local = tmp_path / "config.local.toml"
+    local.write_text("# kept\nport = 8799\nmodel = 'sonnet'\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "LOCAL", local)
+    runner = web.app.state.jobs.runner
+    shown = web.get("/api/settings").json()["claude"]
+    assert (shown["model"], shown["model_value"]) == ("sonnet", "sonnet")
+    refused = web.post("/api/settings/model", json={"model": "op us; rm"})
+    assert refused.status_code == 422 and refused.json()["error"] == "The model is a name like sonnet or opus."
+    assert web.post("/api/settings/model", json={"model": "opus"}).json() == {"ok": True, "model": "opus", "model_value": "opus"}
+    assert local.read_text(encoding="utf-8") == "# kept\nport = 8799\nmodel = 'opus'\n" and runner.model == "opus"
+    req = build_request("humanize", {"text": "A post."})
+    cmd = build_command(cfg, req, model=runner.model)
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert web.get("/api/planner").json()["claude"]["model"] == "opus"
+    assert web.post("/api/settings/model", json={"model": ""}).json()["model"] == "Account default"
+    assert "--model" not in build_command(cfg, req, model=runner.model)     # empty: the account's own default
+    assert "model = ''" in local.read_text(encoding="utf-8")

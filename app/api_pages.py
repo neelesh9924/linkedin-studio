@@ -31,6 +31,7 @@ GOALS = ("comments", "reposts", "likes", "saves")
 MODES = {"bank": "interview", "voice": "voice"}
 MODE_TITLE = {"bank": "Story Bank", "voice": "Voice profile"}
 HUMANIZE_MODES = ("default", "forensic", "strict", "aesthetic", "all")
+MODEL = re.compile(r"^[A-Za-z0-9._\[\]-]{1,64}$")   # sonnet, opus, haiku, a full name, opus[1m]: what --model takes
 REACTIONS = {"LIKE": "Like", "PRAISE": "Celebrate", "EMPATHY": "Love", "INTEREST": "Insightful",
              "APPRECIATION": "Support", "ENTERTAINMENT": "Funny"}
 VERSION_TTL = 60   # seconds the Claude version and its sign-in are kept between visits
@@ -93,6 +94,10 @@ def register(app: FastAPI, s: Studio) -> None:
 
     def sign_in(fresh: bool = False) -> dict:
         return account_of(str(cfg.claude_config_dir), fresh=fresh)
+
+    def model_now() -> str:
+        """The model every run uses now ("" = the account's default): the runner's, which Settings › Claude changes."""
+        return getattr(jobs.runner, "model", cfg.model)
 
     # ---- planner (and this month) ---------------------------------------------------------
     def coming_up(upcoming: list) -> list[dict]:
@@ -166,7 +171,7 @@ def register(app: FastAPI, s: Studio) -> None:
             "coming": coming, "posting": posting.words(s.queue.times()), "posting_days": len(s.queue.times()),
             "window": MAX_AHEAD.days,
             "claude": {"working": ACTIONS[active[0]["kind"]].doing if active else "",
-                       "login": str(cfg.claude_config_dir), "model": cfg.model or "Account default",
+                       "login": str(cfg.claude_config_dir), "model": model_now() or "Account default",
                        "sign_in": sign_in(),
                        "last_run": (f"{ACTIONS[last_run['kind']].title if last_run['kind'] in ACTIONS else last_run['skill']}, "
                                     f"{s.ago(last_run['started_at'])}") if last_run else "",
@@ -404,7 +409,8 @@ def register(app: FastAPI, s: Studio) -> None:
         return {
             "claude": {"version": said, "ready": "Claude Code" in said, "login": str(cfg.claude_config_dir),
                        "sign_in": sign_in(),
-                       "model": cfg.model or "Account default", "turns": cfg.max_turns, "seconds": cfg.timeout_seconds,
+                       "model": model_now() or "Account default", "model_value": model_now(),
+                       "turns": cfg.max_turns, "seconds": cfg.timeout_seconds,
                        "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
                        "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},
             "publora": pub.status(), "limit": cfg.monthly_post_limit, "timezone": cfg.timezone, "tz": s.tz_label,
@@ -445,6 +451,20 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/settings/claude/check")
     def settings_sign_in():
         return {"sign_in": sign_in(fresh=True)}
+
+    # Settings › Claude's Model, as the owner's other studios have it: a name --model takes, or empty for the account's
+    # own default. Kept in config.local.toml (only its model line changes) and used from the next run on.
+    @app.post("/api/settings/model")
+    def settings_model(data: dict = Body(default={})):
+        text = str(data.get("model") or "").strip()
+        if text and not MODEL.match(text):
+            return fail("The model is a name like sonnet or opus.")
+        try:
+            paths.save_values({"model": text})
+        except ConfigError as exc:
+            return fail(str(exc), 500)
+        jobs.runner.model = text
+        return {"ok": True, "model": text or "Account default", "model_value": text}
 
     # Settings › Post style (style.py): the sliders every new draft is written with, and what each step is called.
     def style_public() -> dict:

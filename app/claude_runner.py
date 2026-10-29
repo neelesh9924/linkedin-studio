@@ -104,7 +104,9 @@ class RunResult:
 
 
 def build_command(cfg: Config, req: RunRequest, prefix: list[str] | None = None,
-                  mcp_config: Path | None = None) -> list[str]:
+                  mcp_config: Path | None = None, model: str | None = None) -> list[str]:
+    """`model`: what --model gets (the runner's, which Settings › Claude changes); None: the config's; "": the account's
+    own default, so no --model at all."""
     cmd = list(prefix) if prefix else [str(cfg.claude_bin)]
     cmd += [
         "-p",
@@ -124,8 +126,9 @@ def build_command(cfg: Config, req: RunRequest, prefix: list[str] | None = None,
         "--max-turns", str(req.max_turns or cfg.max_turns),
         "--append-system-prompt", req.system,
     ]
-    if cfg.model:
-        cmd += ["--model", cfg.model]
+    model = cfg.model if model is None else model
+    if model:
+        cmd += ["--model", model]
     if req.resume_session:
         cmd += ["--resume", req.resume_session]
     elif not req.persist_session:
@@ -256,13 +259,14 @@ class ClaudeRunner:
     def __init__(self, cfg: Config, prefix: list[str] | None = None):
         self.cfg = cfg
         self.prefix = prefix  # tests run a fake claude through the same code path
+        self.model = cfg.model  # every run's --model ("" = the account's default); Settings › Claude changes it
 
     def run(self, req: RunRequest, cancel: threading.Event | None = None,
             on_progress: Callable[[str], None] | None = None,
             timeout: float | None = None) -> RunResult:
         env = build_env(self.cfg, mcp=req.mcp is not None)  # raises ClaudeRefused before anything starts
         if req.mcp is None:
-            return self._run(req, build_command(self.cfg, req, self.prefix), env, cancel, on_progress, timeout)
+            return self._run(req, build_command(self.cfg, req, self.prefix, model=self.model), env, cancel, on_progress, timeout)
         # The studio's tool server: its address and this run's token, in a folder of its own.
         holder = tempfile.mkdtemp(prefix="linkedin-studio-claude-")
         config = Path(holder) / "mcp.json"
@@ -270,7 +274,8 @@ class ClaudeRunner:
             "type": "http", "url": req.mcp["url"],
             "headers": {"Authorization": f"Bearer {req.mcp['token']}"}}}}), encoding="utf-8")
         try:
-            return self._run(req, build_command(self.cfg, req, self.prefix, config), env, cancel, on_progress, timeout)
+            return self._run(req, build_command(self.cfg, req, self.prefix, config, model=self.model), env, cancel, on_progress,
+                             timeout)
         finally:
             shutil.rmtree(holder, ignore_errors=True)
 
