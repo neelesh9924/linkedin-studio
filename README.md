@@ -1,0 +1,456 @@
+# LinkedIn Studio
+
+A local, single-user Windows app that runs the
+[linkedin-skills](https://github.com/sergebulaev/linkedin-skills) Claude Code skills from a UI.
+You double-click a shortcut and an app window opens. Closing the window stops everything.
+
+- **Claude:** the Claude Code CLI in headless mode (`claude -p`) on your own login. There is no
+  API key and no cloud hosting.
+- **Publishing:** goes through Publora (free tier: 15 posts a month), and only after you approve
+  the text and confirm the time.
+- **Pictures and carousels:** a post goes out with up to 10 pictures, or one carousel: slides
+  Claude lays out from the post, drawn by the studio as a PDF that LinkedIn shows as a swipeable
+  document (the words are drawn as text, so nothing is misspelt). Illustrations are optional:
+  Claude can ask ChatGPT for one, through OpenAI's Codex CLI signed in as your own ChatGPT account.
+- **Comments and replies:** drafted for you to copy. The app never posts them.
+- **Storage:** everything stays on this machine (`data\`, plus two files in the skills repo).
+
+## The studio
+
+One window in three columns: your posts on the left, the post as LinkedIn will show it in the
+middle, and Ask Claude beside it. **New to it? Open Guide in the sidebar**: it walks through the
+routine step by step, with a picture of where each step happens.
+
+**A post, as LinkedIn will show it**, with Ask Claude beside it to change it:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/post-dark.webp">
+  <img src="app/static/guide/post-light.webp" width="900" alt="A post as LinkedIn shows it, with the sidebar of posts on the left and Ask Claude on the right">
+</picture>
+
+**Hot topics**: the news in your niche, each item ranked for how well it fits you, and one press
+from a draft:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/hot-dark.webp">
+  <img src="app/static/guide/hot-light.webp" width="900" alt="Hot topics: the news ranked for you, each item with why, the post it would become, and Draft">
+</picture>
+
+**Story Bank & Voice**: an interviewer collects your real stories and numbers, so a draft leaves a
+blank where it has no fact of yours, instead of inventing one:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/bank-dark.webp">
+  <img src="app/static/guide/bank-light.webp" width="900" alt="Story Bank & Voice, with the interviewer asking its first question beside it">
+</picture>
+
+**Schedule**: what goes out when. Each post you approve takes your next free posting time:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/coming-dark.webp">
+  <img src="app/static/guide/coming-light.webp" width="900" alt="Schedule: Coming up, the posts at Publora and the queue in line order with its buttons">
+</picture>
+
+*Made-up demo data: the Guide's own pictures, retaken by `dev\guide_shots.py`.*
+
+- **The sidebar** lists your posts, each with its first line and its state: drafts first, then
+  approved ones, then what goes out, soonest first (scheduled and queued together). The
+  **Posts** heading counts the drafts, and the approved, queued and scheduled posts when there
+  are any. Published and cancelled posts fold away under
+  **Earlier**, which stays as you leave it; the post you have open always shows. **New post**
+  starts one. Below the list: Schedule, Hot topics, Story Bank & Voice, Tools, Guide, Settings, Trash,
+  and the light/dark switch.
+- **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
+  "…more" fold at about 210 characters and its pictures in LinkedIn's grid, or its carousel to page
+  through), under your name, headline and photo
+  from **Settings › You in the preview** (they stay on this PC). The top bar has its title, its
+  state and the next step: **Approve and queue** (or **Approve only**, then **Add to queue** or
+  **Schedule…**), **Take out of the queue** while it waits, then **Check now** once it is at
+  Publora (it asks whether the post went out) and, once it is out, **Open on LinkedIn**. The gear holds its
+  versions (your own edits are kept as versions too; **Compare with now** shows an earlier one's
+  words against the post's now), earlier chats, **New draft from this** (an editable copy of any
+  post) and **Move to Trash…**. While you edit the text, **Bold** (Ctrl+B) turns the selection into
+  LinkedIn's bold (the Unicode letters other posts use) and back: keep it for the first line and
+  short heads, since screen readers and LinkedIn's search read those letters as symbols. Beside
+  the post, **Pictures** lists every picture and carousel kept with it, the ones marked **On the
+  post** being what is posted with it: **Add to the post** (up to 10 pictures, in the order you
+  set), **Remove from post** (it stays in Pictures), **Use this carousel** (alone: LinkedIn doesn't
+  mix a document with pictures), **Try another look** (the same slides in the next of five looks:
+  midnight, terminal, blueprint, paper and poster, three colourings each; its art kept, no ChatGPT
+  picture spent), **Redraw**, which draws a carousel or a card again in its place, and **Delete…**
+  for one that isn't on the post. Slides name nobody until you tick **Put them on carousels too**
+  under **Settings › You in the preview**. **Carousel** in the bar asks Claude for a carousel or a
+  single card (posted as a picture), laid out with what teaches the post best (a cheat sheet of
+  cards, a before and after with code, chat or a file tree, a code card, steps, a conversation, a
+  big figure, ==marked== and ~~struck~~ words), in a look unlike your last ones, with ChatGPT art
+  (a sticker: one character or object) where it helps. **Rank**, beside the post, says how worth posting it is (1 to
+  10: worth posting, strengthen it first, or not worth a post), why, and the one change that would
+  lift it; **Ask Claude to rank it**, or give it your own number. Drafts list best first, each with
+  its rank in its line.
+- **Ask Claude**, on the right, is a chat kept with each post. Ask for a draft, a sharper hook,
+  a shorter take, an audit, a picture or a carousel: Claude works through the skills and changes the post
+  itself, and each change is kept as a version you can go back to. You can attach files (notes,
+  a PDF, a chart) for Claude to read; an attached picture can be put on the post. On a post that
+  is not a draft the text is locked: the panel says what unlocks it (Back to draft, cancelling on
+  Publora, or New draft from this), and Claude can still audit it, but its run gets no tool that
+  rewrites the post or makes a picture, so none is spent on it. A request that never got an
+  answer (the app closed meanwhile) offers **Try again**. The panel widens or narrows from its
+  left edge: drag it, or use ← and → on it; a double-click puts it back.
+
+**Editing a post**
+
+- **Autosave.** Click the text (or press **Edit text**) and type: it saves about a second after
+  you stop (Ctrl+S saves at once). **Copy** and **Copy first comment** copy the words as they go
+  out.
+- **Character meter.** Where the post sits against the 900-1,300 sweet spot and LinkedIn's 3,000
+  limit.
+- **Blanks.** The writer marks facts it does not have as `[N]`, `[DD Month YYYY]` or a short
+  request in brackets. The editor counts them, **Next blank** jumps to each one, and Approve
+  refuses while any remain. Code in a post is not a blank: brackets holding quotes, parentheses
+  or operators, a list of numbers, or an index like `items[0]`.
+- **Audit and Revise.** Audit findings appear beside the text. New hook, Shorter or More
+  technical shows the changes word by word; nothing is replaced until you choose **Use this
+  version**.
+- **Post style.** Four sliders: **Hook** (plain to bold: how the first line pulls a reader in),
+  **Tone** (formal to warm), **Emojis** (none, one, two, or **Markers**: keycaps to number steps
+  and one meaningful emoji leading a line, never the ones that read as AI) and **Layout** (plain
+  paragraphs, or **Sections**: a bold first line and bold heads, written as `**words**` and turned
+  into LinkedIn's bold by the studio).
+  Your default in **Settings › Post style** goes with every run that writes a post: Ask Claude,
+  Revise, Hot topics' drafts and the Repurposer. A post's own **Style** button has
+  the same sliders and **Restyle**, which writes the same post in them, word by word beside it like
+  a revision; they become that post's own style. Whatever the sliders say, it stays professional.
+- **The queue.** Set your posting days, and a time for each, once in **Settings › Posting
+  times** (it starts with the skills' mornings: Tuesday 8:00, Wednesday 9:30, Thursday 8:00).
+  **Approve and queue** on a draft, or **Add to queue** on an approved post, puts it at the end of
+  the line, where it takes your next free posting time: one post a day at most, and no more than
+  the monthly limit (a full month passes to the next). There is no dialog and no time to pick;
+  only a link in the text, or a picture kept but not on the post, makes it ask first. A queued
+  post goes to Publora by itself once your **Publora plan** has room for it (Settings ›
+  Publishing): on Starter, the free plan, that is 7 days ahead and 3 scheduled posts at a time, so
+  open the studio every few days; on Pro there are no limits and the studio hands posts over 14
+  days ahead. A post already at Publora goes out even with the PC off. **Schedule**'s **Coming up** lists what goes out
+  when, with **Move up**, **Move down**, **First in line** and **Take out** on each queued post,
+  and the posting times still free.
+- **Publish.** Draft → Approved (→ Queued) → Scheduled → Published. Approved text is locked.
+  Scheduling a time of its own asks for a time (your free posting times one click away), then
+  confirms the final text, time, first comment and picture. Before **Schedule it**, the dialog lists anything worth a second
+  look (a blank, a link better in the first comment, a picture not on the post, a time far from
+  the plan's, the month's last posts); it never stops you. **Post now…**, in the top bar of a draft, an approved or a
+  queued post (and on a queued post in Coming up), sends it at once after the same final check: Publora takes no post
+  without a time, so it goes for the soonest the studio schedules, about 2 minutes ahead, and counts toward the month
+  like any other. Once a post's time has passed, the
+  studio asks Publora every few minutes whether it went out (it only reads; nothing is sent) and
+  marks it Published with its LinkedIn link, or Failed in Publora's own words.
+- **Trash.** **Move to Trash…** (the gear) sends a draft, approved, failed, cancelled or published
+  post to the Trash, after Settings in the sidebar. There **Put back** returns it as it was, with its
+  versions, chat and pictures; **Delete forever…** and **Empty trash** ask first and name what goes.
+  A published post stays on LinkedIn, and its month still counts it after Delete forever.
+  Scheduled posts stay protected: cancel one on Publora first.
+- **Search.** The box under **New post** (or **/** from anywhere) finds a post by any word in it, as
+  you type: its text, first comment, the words on its carousel or card, the news it was drafted
+  from, its title, or where it stands ("scheduled", "draft"). Every word must be somewhere, in any
+  case, LinkedIn's bold letters read as plain ones; each post found shows the line its words are on,
+  marked. Esc empties it. Ctrl+K finds posts the same way.
+
+**The pages**
+
+| Page | What it does |
+|---|---|
+| Schedule | **Coming up** first: the posts at Publora with their times, the queue in line order (**Move up**, **Move down**, **First in line**, **Take out**), the posting times still free, and **Check Publora**. Then Getting set up (until its steps are done), and this month: posts used (x of 15), the next post out, and Claude's status |
+| Hot topics | The last 14 days of news in your niche (Android and Kotlin, Flutter, Swift and iOS, Django and Python, Postgres, the web, AI coding agents), **ranked for you**: from the teams behind your tools (Android, Android Studio, Kotlin, Flutter, Dart, Django, Python, PostgreSQL, GitHub, Firebase), every article of the Android Weekly and iOS Dev Weekly issues, the Swift and Django forums, engineering blogs (Cloudflare, Netflix, Shopify, Meta, Discord, InfoQ, JetBrains), dev.to's most liked of the week, and the Hacker News stories with 100 points or more that name your areas. Claude ranks each new item 1 to 10, how good a post it makes for you: how it fits you (your voice profile; its run is refused the Story Bank) and whether it has something to teach; each item shows its rank, why, and the post it would become. **Best for you** first, then the items not ranked yet; those ranked 1 to 4 fold away under **Not for you**, and the same story from several sources is one item. **Draft** has Claude write that post from the article, with its link in the first comment; the item then shows the draft at work, then **Open the post**, and the post keeps a **From Hot topics** card. The studio reads the news when the page opens and its copy is over an hour old (**Refresh** reads it again), then ranks what is new, a batch at a time. **Search the news** shows only the items with every word somewhere in them (title, source, area, rank, why, the post), the words marked; Not for you opens while it holds a match |
+| Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them. **Ask me about this** on a filled Story Bank entry starts a short interview about that entry alone, in a new conversation |
+| Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons, and each tool's last ten results under **Earlier results**. **Start a post from this** turns a rewrite, an audited draft (its findings with it), a hook's template or a repurposed post into a new post and opens it |
+| Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again), your **Publora plan** (Starter or Pro: how many posts a month, how many wait at Publora at a time, how far ahead; the studio restarts to use it), the **Model** every run uses (a dropdown: the account's default, Sonnet, Opus or Haiku, saved as you pick it into `config.local.toml`) and **Change folders**; publishing keys (set or missing, never shown), **Posting times** (the days and times the queue gives its posts), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview, and on carousels only when you tick **Put them on carousels too**), **Post style** (the four sliders new drafts are written with), light/dark/auto, **Backup and restore** (one file of everything of yours, never a key; see Backups below), the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-posting`, `-chatgpt`, `-profile`, `-style`, `-appearance`, `-backup`, `-health`, `-runs`, `-app`) |
+| Trash | Posts moved there: Put back, Delete forever…, Empty trash |
+
+**Keys.** / goes to the search (on Hot topics, the news's own); Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
+Claude; Alt+↑ / Alt+↓ open the previous or next post; ? lists the shortcuts. In Ask Claude, Enter
+sends, Shift+Enter adds a line and ↑ in an empty box brings back your last message; on its edge,
+← and → make the panel wider or narrower (Shift for bigger steps). The Guide's
+Keys and limits lists them all.
+
+**Jobs.** Claude runs one job at a time; others wait in line. A running job shows its steps,
+numbered, a timer and Cancel (Stop, in a chat), and its result appears in place. You can leave the page: when the
+job ends, a note in the corner links to it.
+
+## First run
+
+You need:
+
+1. Windows 11 and Python 3.11 or newer (`py -3 --version`).
+2. [Claude Code](https://code.claude.com/docs/en/setup), installed and signed in: run `claude`
+   once in a terminal and log in. The app needs the real `claude.exe`. If yours came from npm,
+   run `claude install` to get it.
+3. A copy of the skills, cloned with real links. Turn on Developer Mode in Windows Settings
+   first, then run:
+   `git -c core.symlinks=true clone https://github.com/sergebulaev/linkedin-skills`
+4. This repository, in any folder.
+
+Then:
+
+1. **Launch.** Double-click `Launch LinkedIn Studio.vbs`, or make a desktop shortcut with the
+   snippet in [docs/SHORTCUT.md](docs/SHORTCUT.md). The first time, a console window builds
+   `.venv` and installs the pinned packages (about a minute); it does so again when
+   `requirements.txt` changes. Otherwise there is no console.
+2. **Set the three folders.** On a new PC the app opens its setup screen first. See below.
+3. **Keys.** In your skills folder, copy `.env.example` to `.env` and set:
+   - `PUBLORA_API_KEY=sk_…` (Publora → Settings → API)
+   - `LINKEDIN_PLATFORM_ID=linkedin-…` (Publora → Channels → your LinkedIn account)
+   - optional: `APIFY_TOKEN=apify_api_…`, so post URLs can be fetched instead of pasted
+   - **Delete the lines you don't use.** The placeholders from `.env.example` are ignored by this
+     app but count as "set" for the skills' own scripts.
+4. **Pictures (optional).** Install the Codex CLI (`npm install -g @openai/codex`). In
+   **Settings → ChatGPT**, name a folder of its own for Codex's sign-in (its Codex home), save,
+   and press **Sign in**. There is no default: the PC's own `.codex` folder may be signed in to
+   another account, so it is never used. Empty means pictures are off.
+
+### Setting the three folders
+
+The app has to know where three things are on your PC. On a new PC it opens a setup screen
+for this before anything else. Later the same screen is under **Settings → Change folders**.
+
+| Folder | What it is | Usually |
+|---|---|---|
+| Skills folder | Your clone of linkedin-skills. Claude works inside it | next to this folder, or `C:\Users\you\linkedin-skills` |
+| Claude program | `claude.exe`, the Claude Code command-line program (not the desktop app) | `C:\Users\you\.local\bin\claude.exe` |
+| Claude login folder | Where Claude Code keeps your sign-in | `C:\Users\you\.claude` |
+
+For each one you can click a place the app **found on this PC**, press **Browse…** and choose
+it in a Windows file window, or paste the path (Explorer's "Copy as path" works, quotes
+included). **Save** checks all three, writes them to `config.local.toml` and restarts the app.
+As part of the check it asks the program for its version, so a different `claude.exe` is caught
+there and not on your first job, and asks Claude Code (`claude auth status`, which sends Claude no
+request) who each login folder is signed in to. The screen shows the account beside every login
+folder it found, so a work sign-in on the same PC is easy to tell apart, and Save refuses a folder
+signed in to nobody. An answer it cannot read (an older Claude Code) is shown, never a reason to
+refuse.
+
+By hand instead: copy `config.example.toml` to `config.local.toml` and set `skills_dir`,
+`claude_bin` and `claude_config_dir`. The other settings in that file (port, time zone, model,
+limits, `codex_home`) are explained there.
+
+## How it stays safe
+
+- **Claude's account.** Each Claude run gets `CLAUDE_CONFIG_DIR` from the config, never from the
+  environment, so the app always uses the login you chose. If the folder is missing, the app
+  refuses to run Claude. `ANTHROPIC_API_KEY` is stripped, so a run can't fall back to paid API
+  billing.
+- **What Claude can do.** The backend picks the tools for each run:
+  - Skills get `Skill` and `Read` only. Reads work inside `linkedin-skills` only; `.env` and
+    anything outside are denied.
+  - The Interviewer and voice-profile chats may also edit their one file: `story-bank.md` or
+    `voice-profile.md`.
+  - A post's chat also gets the studio's own tools, and nothing else: rewrite this post, keep an
+    audit on it, make a picture for it (when ChatGPT is set up), make a carousel of it (drawn by
+    the studio with Playwright and the Chrome or Edge on the PC), fetch a LinkedIn post (when an
+    Apify token is set). They are served by the app on `127.0.0.1`, behind a token made for that
+    one run.
+  - A chat's attached files sit in a folder of that chat, the one extra folder its run may read.
+  - No run gets Bash, web access or any other MCP server. Prompts go in on stdin; the command
+    is a list, with no shell.
+  - Apify fetching and Publora publishing are done by the app, not by Claude.
+  - Hot topics is read by the app too, under its own name (`LinkedInStudio/1.0`), from public
+    feeds, Hacker News's public search and dev.to's public API, only when its page asks; nothing
+    about you is sent. It reads the public web only: an address on this PC or your network is
+    refused, on every redirect too. Its ranking and its drafts get the news as text marked as
+    someone else's, never as instructions, and the ranking run may not read your Story Bank.
+- **Limits.** 12 turns and 180 s per skill run; 30 turns and 600 s per Ask Claude request. A
+  timeout, Cancel or Stop kills the whole process tree (Windows Job Object).
+- **ChatGPT's pictures.** Codex runs with the Codex home you named and nothing else
+  (`OPENAI_API_KEY` and the like are stripped). At most 4 pictures per request, counted per day
+  on the Settings page. The rules: LinkedIn's sizes (1200 x 627 or 1080 x 1080), an
+  illustration and never something passed off as a photo, a word or two at most, no real
+  people's faces. A picture goes out only if you put it on the post.
+- **Approving.** Approve refuses text that still contains placeholder slots like `[N]` or
+  `[DD Month YYYY]`. The writer leaves these where it has no real fact.
+- **Scheduling happens exactly once:**
+  - Scheduling is one database transaction from approved to scheduling, so double-clicks can't
+    send twice.
+  - It is a single Publora request carrying an `Idempotency-Key`.
+  - After a failed or timed-out call, Retry resends the identical request with the same key,
+    which Publora replays instead of re-posting.
+  - A post with pictures or a carousel takes Publora's media steps: create it as a draft (same key),
+    then for each file an upload link and the upload, then schedule it. Each step is recorded, file
+    by file, so Retry carries on from the one that failed, never makes a second post and never
+    uploads a file twice; Back to draft deletes the Publora draft. Up to 10 pictures, or one PDF
+    alone, as Publora takes them for LinkedIn; anything else is refused before anything is sent.
+  - Times must be between 2 minutes and as far ahead as your Publora plan schedules (Starter: 7
+    days; Pro: the studio keeps it to 14). On Starter, Publora holds 3 scheduled posts at a time,
+    so a fourth is refused here, before anything is sent. The plan's three numbers
+    (`monthly_post_limit`, `publora_at_once`, `publora_days_ahead`) are kept in `config.local.toml`;
+    Settings › Publishing writes them and restarts the studio.
+  - The queue (`app\posting.py`) sends through the very same path: a queued post's time is worked
+    out afresh each time (never stored), and the post is handed over, once, when that time is
+    within the plan's reach and the plan has room. A refusal before anything is sent (no key, a missing picture) stays on the
+    post and it keeps its place. It runs only while the studio does: when you queue a post, change
+    the posting times or move one, and every minute in the background.
+  - Once a post's time has passed, the studio only reads Publora's answer for it (get-post, at
+    most every 3 minutes, never for a post in the Trash). The only link it keeps is a
+    `https://www.linkedin.com/` one.
+  - The monthly limit is checked on the server. It counts scheduling, scheduled and published
+    posts in the IST calendar month; Publora keeps its own count too.
+- **The web server.** It listens on `127.0.0.1` only, with a random token per launch. The token
+  becomes an HttpOnly, SameSite=Strict cookie, and any request that changes something must come
+  from `http://127.0.0.1:<port>` and carry JSON. Other websites open in your browser can't use it.
+
+## Your Story Bank stays out of git
+
+The Story Bank and the voice profile hold career detail, real numbers and named people. Both
+are files the skills repository tracks as empty templates, so a filled copy would travel with
+any commit and push of that folder. A `.gitignore` line does not help for a file git already
+tracks, so the app does this instead, every time it starts:
+
+- It sets git's skip-worktree flag on both files in your clone. Git then treats your filled
+  copies as unchanged: they never show in `git status`, `git add -A` skips them, and they cannot
+  reach a commit or a push.
+- It covers the two copies the skills' self-test writes under `.codex-marketplace\` as well.
+- It lists all four paths in the clone's private ignore file (`.git\info\exclude`).
+
+Nothing in the skills repository is edited; the flag lives in your clone only. The Story Bank &
+Voice page shows the result (**Private: kept out of git**) and Settings repeats it. If the
+skills folder is not its own repository, the app changes nothing, and says so when the folder
+sits inside another repository that does not ignore these files.
+
+This repository has its own guard: `.gitignore` refuses `.env` files, databases and any
+`story-bank*.md` or `voice-profile*.md`, so a backup copied in here cannot be committed, and a
+test fails if a tracked file ever looks like one of those or like a real Publora key.
+
+## Where data lives
+
+| What | Where |
+|---|---|
+| Posts, their versions, chats, Hot topics' ranks, job log | `data\studio.db` (SQLite) |
+| Posts in the Trash, with their versions, chats and pictures | the same `data\studio.db` and `data\images\`, until **Delete forever…** or **Empty trash** |
+| Post pictures (made or attached) | `data\images\` |
+| Files attached in a chat | `data\attachments\<chat>\` |
+| Your name, headline and photo for the preview | `data\profile.json`, `data\profile-photo` |
+| Posting times, post style | `data\posting.json`, `data\style.json` |
+| How the studio was before each restore | `data\backups\before-restore-<time>.zip` |
+| Pictures made per day, Codex's sign-in log | `data\chatgpt.json`, `data\chatgpt.log` |
+| Launcher log, the app window's browser profile | `data\studio.log`, `data\browser-profile\` |
+| Story Bank, voice profile | `linkedin-skills\references\story-bank.md`, `voice-profile.md` |
+| API keys | `linkedin-skills\.env` (never shown by the app) |
+
+`data\` and `config.local.toml` are gitignored here. The ChatGPT sign-in itself stays in the
+Codex home you named; the app reads only who is signed in.
+
+## Backups
+
+**Settings › Backup and restore › Back up** downloads one file, `linkedin-studio-backup-<date>.zip`:
+the Story Bank, the voice profile, every post with its versions, pictures, carousels, cards and
+ChatGPT's art, the chats, Hot topics and its ranks, the posting times, the post style, You in the
+preview, and the settings that go with you (the Publora plan's limits, the time zone, the model).
+It never holds a key or a sign-in: `linkedin-skills\.env` and Claude's and ChatGPT's sign-ins stay
+on the PC. The app can be running: the database is copied with SQLite's own backup.
+
+**Restore from a backup…** reads one back. The studio checks the whole file first (one that is not
+a backup, or was changed after it was made, is refused), says what it holds, and after asking puts
+back the parts you tick: the Story Bank, the voice profile, the posts with their pictures and chats,
+the settings (the studio starts again to use them). Before it changes anything it keeps a backup of
+how the studio was, in `data\backups\`, and it waits while Claude is at work. On a new PC, set the
+studio up first (the linkedin-skills folder with its `.env`, Claude's sign-in), then restore.
+
+The file is an ordinary .zip: if the studio itself won't start, its parts can be copied back by hand
+with the app closed (`studio.db`, `images\`, `attachments\` and the `.json` files into `data\`; the
+two `.md` files into `linkedin-skills\references\`).
+
+## Updating the skills
+
+```powershell
+git -C C:\path\to\linkedin-skills pull
+```
+
+That is all it takes while upstream leaves the two templates alone: your filled Story Bank and
+voice profile stay as they are.
+
+If upstream changed a template too, the pull refuses ("your local changes would be
+overwritten"), and `git stash` cannot help because git does not look at these files. Close the
+app, then:
+
+```powershell
+cd C:\path\to\linkedin-skills
+$files = "references/story-bank.md", "references/voice-profile.md",
+         ".codex-marketplace/linkedin-skills/references/story-bank.md",
+         ".codex-marketplace/linkedin-skills/references/voice-profile.md"
+$keep = "$env:USERPROFILE\Documents\linkedin-studio-backup\before-pull"
+New-Item -ItemType Directory -Force $keep | Out-Null
+Copy-Item references\story-bank.md, references\voice-profile.md $keep    # your filled copies
+git update-index --no-skip-worktree -- $files                             # let git see the files again
+git checkout -- $files                                                    # back to the templates
+git pull
+Copy-Item $keep\story-bank.md, $keep\voice-profile.md references\        # put your copies back
+```
+
+Then open LinkedIn Studio before you do anything else with git: it protects the files again as
+it starts. Afterwards, run **Settings → Health checks → Connections** and one Tools run to
+confirm the skills still load.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| The setup screen opens instead of the app | One of the three folders is missing or wrong, for example after a folder was moved. Choose it again on that screen. |
+| **Browse…** seems to do nothing | The Windows file window opened behind another window. Look for it on the taskbar, or paste the path instead. |
+| Jobs fail with "Please run /login" or "Invalid API key" | The login in the Claude login folder has expired. In PowerShell run `claude`, type `/login`, sign in, then `/exit`, and retry the job. If the app uses a login folder other than the default, name it first: `$env:CLAUDE_CONFIG_DIR = "C:\Users\you\.claude-other"`. |
+| "Claude did not find the skill …", or the setup screen says the skills are not real links | `linkedin-skills\.claude\skills\*` were checked out as text files. With Developer Mode on, re-clone: `git -c core.symlinks=true clone https://github.com/sergebulaev/linkedin-skills`. Check with `Get-ChildItem linkedin-skills\.claude\skills`: LinkType must be `SymbolicLink`. |
+| Error page: port in use | Another program has the port. Set another `port` in `config.local.toml`. If it is an old LinkedIn Studio, close its window or end `pythonw.exe` in Task Manager. |
+| Publora 401 | Wrong or revoked `PUBLORA_API_KEY`. Create a new key in Publora → Settings → API. |
+| Publora 400 (`Invalid platform ID`, missing platformId) | `LINKEDIN_PLATFORM_ID` is wrong: copy the whole `linkedin-…` id from Publora → Channels. `SCHEDULED_TIME_IN_PAST`: pick a later time. |
+| Publora 404 | Wrong platform id, or the post was already deleted on Publora. |
+| Publora 403 `POST_LIMIT_REACHED` | Publora's own monthly limit. It can differ from the app's count, which only sees posts scheduled from here. |
+| "No answer from Publora … may or may not have created the post" | Check the Publora dashboard, then use **Retry**. It reuses the same idempotency key (and, for a post with a picture, carries on from the step that failed), so it can't create a second copy. |
+| Settings → ChatGPT says the Codex CLI was not found | Install it (`npm install -g @openai/codex`), or set `codex_bin` in `config.local.toml` to its `codex.exe`. |
+| Settings → ChatGPT says Codex is not signed in | Press **Sign in** there and finish ChatGPT's sign-in in the browser window Codex opens. |
+| Error page: browser not found | Set `browser_path` in `config.local.toml` to `chrome.exe` or `msedge.exe`. |
+| A job says "Claude answered, but not in the shape the app reads" | Claude answered without the result block. Its full reply is shown; press **Try again**. |
+| Approve says there are placeholder slots | Use **Next blank** to fill in every `[…]` with a real detail (or delete the sentence), then approve. |
+| A job timed out | Raise `timeout_seconds` (skills) or `chat_timeout_seconds` (Ask Claude) in `config.local.toml` and restart the app. |
+| "This window belongs to an earlier session" | The app was restarted while this window stayed open. Close it and open LinkedIn Studio from the shortcut. |
+| The Story Bank & Voice page says **Not protected from git** | Git is missing or refused. Install Git for Windows and restart the app. If the skills folder sits inside another repository of yours, add the two files to that repository's `.gitignore`. Until it says Private, do not commit or push that folder. |
+| Pages look broken or show errors right after the app's code changed | The running app still has the old code. Close its window (that stops it) and open it again. |
+
+## Development
+
+```powershell
+cd C:\path\to\linkedin-studio
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest            # API, security, jobs, scheduling, chats, pictures, and the page in Chrome
+.venv\Scripts\python -m app               # dev server; prints the sign-in URL
+.venv\Scripts\python dev\demo_server.py   # the page with stand-ins: no Claude, no Publora, no ChatGPT, made-up data
+```
+
+The demo server is the way to work on the page: every job finishes in a few seconds with canned
+output, and a post's chat calls the studio's own tools as Claude would, so each screen and each
+in-between state can be looked at without spending anything (`--empty` starts it bare).
+
+- The back end is a JSON API on FastAPI: `app\main.py` (the app, its state and jobs),
+  `app\api_posts.py` (posts, their chats, versions, pictures, scheduling) and `app\api_pages.py`
+  (the other pages). `app\mcp.py` serves the studio's tools to a post's chat; `app\codex.py`
+  makes ChatGPT's pictures; `app\status_check.py` asks Publora, read-only, whether a post whose
+  time has passed went out; `app\posting.py` is the posting times and the queue; `app\profile.py`
+  keeps You in the preview; `app\style.py` says what each step of the Post style sliders tells
+  the writer.
+- The front end is plain HTML, CSS and JavaScript modules with nothing external and no build
+  step: `app\static\index.html`, `app.css` (design tokens at the top, light and dark), `app.js`
+  and `js\`. The Guide's words live in `app\guide.py`.
+- `app\attachments.py`, `app\static\attach.js` and `attach.css` (and `tests\test_attachments.py`)
+  are shared byte for byte with other studios built like this one: change them there, never here
+  alone.
+- `tests\test_browser*.py` drive the page in Chrome or Edge through Playwright, on the demo
+  server; they are skipped when Playwright or both browsers are missing.
+- **The Guide's pictures** (`app\static\guide\`) are taken on the demo, never on your own data:
+  `.venv\Scripts\python dev\guide_shots.py` starts the demo in a folder that names no one, uses
+  the page as a person would and saves each screen in light and dark, small, as WebP. It never
+  pictures Settings, the setup screen or Schedule's Claude card, and refuses a picture whose
+  text shows your user name or home folder. Retake them when a screen changes.
+
+`docs/skill-inventory.md` covers what each skill takes and produces, the Publora client surface,
+and the gaps found when this was built. One test uses the real skills code and is skipped unless
+a linkedin-skills clone sits next to this folder.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). The licences of the projects this app includes are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

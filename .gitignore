@@ -1,0 +1,17 @@
+.venv/
+data/
+config.local.toml
+*.log
+__pycache__/
+.pytest_cache/
+
+# Personal material never belongs in this repository, wherever a copy turns up
+# (a backup dropped here, a file saved in the wrong folder).
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+story-bank*.md
+voice-profile*.md

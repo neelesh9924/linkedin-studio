@@ -1,0 +1,54 @@
+# Settings for LinkedIn Studio.
+#
+# Your own copy is config.local.toml, next to this file. It is never committed. The app makes it
+# for you the first time you save its setup screen; you can also copy this file by hand.
+# Paths are absolute. Single quotes keep the backslashes as they are.
+
+# The three places that differ from one PC to the next. The setup screen (and later
+# Settings > Change folders) fills these in; the values below are only examples.
+
+# Your copy of linkedin-skills. Claude runs with this as its working folder.
+skills_dir = 'C:\Users\you\linkedin-skills'
+
+# The Claude Code program: a real claude.exe, not an npm script.
+claude_bin = 'C:\Users\you\.local\bin\claude.exe'
+
+# Where Claude Code keeps your sign-in. Every Claude run gets exactly this folder, whatever
+# started the app. The app refuses to run Claude if it is missing.
+claude_config_dir = 'C:\Users\you\.claude'
+
+# Local port. The server only ever binds 127.0.0.1.
+port = 8765
+
+# Publora free tier: 15 posts per month.
+monthly_post_limit = 15
+# Your Publora plan's other limits (Settings › Publishing picks Starter or Pro and writes all three; 0 = no limit).
+# Starter, the free plan: 15 posts a month, 3 scheduled at a time, 7 days ahead.
+publora_at_once = 3
+publora_days_ahead = 7
+
+# All times in the UI are shown in this zone; the database stores UTC.
+timezone = 'Asia/Kolkata'
+
+# Optional: full path to chrome.exe or msedge.exe. Empty = Chrome, then Edge.
+browser_path = ''
+
+# Model passed to `claude --model`. "sonnet" goes easier on Pro limits;
+# "opus" for the strongest drafts; "" = the account default. Settings › Claude changes it too.
+model = 'sonnet'
+
+# Per-run caps. --max-turns is accepted by Claude Code 2.1.292 but not listed
+# in `claude --help`; the timeout is the hard stop.
+max_turns = 12
+timeout_seconds = 180
+
+# ChatGPT's pictures: an illustration for a post, made by OpenAI's Codex CLI signed in as your
+# ChatGPT account. Each picture spends your ChatGPT allowance.
+# codex_home is the folder Codex keeps that sign-in in (its CODEX_HOME). It has no default: empty
+# means pictures are off. Give it a folder of its own, so a picture never uses whatever account the
+# PC's own .codex folder is signed in to; Settings > ChatGPT > Sign in signs Codex in there.
+codex_home = ''
+# The Codex CLI. Empty = found on PATH (npm's codex.cmd); the studio runs the codex.exe it starts.
+codex_bin = ''
+# Pictures ChatGPT may make in one request. 0 = pictures off.
+images_per_request = 4
