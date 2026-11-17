@@ -1,0 +1,10 @@
+-r requirements.txt
+# The browser checks and the Guide's pictures drive the Chrome (or Edge) already on this PC through
+# Playwright, which the studio itself needs for carousels (requirements.txt).
+httpcore==1.0.9
+httpx==0.28.1
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1

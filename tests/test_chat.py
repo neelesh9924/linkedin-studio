@@ -1,0 +1,561 @@
+"""A post's Ask Claude chat: what each request carries, the studio's tools Claude changes the post with (over /mcp, on
+its run's own token), the versions each change keeps, pictures, and how a run that did not finish is said."""
+import base64
+import re
+import threading
+import time
+
+import pytest
+from conftest import TOKEN, add_post
+from fastapi.testclient import TestClient
+from support import PNG
+
+from app import carousel, codex, mcp, render, versions
+from app.claude_runner import RunResult, build_command
+from app.db import loads
+from app.jobs import wait_for
+from app.main import create_app
+from app.skills import ACTIONS
+
+
+class StandIn:
+    """Stands in for ClaudeRunner in a post's chat: keeps each request, and does what `script` says while it runs
+    (calls the studio's tools as Claude would), until the test lets it end."""
+
+    def __init__(self):
+        self.requests = []
+        self.script = None          # fn(req) -> RunResult, run on the job's thread
+        self.hold = threading.Event()
+        self.hold.set()
+
+    def run(self, req, cancel=None, on_progress=None, timeout=None):
+        self.requests.append(req)
+        if on_progress:
+            on_progress("Loading the skill")
+        while not self.hold.wait(0.05):
+            if cancel is not None and cancel.is_set():
+                return RunResult(outcome="cancelled", error="Cancelled.")
+        if self.script:
+            return self.script(req)
+        return RunResult(outcome="ok", text="Here is what I think.", clean_text="Here is what I think.")
+
+
+@pytest.fixture
+def studio(cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(carousel, "available", lambda: False)   # off unless a test draws carousels with its stand-in
+    runner = StandIn()
+    app = create_app(cfg, TOKEN, db_path=tmp_path / "chat.db", runner=runner)
+    with TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin}) as client:
+        client.cookies.set("studio_session", TOKEN)
+        yield client, app, runner
+
+
+def tool(client, req, name, arguments, token=None):
+    """One call of a studio tool over /mcp, with the run's own token (as Claude calls it)."""
+    body = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+    r = client.post("/mcp", json=body, headers={"Authorization": f"Bearer {token or req.mcp['token']}"})
+    assert r.status_code == 200, r.text
+    result = r.json()["result"]
+    return result["content"][0]["text"], result["isError"]
+
+
+def ask(client, post_id, text):
+    r = client.post(f"/api/post/{post_id}/ask", json={"text": text})
+    assert r.status_code == 200, r.text
+    return r.json()["job"]
+
+
+# ---- what a request carries ------------------------------------------------------------
+def test_a_request_carries_the_post_the_conversation_and_the_new_message(studio):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db, text="Line one of the post.\n\nWe cut deploys to [N] minutes.", first_comment="Link: https://x.example")
+    wait_for(db, ask(client, post, "Make the hook sharper"), 10)
+    wait_for(db, ask(client, post, "And shorter"), 10)
+    req = runner.requests[-1]
+    assert "Line one of the post." in req.prompt and "1 blank(s)" in req.prompt and "Link: https://x.example" in req.prompt
+    assert "The owner: Make the hook sharper" in req.prompt and "You (Claude): Here is what I think." in req.prompt
+    assert req.prompt.rstrip().endswith("The owner's new message:\nAnd shorter")
+    assert "<<<UNTRUSTED POST" in req.prompt            # the post's text is data, never instructions
+    assert req.system == ACTIONS["post_chat"].rules and "set_post_text" in req.system and "make_image" in req.system
+
+
+def test_the_run_gets_the_skills_and_its_own_tools_and_nothing_else(studio, cfg):
+    client, app, runner = studio
+    db = app.state.db
+    wait_for(db, ask(client, add_post(db), "Audit it"), 10)
+    req = runner.requests[-1]
+    assert req.policy.tools == ("Read", "Skill")
+    assert req.policy.allow == ("Skill", "mcp__studio__set_post_text", "mcp__studio__record_audit", "mcp__studio__set_rank")
+    assert req.mcp["url"] == f"{cfg.origin}/mcp" and len(req.mcp["token"]) > 30
+    assert (req.max_turns, req.timeout) == (cfg.chat_max_turns, cfg.chat_timeout_seconds)
+    cmd = build_command(cfg, req, mcp_config=cfg.skills_dir / "mcp.json")
+    assert "Bash" not in " ".join(cmd) and "--no-session-persistence" in cmd and "--strict-mcp-config" in cmd
+    assert cmd[cmd.index("--mcp-config") + 1].endswith("mcp.json") and cmd[cmd.index("--max-turns") + 1] == str(cfg.chat_max_turns)
+
+
+def test_pictures_are_offered_only_once_chatgpt_is_ready(studio, monkeypatch):
+    client, app, runner = studio
+    db = app.state.db
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    wait_for(db, ask(client, add_post(db), "Make an illustration"), 10)
+    assert "mcp__studio__make_image" in runner.requests[-1].policy.allow
+
+
+@pytest.mark.parametrize("status", ["approved", "scheduled", "published", "failed", "cancelled"])
+def test_a_locked_posts_run_is_offered_no_rewrite_and_no_picture(studio, monkeypatch, status):
+    client, app, runner = studio
+    db = app.state.db
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    wait_for(db, ask(client, add_post(db, status=status), "Make an illustration and a sharper hook"), 10)
+    allowed = runner.requests[-1].policy.allow
+    assert "mcp__studio__set_post_text" not in allowed and "mcp__studio__make_image" not in allowed
+    assert "mcp__studio__record_audit" in allowed and "It is locked" in runner.requests[-1].prompt
+    wait_for(db, ask(client, add_post(db), "The same, on a draft"), 10)
+    allowed = runner.requests[-1].policy.allow
+    assert "mcp__studio__set_post_text" in allowed and "mcp__studio__make_image" in allowed
+    assert "It is locked" not in runner.requests[-1].prompt
+
+
+# ---- the tools, on the run's own token ----------------------------------------------------
+def test_mcp_lists_the_runs_tools_and_closes_when_the_run_ends(studio):
+    client, app, runner = studio
+    db = app.state.db
+    runner.hold.clear()
+    job = ask(client, add_post(db), "Shorter")
+    deadline = time.monotonic() + 10
+    while not runner.requests and time.monotonic() < deadline:
+        time.sleep(0.05)
+    req = runner.requests[-1]
+    headers = {"Authorization": f"Bearer {req.mcp['token']}"}
+    listed = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, headers=headers).json()
+    assert [t["name"] for t in listed["result"]["tools"]] == ["set_post_text", "record_audit", "set_rank"]
+    said, failed = tool(client, req, "make_image", {"prompt": "a calm desk at night, flat shapes"})
+    assert failed and "not available in this run" in said
+    for wrong in ("Bearer not-the-token", f"Bearer {TOKEN}", f"Basic {req.mcp['token']}"):   # only this run's token, as a bearer
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, headers={"Authorization": wrong})
+        assert r.status_code == 401, wrong
+    runner.hold.set()
+    wait_for(db, job, 10)
+    after = client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, headers=headers)
+    assert after.status_code == 401                     # the token died with its run
+
+
+def test_set_post_text_rewrites_the_post_and_keeps_a_version_each_time(studio):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db, text="First version.")
+    client.post(f"/api/post/{post}/save", json={"text": "The owner's own edit."})
+    runner.script = lambda req: (tool(client, req, "set_post_text", {"text": "Claude's rewrite.", "note": "New hook",
+                                                                      "notes": ["Fill the [N]"]}),
+                                 RunResult(outcome="ok", text="Rewrote the hook.", clean_text="Rewrote the hook."))[1]
+    wait_for(db, ask(client, post, "New hook please"), 10)
+    shown = client.get(f"/api/post/{post}").json()
+    assert shown["text"] == "Claude's rewrite." and shown["notes"] == ["Fill the [N]"]
+    kept = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert [(v["author"], v["note"]) for v in kept] == [("claude", "New hook"), ("you", "As it was")]
+    assert kept[0]["current"] and not kept[1]["current"]
+    reply = client.get(f"/api/post/{post}/chat").json()["messages"][-1]
+    assert reply["role"] == "claude" and reply["text"] == "Rewrote the hook." and reply["versions"] == 1
+
+
+def test_set_post_text_leaves_a_locked_or_too_long_post_alone(studio):
+    client, app, runner = studio
+    db = app.state.db
+    approved = add_post(db, status="approved", text="Final text.")
+    said = {}
+    runner.script = lambda req: (said.update(locked=tool(client, req, "set_post_text", {"text": "Changed!", "note": "x"})),
+                                 RunResult(outcome="ok", text="ok", clean_text="ok"))[1]
+    wait_for(db, ask(client, approved, "Change it"), 10)
+    assert said["locked"][1] and "not available in this run" in said["locked"][0]     # never offered to a locked post
+    assert db.one("SELECT text FROM posts WHERE id=?", (approved,))["text"] == "Final text."
+    locked_meanwhile = add_post(db, text="Final text.")                                 # a draft when the run began
+    runner.script = lambda req: (db.run("UPDATE posts SET status='approved' WHERE id=?", (locked_meanwhile,)),
+                                 said.update(locked=tool(client, req, "set_post_text", {"text": "Changed!", "note": "x"})),
+                                 RunResult(outcome="ok", text="ok", clean_text="ok"))[2]
+    wait_for(db, ask(client, locked_meanwhile, "Change it"), 10)
+    assert said["locked"][1] and "locked" in said["locked"][0]
+    assert db.one("SELECT text FROM posts WHERE id=?", (locked_meanwhile,))["text"] == "Final text."
+    draft = add_post(db, text="Short.")
+    runner.script = lambda req: (said.update(long=tool(client, req, "set_post_text", {"text": "x" * 3001, "note": "x"})),
+                                 RunResult(outcome="ok", text="ok", clean_text="ok"))[1]
+    wait_for(db, ask(client, draft, "Make it long"), 10)
+    assert said["long"][1] and "3,000" in said["long"][0]
+    assert db.one("SELECT text FROM posts WHERE id=?", (draft,))["text"] == "Short."
+
+
+def test_record_audit_shows_its_findings_beside_the_post(studio):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db, text="It has a [N] blank.")
+    runner.script = lambda req: (tool(client, req, "record_audit", {"verdict": "FAIL", "summary": "One blank left.",
+                                                                     "blockers": [{"issue": "Blank [N]", "fix": "Fill it"}]}),
+                                 RunResult(outcome="ok", text="Audited.", clean_text="Audited."))[1]
+    wait_for(db, ask(client, post, "Audit it"), 10)
+    audit = client.get(f"/api/post/{post}").json()["audit"]
+    assert audit == {"verdict": "FAIL", "summary": "One blank left.", "blockers": [{"issue": "Blank [N]", "fix": "Fill it"}],
+                     "warnings": [], "stale": False}
+    client.post(f"/api/post/{post}/save", json={"text": "It has a 4 blank."})
+    assert client.get(f"/api/post/{post}").json()["audit"]["stale"] is True
+
+
+def test_make_image_keeps_the_picture_for_the_post_at_most_a_few_a_request(studio, monkeypatch):
+    client, app, runner = studio
+    db = app.state.db
+    made = []
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    monkeypatch.setattr(codex, "make_picture", lambda prompt, shape, cancel: (made.append((prompt, shape)) or
+                                                                                (b"\x89PNG-" + bytes([len(made)]), 1200, 627, "image/png")))
+    post = add_post(db)
+    answers = []
+    runner.script = lambda req: (answers.extend(tool(client, req, "make_image", {"prompt": "a calm desk at night, flat shapes"})
+                                                for _ in range(5)), RunResult(outcome="ok", text="Made one.", clean_text="Made one."))[1]
+    wait_for(db, ask(client, post, "An illustration please"), 10)
+    cap = app.state.jobs.images_per_request                                    # config's images_per_request: 4
+    assert cap == 4 and [failed for _said, failed in answers] == [False] * cap + [True] and "No more pictures" in answers[cap][0]
+    assert made == [("a calm desk at night, flat shapes", "landscape")] * cap   # codex.make_picture adds the rules itself
+    shown = client.get(f"/api/post/{post}").json()
+    assert [p["source"] for p in shown["pictures"]] == ["chatgpt"] * cap and shown["media"] == []
+    reply = client.get(f"/api/post/{post}/chat").json()["messages"][-1]
+    assert [p["id"] for p in reply["images"]] == [p["id"] for p in shown["pictures"]]
+    picture = client.get(shown["pictures"][0]["url"])
+    assert picture.status_code == 200 and picture.content.startswith(b"\x89PNG") and picture.headers["x-content-type-options"] == "nosniff"
+
+
+def stand_in_render(spec, out_dir, author=None, stem="carousel", art_dir=None):
+    """carousel.render without a browser: a PDF's first bytes and a PNG for each slide."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pdf = out_dir / f"{stem}.pdf"
+    pdf.write_bytes(b"%PDF-1.7 " + spec["title"].encode())
+    pages = []
+    for n in range(1, len(spec["slides"]) + 1):
+        page = out_dir / f"{stem}-{n}.png"
+        page.write_bytes(PNG + bytes([n]))
+        pages.append(page)
+    return {"pdf": pdf, "pages": pages}
+
+
+SLIDES = {"title": "Prefetch, in short", "slides": [
+    {"kind": "cover", "title": "A slow API after prefetch_related", "kicker": "Django"},
+    {"kind": "point", "title": "The trap", "code": "order.items.filter(is_open=True)", "mark": {"kind": "trap", "text": "A query a row."}},
+    {"kind": "point", "title": "The fix", "text": "Filter inside the `Prefetch`."},
+    {"kind": "sheet", "title": "In short", "items": ["One exact query is cached.", "Filter inside it."]},
+    {"kind": "end", "question": "Your sneakiest N+1?"}]}
+
+
+def test_carousels_are_offered_to_a_drafts_chat_only_when_they_can_be_drawn(studio, monkeypatch):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db)
+    wait_for(db, ask(client, post, "Make a carousel."), 10)
+    assert "mcp__studio__make_carousel" not in runner.requests[-1].policy.allow
+    monkeypatch.setattr(carousel, "available", lambda: True)
+    wait_for(db, ask(client, post, "Make a carousel."), 10)
+    assert "mcp__studio__make_carousel" in runner.requests[-1].policy.allow and "make_carousel" in runner.requests[-1].system
+    wait_for(db, ask(client, add_post(db, status="approved"), "Make a carousel."), 10)
+    assert "mcp__studio__make_carousel" not in runner.requests[-1].policy.allow
+
+
+def test_make_carousel_keeps_it_with_the_post_a_few_a_request_and_says_what_is_wrong(studio, monkeypatch):
+    client, app, runner = studio
+    monkeypatch.setattr(carousel, "available", lambda: True)
+    monkeypatch.setattr(carousel, "render", stand_in_render)
+    db = app.state.db
+    post = add_post(db)
+    answers = []
+    runner.script = lambda req: (answers.extend(tool(client, req, "make_carousel", SLIDES) for _ in range(mcp.CAROUSELS_PER_REQUEST + 1)),
+                                 answers.append(tool(client, req, "make_carousel", {"title": "T", "slides": [{"kind": "point"}] * 5})),
+                                 RunResult(outcome="ok", text="Made it.", clean_text="Made it."))[-1]
+    wait_for(db, ask(client, post, "Make a carousel."), 10)
+    cap = mcp.CAROUSELS_PER_REQUEST
+    assert [failed for _said, failed in answers] == [False] * cap + [True, True]
+    assert "5 slides" in answers[0][0] and "No more carousels" in answers[cap][0]
+    shown = client.get(f"/api/post/{post}").json()
+    made = [p for p in shown["pictures"] if p["kind"] == "carousel"]
+    assert len(made) == cap and made[0]["title"] == "Prefetch, in short" and made[0]["pages"] == 5 and shown["media"] == []
+    assert client.get(made[0]["page_urls"][4]).content == PNG + bytes([5])
+    assert client.get(made[0]["url"]).content.startswith(b"%PDF-")
+    reply = client.get(f"/api/post/{post}/chat").json()["messages"][-1]
+    assert [p["kind"] for p in reply["images"]] == ["carousel"] * cap
+    assert client.post(f"/api/post/{post}/pictures", json={"ids": [made[0]["id"]]}).json()["ok"]
+    again = client.post(f"/api/post/{post}/carousel", json={"again": made[0]["id"]}).json()   # Redraw: in its place
+    shown = client.get(f"/api/post/{post}").json()
+    assert again["ok"] and again["id"] == made[0]["id"] and again["image"]["chosen"]
+    assert [m["id"] for m in shown["media"]] == [made[0]["id"]] and len(shown["pictures"]) == cap   # on the post still, no copy
+
+
+
+CARD = {"title": "Polling or webhooks", "look": "terminal", "format": "card", "slides": [
+    {"kind": "versus", "title": "Polling or ==webhooks==?",
+     "left": {"label": "Polling", "items": ["You ask again and again"], "art": "a stressed developer at a laptop"},
+     "right": {"label": "Webhooks", "items": ["The server calls you"], "art": "a calm robot with a checklist"}}]}
+
+
+def test_a_cards_art_is_drawn_by_chatgpt_within_the_requests_pictures_and_the_next_request_hears_its_look(studio, monkeypatch):
+    client, app, runner = studio
+    monkeypatch.setattr(carousel, "available", lambda: True)
+    monkeypatch.setattr(carousel, "render", stand_in_render)
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    drawn = []
+    monkeypatch.setattr(codex, "make_picture",
+                        lambda prompt, shape, cancel=None: (drawn.append((prompt, shape)), (PNG, 1080, 1080, "image/png"))[1])
+    db = app.state.db
+    post = add_post(db)
+    answers = []
+    runner.script = lambda req: (answers.append(tool(client, req, "make_carousel", CARD)),
+                                 RunResult(outcome="ok", text="Made it.", clean_text="Made it."))[-1]
+    wait_for(db, ask(client, post, "Make a card."), 10)
+    said, failed = answers[0]
+    assert not failed and "Made card" in said and "the terminal look" in said and "2 pieces drawn by ChatGPT" in said
+    assert [shape for _prompt, shape in drawn] == ["square", "square"] and "transparent background" in drawn[0][0]
+    row = db.one("SELECT * FROM images WHERE source='card'")
+    assert row["mime"] == "image/png" and len(carousel.art_files(loads(row["spec"], {}))) == 2
+    runner.script = None
+    wait_for(db, ask(client, post, "Anything else?"), 10)
+    assert "Looks used lately on carousels and cards: terminal" in runner.requests[-1].prompt
+
+
+def test_art_is_left_out_and_said_when_chatgpt_cant_draw_it(studio, monkeypatch):
+    client, app, runner = studio
+    monkeypatch.setattr(carousel, "available", lambda: True)
+    monkeypatch.setattr(carousel, "render", stand_in_render)
+    db = app.state.db
+    answers = []
+    runner.script = lambda req: (answers.append(tool(client, req, "make_carousel", CARD)),
+                                 RunResult(outcome="ok", text="Made it.", clean_text="Made it."))[-1]
+    wait_for(db, ask(client, add_post(db), "Make a card."), 10)
+    said, failed = answers[0]
+    assert not failed and "left out: ChatGPT isn't set up for pictures" in said
+    assert carousel.art_files(loads(db.one("SELECT spec FROM images WHERE source='card'")["spec"], {})) == []
+
+
+def test_try_another_look_draws_the_same_slides_in_the_next_look_in_their_place(studio, monkeypatch):
+    client, app, _runner = studio
+    monkeypatch.setattr(carousel, "render", stand_in_render)
+    db = app.state.db
+    post = add_post(db)
+    made = client.post(f"/api/post/{post}/carousel", json={"spec": {**SLIDES, "look": "paper"}, "use": True}).json()
+    assert made["image"]["look"] == "paper" and made["said"] == []
+    other = client.post(f"/api/post/{post}/carousel", json={"again": made["id"], "look": "next"}).json()
+    assert other["id"] == made["id"] and other["image"]["look"] == "poster" and other["image"]["chosen"]
+    picked = client.post(f"/api/post/{post}/carousel", json={"again": made["id"], "look": "terminal", "tint": 2}).json()
+    assert picked["image"]["look"] == "terminal" and loads(db.one("SELECT spec FROM images WHERE id=?", (made["id"],))["spec"], {})["tint"] == 2
+    assert "The look is one of" in client.post(f"/api/post/{post}/carousel", json={"again": made["id"], "look": "neon"}).json()["error"]
+    no_art = client.post(f"/api/post/{post}/carousel", json={"spec": CARD}).json()
+    assert no_art["said"] == ["Its art was left out: ChatGPT isn't set up for pictures."] and no_art["image"]["card"]
+
+
+def test_make_image_says_why_when_pictures_are_off(studio, monkeypatch):
+    client, app, runner = studio
+    db = app.state.db
+    monkeypatch.setattr(codex, "chatgpt_ready", lambda: True)
+    answers = []
+    runner.script = lambda req: (answers.append(tool(client, req, "make_image", {"prompt": "a calm desk at night, flat shapes"})),
+                                 RunResult(outcome="ok", text="none", clean_text="none"))[1]
+    wait_for(db, ask(client, add_post(db), "An illustration"), 10)
+    assert answers[0][1] and "no Codex home is set" in answers[0][0]   # this app's config names none
+
+
+# ---- while it works, and when it ends ---------------------------------------------------------
+def test_while_claude_works_on_a_post_its_text_and_chat_wait(studio):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db, text="Draft.")
+    runner.hold.clear()
+    job = ask(client, post, "Shorter")
+    assert client.post(f"/api/post/{post}/ask", json={"text": "Again"}).status_code == 409
+    assert client.post(f"/api/post/{post}/save", json={"text": "typed meanwhile"}).status_code == 409
+    assert client.post(f"/api/post/{post}/approve", json={}).status_code == 409
+    assert client.get(f"/api/post/{post}").json()["editable"] is False
+    assert [p["busy"] for p in client.get("/api/state").json()["posts"]] == [True]
+    runner.hold.set()
+    wait_for(db, job, 10)
+    assert client.get(f"/api/post/{post}").json()["editable"] is True
+
+
+@pytest.mark.parametrize("outcome,offer,role", [("error", "again", "error"), ("timeout", "carry", "error"),
+                                                 ("cancelled", "carry", "info")])
+def test_a_run_that_did_not_finish_says_so_and_offers_the_next_step(studio, outcome, offer, role):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db)
+    runner.script = lambda req: RunResult(outcome=outcome, error="It broke." if outcome == "error" else "")
+    wait_for(db, ask(client, post, "Shorter"), 10)
+    messages = client.get(f"/api/post/{post}/chat").json()["messages"]
+    assert [m["role"] for m in messages] == ["user", role]
+    assert messages[-1]["offer"] == offer and messages[-1]["request"] == messages[0]["id"]
+
+
+def test_starting_the_chat_afresh_keeps_the_old_one_to_bring_back(studio):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db)
+    wait_for(db, ask(client, post, "First question"), 10)
+    assert client.post(f"/api/post/{post}/chat/clear", json={}).status_code == 200
+    chat = client.get(f"/api/post/{post}/chat").json()
+    assert chat["messages"] == [] and chat["earlier"][0]["count"] == 2
+    wait_for(db, ask(client, post, "A new start"), 10)
+    assert "First question" not in runner.requests[-1].prompt     # a fresh chat carries nothing of the old one
+    client.post(f"/api/post/{post}/chat/back", json={"conversation": chat["earlier"][0]["id"]})
+    assert [m["text"] for m in client.get(f"/api/post/{post}/chat").json()["messages"]][0] == "First question"
+
+
+# ---- versions ------------------------------------------------------------------------------------
+def test_going_back_to_a_version_keeps_the_text_before_so_it_can_be_undone(studio):
+    client, app, _runner = studio
+    db = app.state.db
+    post = add_post(db, text="One.")
+    versions.record(db, post, "One.", None, "claude", "First draft")
+    client.post(f"/api/post/{post}/save", json={"text": "Two."})
+    first = client.get(f"/api/post/{post}/versions").json()["versions"][-1]
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": first["id"]}).json() == {"changed": True}
+    assert client.get(f"/api/post/{post}").json()["text"] == "One."
+    kept = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert [(v["author"], v["note"]) for v in kept] == [("studio", f"Went back to version {first['id']}"),
+                                                          ("you", "Your edits"), ("claude", "First draft")]
+    other = add_post(db, status="approved", text="Locked.")
+    versions.record(db, other, "Locked.", None, "claude", "x")
+    v = client.get(f"/api/post/{other}/versions").json()["versions"][0]
+    assert client.post(f"/api/post/{other}/versions/back", json={"version": v["id"]}).status_code == 409
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": v["id"]}).status_code == 409  # not its own
+
+
+def test_the_listing_compares_each_earlier_version_with_now_and_going_back_says_so_in_the_chat(studio, cfg):
+    client, app, _runner = studio
+    db = app.state.db
+    post = add_post(db, text="One two three.", first_comment="A link")
+    versions.record(db, post, "One two three.", "A link", "claude", "New hook")
+    client.post(f"/api/post/{post}/save", json={"text": "One four three.", "first_comment": "Another link"})
+    (old,) = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert not old["current"] and old["first_comment_differs"] is True
+    assert ["-", "two"] in old["segments"] and ["+", "four"] in old["segments"]
+    assert "".join(t for op, t in old["segments"] if op != "+") == "One two three."     # that version's words...
+    assert "".join(t for op, t in old["segments"] if op != "-") == "One four three."     # ...to the post's now
+    assert client.get(f"/api/post/{post}/chat").json()["messages"] == []              # no chat yet
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": old["id"]}).json() == {"changed": True}
+    when = render.day_time(db.one("SELECT created_at FROM versions WHERE id=?", (old["id"],))["created_at"], cfg.tz)
+    assert re.fullmatch(r"\d{1,2} [A-Z][a-z]{2}, \d{1,2}:\d{2} [ap]m", when)
+    lines = [(m["role"], m["text"]) for m in client.get(f"/api/post/{post}/chat").json()["messages"]]
+    assert lines == [("info", f"You went back to the version of {when} (New hook).")]   # one line, in a chat it started
+    listed = client.get(f"/api/post/{post}/versions").json()["versions"]
+    assert [v["current"] for v in listed] == [True, False, True]                     # gone back to; your edits; New hook
+    assert [("segments" in v, "first_comment_differs" in v) for v in listed] == [(False, False), (True, True), (False, False)]
+    assert client.post(f"/api/post/{post}/versions/back", json={"version": old["id"]}).json() == {"changed": False}
+    assert len(client.get(f"/api/post/{post}/chat").json()["messages"]) == 1          # nothing changed: nothing said
+
+
+# ---- attachments --------------------------------------------------------------------------------
+def data_url(mime, body):
+    return f"data:{mime};base64," + base64.b64encode(body).decode()
+
+
+def test_a_messages_files_stay_in_the_posts_own_folder_its_run_reads_and_the_page_opens(studio, cfg):
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db)
+    files = [{"name": "chart.png", "data": data_url("image/png", PNG)},
+             {"name": "notes.txt", "data": data_url("text/plain", b"Our deploys went from 22 minutes to 9.")}]
+    wait_for(db, client.post(f"/api/post/{post}/ask", json={"text": "Use these", "files": files}).json()["job"], 10)
+    req = runner.requests[-1]
+    folder = db.path.parent / "attachments" / f"post-{post}"
+    assert req.add_dirs == (str(folder),)                                  # that one folder, and nothing wider
+    cmd = build_command(cfg, req)
+    assert cmd.count("--add-dir") == 1 and cmd[cmd.index("--add-dir") + 1] == str(folder)
+    assert f"- {folder.as_posix()}/chart.png (" in req.prompt and f"- {folder.as_posix()}/notes.txt (text" in req.prompt
+    sent = client.get(f"/api/post/{post}/chat").json()["messages"][0]
+    assert [(f["name"], f["view"]) for f in sent["files"]] == [("chart.png", True), ("notes.txt", False)]
+    served = client.get(sent["files"][0]["url"])
+    assert served.status_code == 200 and served.content == PNG
+    assert served.headers["content-security-policy"].startswith("sandbox") and served.headers["x-content-type-options"] == "nosniff"
+    picture = sent["images"][0]                                            # an attached picture can go out with the post
+    assert client.post(f"/api/post/{post}/pictures", json={"ids": [picture["id"]]}).json()["ids"] == [picture["id"]]
+    for name in ("..%5C..%5Cchat.db", "%2E%2E", ".text", "..%5Cpost-1%5Cchart.png"):   # out of the folder, however written
+        assert client.get(f"/api/post/{post}/file/{name}").status_code == 404, name
+    assert client.get(f"/api/post/{add_post(db)}/file/chart.png").status_code == 404   # another post's folder is its own
+    signed_out = TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}")
+    assert signed_out.get(sent["files"][0]["url"]).status_code == 401      # the session cookie, as for everything
+
+
+def test_files_a_message_cannot_carry_are_refused_in_words_and_nothing_is_kept(studio):
+    client, app, _runner = studio
+    db = app.state.db
+    post = add_post(db)
+    too_many = [{"name": f"n{i}.txt", "data": data_url("text/plain", b"x")} for i in range(13)]
+    r = client.post(f"/api/post/{post}/ask", json={"text": "x", "files": too_many})
+    assert r.status_code == 422 and "up to 12 files" in r.json()["error"]
+    r = client.post(f"/api/post/{post}/ask", json={"text": "x", "files": [{"name": "a.png", "data": "not a data url"}]})
+    assert r.status_code == 422 and "attach it again" in r.json()["error"]
+    assert not (db.path.parent / "attachments" / f"post-{post}").exists() and db.one("SELECT COUNT(*) AS n FROM jobs")["n"] == 0
+
+
+def test_the_interviewer_reads_what_is_attached_from_its_own_folder(studio):
+    client, app, runner = studio
+    db = app.state.db
+    sent = client.post("/api/chat/bank/send", json={"text": "My CV", "files": [{"name": "cv.txt", "data": data_url("text/plain", b"Role: lead")}]}).json()
+    wait_for(db, sent["job"], 10)
+    folder = db.path.parent / "attachments" / f"bank-{sent['conversation']}"
+    assert runner.requests[-1].add_dirs == (str(folder),) and f"{folder.as_posix()}/cv.txt" in runner.requests[-1].prompt
+    message = client.get(f"/api/chat/bank?c={sent['conversation']}").json()["messages"][0]
+    assert client.get(message["files"][0]["url"]).content == b"Role: lead"
+
+
+@pytest.mark.parametrize("mode,skill", [("bank", "linkedin-interviewer skill in --mode bank"),
+                                        ("voice", "linkedin-humanizer skill with --mode profile")])
+def test_a_chat_whose_saved_session_is_gone_goes_on_in_a_new_one_told_what_was_said(studio, mode, skill):
+    client, app, runner = studio
+    db = app.state.db
+    runner.script = lambda req: RunResult(outcome="ok", text="What are you working on?",
+                                          clean_text="What are you working on?", session_id="s-old")
+    first = client.post(f"/api/chat/{mode}/send", json={"text": "Let's start."}).json()
+    wait_for(db, first["job"], 10)
+
+    def gone(req):   # Claude Code cleared the session, or the login folder changed: resuming it does nothing
+        if req.resume_session == "s-old":
+            return RunResult(outcome="error", num_turns=0, error="Claude reported an error (error_during_execution): "
+                             "No conversation found with session ID: s-old")
+        return RunResult(outcome="ok", text="What made it hard?", clean_text="What made it hard?", session_id="s-new",
+                         num_turns=3)
+
+    runner.script = gone
+    sent = client.post(f"/api/chat/{mode}/send", json={"text": "A money tracker", "conversation": first["conversation"]})
+    wait_for(db, sent.json()["job"], 10)
+    tried, fresh = runner.requests[-2:]
+    assert tried.resume_session == "s-old" and fresh.resume_session is None and fresh.persist_session
+    assert skill in fresh.prompt and "could not be resumed" in fresh.prompt
+    assert "The owner: Let's start.\nYou (Claude): What are you working on?" in fresh.prompt
+    assert fresh.prompt.endswith("The owner's new message:\nA money tracker")
+    runs = db.all("SELECT outcome FROM runs WHERE job_id=? ORDER BY id", (sent.json()["job"],))
+    assert [r["outcome"] for r in runs] == ["error", "ok"]                     # both runs are in the log
+    chat = client.get(f"/api/chat/{mode}?c={first['conversation']}").json()
+    assert [(m["role"], m["text"]) for m in chat["messages"]][-2:] == [("user", "A money tracker"), ("claude", "What made it hard?")]
+    then = client.post(f"/api/chat/{mode}/send", json={"text": "Two banks", "conversation": first["conversation"]})
+    wait_for(db, then.json()["job"], 10)
+    assert runner.requests[-1].resume_session == "s-new" and runner.requests[-1].prompt == "Two banks"   # the new one from here
+
+
+def test_a_resumed_run_that_failed_after_it_began_is_said_and_never_run_twice(studio):
+    client, app, runner = studio
+    db = app.state.db
+    runner.script = lambda req: RunResult(outcome="ok", text="Q1", clean_text="Q1", session_id="s-1")
+    first = client.post("/api/chat/bank/send", json={"text": "Let's start."}).json()
+    wait_for(db, first["job"], 10)
+    runner.script = lambda req: RunResult(outcome="error", num_turns=4,
+                                          error="Claude reported an error (error_during_execution): Overloaded")
+    sent = client.post("/api/chat/bank/send", json={"text": "An answer", "conversation": first["conversation"]})
+    wait_for(db, sent.json()["job"], 10)
+    assert len(runner.requests) == 2 and runner.requests[-1].resume_session == "s-1"    # one run for each message
+    last = client.get(f"/api/chat/bank?c={first['conversation']}").json()["messages"][-1]
+    assert last["role"] == "error" and last["text"].endswith("Overloaded") and last["offer"] == "again"
+
+
+def test_mcp_handle_answers_the_protocol(studio):
+    _client, app, _runner = studio
+    from app.jobs import Run
+    run = Run(job_id=1, kind="post_chat", params={"post_id": 1}, token="t", tools=("set_post_text",),
+              cancel=threading.Event(), note=lambda *_: None)
+    init = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+                      run, app.state.tools)
+    assert init["result"]["capabilities"] == {"tools": {"listChanged": False}}
+    assert mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}, run, app.state.tools) is None
+    assert mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "nope"}, run, app.state.tools)["error"]["code"] == -32601
+    assert loads('{"a": 1}') == {"a": 1}

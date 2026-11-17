@@ -1,0 +1,424 @@
+"""The posting queue (app/posting.py): the posting times, the time each queued post takes, and handing the ones inside
+the window to Publora, exactly once, through Publisher.schedule. Publora is test_publishing's stand-in throughout."""
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from conftest import TOKEN, add_post, with_
+from fastapi.testclient import TestClient
+from test_publishing import FakeClient
+
+from app import api_trash, paths, posting
+from app.db import DB, utcnow
+from app.main import create_app
+from app.posting import DEFAULT, PostingQueue, Refused
+from app.publishing import PLANS, Publisher, ScheduleError, limit_words, plan_of
+
+NOW = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc)   # Wednesday 7 October, 11:30 am IST: Wednesday's 9:30 has passed
+IST = timedelta(hours=5, minutes=30)
+
+
+def ist(text: str) -> datetime:
+    """"2026-10-08 08:00" in IST, as aware UTC."""
+    return (datetime.fromisoformat(text) - IST).replace(tzinfo=timezone.utc)
+
+
+def pro(cfg):
+    """The Pro plan's limits: none at Publora, 14 days ahead in the studio. Most tests here are about the line itself."""
+    return with_(cfg, **{k: v for k, v in PLANS["pro"].items() if k != "label"})
+
+
+@pytest.fixture
+def line(cfg, tmp_path):
+    db = DB(tmp_path / "q.db")
+    client = FakeClient()
+    pub = Publisher(db, pro(cfg), client_factory=lambda: client, now=lambda: NOW)
+    return db, PostingQueue(db, pub), client
+
+
+def queued(db, queue, n=1, **extra) -> list[int]:
+    ids = []
+    for _ in range(n):
+        pid = add_post(db, "approved", **extra)
+        assert queue.add(pid)
+        ids.append(pid)
+    return ids
+
+
+def test_the_posting_times_default_to_the_skills_mornings_and_are_checked(line):
+    db, queue, _client = line
+    assert queue.times() == DEFAULT == {"tue": "08:00", "wed": "09:30", "thu": "08:00"}
+    assert posting.words(DEFAULT) == "Tue 8:00 am, Wed 9:30 am and Thu 8:00 am"
+    assert posting.save(db, {"fri": "17:15", "mon": "8:30", "sun": ""}) == {"mon": "08:30", "fri": "17:15"}   # week order
+    assert queue.times() == {"mon": "08:30", "fri": "17:15"} and posting.words(queue.times()) == "Mon 8:30 am and Fri 5:15 pm"
+    for wrong, said in (({}, "at least one"), ({"sun": ""}, "at least one"), ({"someday": "08:00"}, "no day called"),
+                        ({"mon": "25:00"}, "Monday: give its time"), ({"mon": "noon"}, "Monday"), ("08:00", "Send")):
+        with pytest.raises(Refused, match=said):
+            posting.save(db, wrong)
+    assert queue.times() == {"mon": "08:30", "fri": "17:15"}             # a refusal keeps what was saved
+    posting.path(db).write_text("not json", encoding="utf-8")
+    assert queue.times() == DEFAULT                                       # an unreadable file: the studio's own
+
+
+def test_each_queued_post_takes_the_next_free_posting_day_in_line_order(line):
+    db, queue, _client = line
+    first, second, third = queued(db, queue, 3)
+    taken = add_post(db, "scheduled", scheduled_at=ist("2026-10-13 18:00").isoformat(), publora_post_id="pg-x")
+    assert queue.lineup() == [(first, ist("2026-10-08 08:00")),      # Thursday: Wednesday's time has passed today
+                              (second, ist("2026-10-14 09:30")),     # Tuesday 13 has a post already: one a day
+                              (third, ist("2026-10-15 08:00"))]
+    db.run("UPDATE posts SET status='cancelled' WHERE id=?", (taken,))   # a cancelled post frees its day
+    assert [at for _pid, at in queue.lineup()] == [ist("2026-10-08 08:00"), ist("2026-10-13 08:00"), ist("2026-10-14 09:30")]
+    assert queue.move(third, "first") and [pid for pid, _at in queue.lineup()] == [third, first, second]
+    assert queue.move(third, "down") and [pid for pid, _at in queue.lineup()] == [first, third, second]
+    assert not queue.move(second, "down") and not queue.move(first, "up") and not queue.move(taken, "up")
+    assert queue.take_out(third) and [pid for pid, _at in queue.lineup()] == [first, second]
+    assert db.one("SELECT status, queue_pos FROM posts WHERE id=?", (third,))[:] == ("approved", None)
+    assert not queue.take_out(third) and not queue.add(add_post(db, "draft"))   # only an approved post joins
+
+
+def test_a_full_month_passes_to_the_next_and_the_trash_and_drafts_leave_the_line(line, cfg):
+    db, queue, client = line
+    queue.pub.cfg = queue.cfg = with_(pro(cfg), monthly_post_limit=3)
+    ids = queued(db, queue, 4)
+    assert [at for _pid, at in queue.lineup()] == [ist("2026-10-08 08:00"), ist("2026-10-13 08:00"), ist("2026-10-14 09:30"),
+                                                   ist("2026-11-03 08:00")]    # October's three are its limit
+    db.run("UPDATE posts SET trashed_at=? WHERE id=?", (utcnow(), ids[0]))
+    db.run("UPDATE posts SET status='draft' WHERE id=?", (ids[1],))
+    assert [pid for pid, _at in queue.lineup()] == ids[2:]
+
+
+def test_a_sent_post_still_fills_its_month_in_the_trash_and_once_deleted_forever(line, cfg):
+    db, queue, _client = line
+    queue.pub.cfg = queue.cfg = with_(pro(cfg), monthly_post_limit=2)
+    kept, gone = (add_post(db, "published", scheduled_at=ist(day).isoformat(), publora_post_id=f"pg-{day}")
+                  for day in ("2026-10-01 08:00", "2026-10-06 08:00"))
+    db.run("UPDATE posts SET trashed_at=? WHERE id IN (?,?)", (utcnow(), kept, gone))
+    assert api_trash.delete_forever(db, gone) and db.one("SELECT 1 FROM posts WHERE id=?", (gone,)) is None
+    first = queued(db, queue)[0]
+    assert queue.lineup() == [(first, ist("2026-11-03 08:00"))]       # October's two went out: its limit
+    assert queue.pub.quota_used(NOW) == 2
+
+
+def test_the_ones_inside_the_window_go_to_publora_once_each_and_leave_the_line(line):
+    db, queue, client = line
+    ids = queued(db, queue, 8, first_comment="The link: https://example.com")
+    sent = queue.send_due()
+    assert [r["id"] for r in sent] == ids[:6] and all(r["ok"] and r["sent"] for r in sent)
+    times = ["2026-10-08T02:30:00Z", "2026-10-13T02:30:00Z", "2026-10-14T04:00:00Z", "2026-10-15T02:30:00Z",
+             "2026-10-20T02:30:00Z", "2026-10-21T04:00:00Z"]           # inside 14 days; Thursday 22 is not
+    assert [payload["scheduledTime"] for payload, _key in client.calls] == times
+    assert all(payload["firstComment"]["text"] == "The link: https://example.com" for payload, _key in client.calls)
+    rows = db.all(f"SELECT id, status, queue_pos FROM posts WHERE id IN ({','.join('?' * 8)}) ORDER BY id", tuple(ids))
+    assert [(r["status"], r["queue_pos"]) for r in rows[:6]] == [("scheduled", None)] * 6
+    assert [r["status"] for r in rows[6:]] == ["approved"] * 2 and all(r["queue_pos"] for r in rows[6:])
+    assert [at for _pid, at in queue.lineup()] == [ist("2026-10-22 08:00"), ist("2026-10-27 08:00")]   # after the sent ones
+    assert queue.send_due() == [] and len(client.calls) == 6               # nothing more is due: nothing is sent again
+
+
+def test_a_refusal_before_anything_is_sent_stays_on_the_post_and_it_keeps_its_place(line):
+    db, queue, client = line
+    first, second = queued(db, queue, 2)
+
+    def no_key():
+        raise ScheduleError("PUBLORA_API_KEY is not set in linkedin-skills\\.env.")
+
+    queue.pub.client_factory = no_key
+    said = queue.send_due()
+    assert [(r["id"], r["ok"], r["sent"]) for r in said] == [(first, False, False), (second, False, False)]
+    row = db.one("SELECT * FROM posts WHERE id=?", (first,))
+    assert (row["status"], row["error"]) == ("approved", "Not at Publora yet: PUBLORA_API_KEY is not set in "
+                                                         "linkedin-skills\\.env. The studio tries again by itself.")
+    rev = db.rev
+    queue.send_due()
+    assert db.rev == rev                                    # the same refusal again writes nothing
+    queue.pub.client_factory = lambda: client
+    queue.send_due()
+    assert [db.one("SELECT status, error FROM posts WHERE id=?", (p,))[:] for p in (first, second)] == [("scheduled", None)] * 2
+
+
+def test_a_failure_at_publora_leaves_the_post_failed_with_its_day_kept_for_try_again(line):
+    db, queue, client = line
+    first, second = queued(db, queue, 2)
+    client.fail = RuntimeError("HTTP 503")
+    queue.send_due()
+    assert db.one("SELECT status FROM posts WHERE id=?", (first,))["status"] == "failed"
+    client.fail = None
+    assert queue.lineup() == []                                                     # both went: one failed, one sent
+    later = queued(db, queue, 1)[0]
+    assert queue.lineup() == [(later, ist("2026-10-14 09:30"))]   # Thursday 8 is the failed post's, Tuesday 13 the sent one's
+
+
+@pytest.fixture
+def studio(cfg, tmp_path, fake_runner):
+    """A studio whose Publora is the stand-in and whose clock is NOW; `check` is passed as check_publora."""
+    made = []
+
+    def make(check=None, plan=None):
+        path = tmp_path / f"s{len(made)}.db"
+        client = FakeClient()
+        chosen = with_(cfg, **{k: v for k, v in PLANS[plan].items() if k != "label"}) if plan else pro(cfg)
+        pub = Publisher(DB(path), chosen, client_factory=lambda: client, now=lambda: NOW)
+        app = create_app(chosen, TOKEN, db_path=path, runner=fake_runner, publisher=pub,
+                         **({} if check is None else {"check_publora": check}))
+        http = TestClient(app, base_url=f"http://127.0.0.1:{cfg.port}", headers={"Origin": cfg.origin})
+        http.__enter__()
+        http.cookies.set("studio_session", TOKEN)
+        made.append(http)
+        return http, app, client
+
+    yield make
+    for http in made:
+        http.__exit__(None, None, None)
+
+
+def test_approve_and_queue_refuses_blanks_then_queues_and_hands_it_to_publora(studio):
+    http, app, client = studio()
+    db = app.state.db
+    pid = add_post(db, "draft", text="In [N] weeks I learned a lot.")
+    refused = http.post(f"/api/post/{pid}/queue", json={})
+    assert refused.status_code == 409 and "placeholder" in refused.json()["error"] and client.calls == []
+    said = http.post(f"/api/post/{pid}/queue", json={"text": "In six weeks I learned a lot."}).json()
+    assert said == {"ok": True, "status": "scheduled", "said": "Queued, and handed to Publora: it goes out Thu 8 Oct, 8:00 am IST."}
+    assert [payload["scheduledTime"] for payload, _key in client.calls] == ["2026-10-08T02:30:00Z"]
+    row = db.one("SELECT * FROM posts WHERE id=?", (pid,))
+    assert (row["status"], row["queue_pos"], row["text"]) == ("scheduled", None, "In six weeks I learned a lot.")
+    assert http.post(f"/api/post/{pid}/queue", json={}).status_code == 409             # at Publora: not again
+
+
+def test_a_first_comment_with_a_blank_or_too_long_keeps_a_post_out_of_the_queue(studio):
+    """No final dialog shows the first comment when a post is queued, so what Schedule… only warns about is refused."""
+    http, app, client = studio()
+    db = app.state.db
+    draft = add_post(db, "draft", first_comment="The slides: [link]")
+    said = http.post(f"/api/post/{draft}/queue", json={}).json()["error"]
+    assert said == "The first comment still has a blank, such as [link]. Fill it in or cut it first."
+    long = add_post(db, "approved", first_comment="x" * 1251)
+    said = http.post(f"/api/post/{long}/queue", json={}).json()["error"]
+    assert said == "The first comment is 1,251 characters; LinkedIn takes 1,250. Cut it after Back to draft."
+    assert db.one("SELECT status, queue_pos FROM posts WHERE id=?", (draft,))[:] == ("draft", None) and client.calls == []
+
+
+def test_a_post_beyond_the_window_waits_in_line_with_its_time_and_can_be_taken_out(studio):
+    http, app, client = studio()
+    db = app.state.db
+    for _ in range(6):                                       # every posting day inside the window has a post
+        http.post(f"/api/post/{add_post(db, 'approved')}/queue", json={})
+    pid = add_post(db, "approved")
+    said = http.post(f"/api/post/{pid}/queue", json={}).json()
+    assert said["status"] == "approved" and said["said"] == ("Queued: it goes out Thu 22 Oct, 8:00 am IST. It goes to "
+                                                             "Publora by itself once its time is 14 days away, while the "
+                                                             "studio is open.")
+    shown = http.get(f"/api/post/{pid}").json()
+    assert (shown["label"], shown["queued"], shown["when"], shown["can_queue"]) == ("Queued", True, "Thu 22 Oct, 8:00 am IST", False)
+    assert shown["posting"] == "Tue 8:00 am, Wed 9:30 am and Thu 8:00 am" and shown["window"] == 14
+    listed = {p["id"]: p for p in http.get("/api/state").json()["posts"]}
+    assert (listed[pid]["label"], listed[pid]["when"], listed[pid]["kind"]) == ("Queued", "Thu 22 Oct, 8:00 am IST", "ok")
+    order = [p["id"] for p in http.get("/api/state").json()["posts"]]
+    assert order[-1] == pid                                  # what goes out, in time order: the queued one last
+    coming = http.get("/api/schedule").json()["coming"]
+    assert [c["kind"] for c in coming] == ["publora"] * 6 + ["queued"] and coming[-1]["place"] == 1
+    assert http.post(f"/api/post/{pid}/unqueue", json={}).json() == {"ok": True}
+    assert http.get(f"/api/post/{pid}").json()["label"] == "Approved" and len(client.calls) == 6
+    assert http.post(f"/api/post/{pid}/unqueue", json={}).status_code == 409
+
+
+def test_back_to_draft_and_the_trash_take_a_post_out_of_the_line(studio):
+    http, app, _client = studio()
+    db = app.state.db
+    queue = app.state.queue
+    for _ in range(6):
+        http.post(f"/api/post/{add_post(db, 'approved')}/queue", json={})
+    a, b = add_post(db, "approved"), add_post(db, "approved")
+    for pid in (a, b):
+        http.post(f"/api/post/{pid}/queue", json={})
+    assert [pid for pid, _at in queue.lineup()] == [a, b]
+    assert http.post("/api/queue/move", json={"id": b, "how": "up"}).json() == {"ok": True}
+    assert [pid for pid, _at in queue.lineup()] == [b, a]
+    assert http.post("/api/queue/move", json={"id": b, "how": "up"}).status_code == 409
+    assert http.post("/api/queue/move", json={"id": b, "how": "sideways"}).status_code == 422
+    assert http.post(f"/api/post/{b}/unapprove", json={}).json() == {"ok": True}
+    assert db.one("SELECT status, queue_pos FROM posts WHERE id=?", (b,))[:] == ("draft", None)
+    assert http.post(f"/api/post/{a}/trash", json={}).json()["ok"]
+    assert queue.lineup() == [] and db.one("SELECT queue_pos FROM posts WHERE id=?", (a,))["queue_pos"] is None
+
+
+def test_the_queue_goes_to_publora_by_itself_only_with_check_publora(studio):
+    """The guard, as the light check's: a studio made without check_publora (every test's) never sends a queued post by
+    itself, however often it is polled. With it, a poll starts one pass, which sends the ones inside the window."""
+    http, app, client = studio()
+    db = app.state.db
+    pid = add_post(db, "approved")
+    db.run("UPDATE posts SET queue_pos=1 WHERE id=?", (pid,))
+    for _ in range(10):
+        http.get("/api/state")
+    app.state.queue.wait()
+    assert client.calls == [] and app.state.queue._thread is None
+
+    http, app, client = studio(check=True)
+    db = app.state.db
+    pid = add_post(db, "approved")
+    db.run("UPDATE posts SET queue_pos=1 WHERE id=?", (pid,))
+    http.get("/api/state")
+    app.state.queue.wait()
+    assert len(client.calls) == 1 and db.one("SELECT status FROM posts WHERE id=?", (pid,))["status"] == "scheduled"
+
+
+def test_the_posting_times_settings(studio):
+    http, app, _client = studio()
+    shown = http.get("/api/posting").json()
+    assert shown["times"] == DEFAULT and shown["days"][0] == ["mon", "Monday"] and shown["words"].startswith("Tue 8:00 am")
+    refused = http.post("/api/posting", json={"times": {}})
+    assert refused.status_code == 422 and "at least one" in refused.json()["error"]
+    saved = http.post("/api/posting", json={"times": {"mon": "08:30", "wed": "08:30", "fri": "08:30"}}).json()
+    assert saved["words"] == "Mon 8:30 am, Wed 8:30 am and Fri 8:30 am"
+    assert http.get("/api/posting").json()["times"] == {"mon": "08:30", "wed": "08:30", "fri": "08:30"}
+
+
+def test_schedules_recommended_times_are_the_free_posting_times(studio):
+    http, app, _client = studio()
+    pid = add_post(app.state.db, "approved")
+    quick = http.get(f"/api/post/{pid}").json()["schedule"]["quick"]
+    assert [q["value"] for q in quick] == ["2026-10-08T08:00", "2026-10-13T08:00", "2026-10-14T09:30", "2026-10-15T08:00"]
+
+
+# ---- the Publora plan's limits -----------------------------------------------------------------------------------
+EVERY_DAY = {d: "08:00" for d in posting.DAYS}
+
+
+def test_the_plans_are_publoras_and_name_their_limits(cfg):
+    starter = with_(cfg, **{k: v for k, v in PLANS["starter"].items() if k != "label"})
+    assert plan_of(starter) == "starter" and plan_of(pro(cfg)) == "pro" and plan_of(with_(cfg, publora_at_once=5)) == "custom"
+    assert limit_words(starter) == "15 posts a month, 3 scheduled at a time, 7 days ahead" and limit_words(pro(cfg)) == "no limits"
+    assert (cfg.monthly_post_limit, cfg.publora_at_once, cfg.publora_days_ahead) == (15, 3, 7)   # Starter's, by default
+
+
+def test_on_starter_the_queue_hands_over_three_at_a_time_and_seven_days_ahead(cfg, tmp_path):
+    """Starter holds 3 scheduled posts at a time and schedules 7 days ahead: the queue never asks Publora for more, so
+    nothing is refused there. The rest wait in line, in order, and go once one has gone out."""
+    db = DB(tmp_path / "starter.db")
+    client = FakeClient()
+    pub = Publisher(db, cfg, client_factory=lambda: client, now=lambda: NOW)
+    queue = PostingQueue(db, pub)
+    posting.save(db, EVERY_DAY)
+    ids = queued(db, queue, 9)
+    assert [r["id"] for r in queue.send_due()] == ids[:3] and len(client.calls) == 3       # three at a time
+    assert queue.send_due() == []
+    db.run("UPDATE posts SET status='published' WHERE id=?", (ids[0],))                  # one went out
+    assert [r["id"] for r in queue.send_due()] == [ids[3]]
+    pub.cfg = queue.cfg = with_(cfg, publora_at_once=0)                                  # only the 7 days now
+    sent = queue.send_due()
+    assert [payload["scheduledTime"][:10] for payload, _key in client.calls][-len(sent):] == [
+        "2026-10-12", "2026-10-13", "2026-10-14"]                                         # 14 Oct 8:00 is inside 7 days
+    assert [pid for pid, _at in queue.lineup()] == ids[7:]                              # 15 Oct and later wait
+
+
+def test_schedule_refuses_before_publora_would(cfg, tmp_path):
+    db = DB(tmp_path / "refuse.db")
+    client = FakeClient()
+    pub = Publisher(db, cfg, client_factory=lambda: client, now=lambda: NOW)
+    for day in ("08", "09", "10"):
+        add_post(db, "scheduled", scheduled_at=f"2026-10-{day}T02:30:00+00:00", publora_post_id=f"pg-{day}")
+    pid = add_post(db, "approved")
+    with pytest.raises(ScheduleError, match="holds 3 scheduled posts at a time, and 3 are waiting there now"):
+        pub.schedule(pid, "2026-10-11T08:00", None)
+    with pytest.raises(ScheduleError, match="up to 7 days ahead"):
+        pub.schedule(pid, "2026-10-15T08:00", None)
+    assert client.calls == [] and db.one("SELECT status FROM posts WHERE id=?", (pid,))["status"] == "approved"
+
+
+# ---- Post now ----------------------------------------------------------------------------------------------------
+def test_post_now_on_a_draft_is_confirmed_then_approved_and_sent_for_the_soonest_time(studio):
+    """Post now…: refused unconfirmed, and with a blank left as Approve refuses one; confirmed, the draft is approved
+    and goes to Publora at once, for two minutes from now, with its first comment, and counts toward the month."""
+    http, app, client = studio()
+    db = app.state.db
+    pid = add_post(db, "draft", text="In [N] weeks the build got faster.", first_comment="The numbers: https://example.com")
+    assert http.post(f"/api/post/{pid}/now", json={}).status_code == 422          # public at once: confirmed first
+    refused = http.post(f"/api/post/{pid}/now", json={"confirmed": True})
+    assert refused.status_code == 409 and "placeholder" in refused.json()["error"] and client.calls == []
+    http.post(f"/api/post/{pid}/save", json={"text": "In six weeks the build got faster."})
+    said = http.post(f"/api/post/{pid}/now", json={"confirmed": True}).json()
+    assert said == {"ok": True, "error": "", "said": "Handed to Publora: it goes out at 11:32 am, about 2 minutes from now."}
+    (payload, _key), = client.calls
+    assert (payload["content"], payload["scheduledTime"], payload["firstComment"]["text"]) == \
+        ("In six weeks the build got faster.", "2026-10-07T06:02:00Z", "The numbers: https://example.com")
+    shown = http.get(f"/api/post/{pid}").json()
+    assert (shown["status"], shown["when"]) == ("scheduled", "Wed 7 Oct, 11:32 am IST")
+    assert app.state.publisher.quota_used(NOW) == 1
+    assert http.post(f"/api/post/{pid}/now", json={"confirmed": True}).status_code == 409   # at Publora: never twice
+    assert len(client.calls) == 1
+
+
+def test_post_now_on_a_queued_post_sends_that_one_and_the_posts_behind_it_move_up(studio):
+    """A queued post sent now leaves the line: the posts behind it take its place and its posting time, and Coming up
+    lists it at Publora, first out."""
+    http, app, client = studio()
+    db = app.state.db
+    queue = app.state.queue
+    for _ in range(6):                                       # every posting day inside the window has a post at Publora
+        http.post(f"/api/post/{add_post(db, 'approved')}/queue", json={})
+    first, second, third = (add_post(db, "approved") for _ in range(3))
+    for pid in (first, second, third):
+        http.post(f"/api/post/{pid}/queue", json={})
+    assert queue.lineup() == [(first, ist("2026-10-22 08:00")), (second, ist("2026-10-27 08:00")),
+                              (third, ist("2026-10-28 09:30"))]
+    assert http.post(f"/api/post/{second}/now", json={"confirmed": True}).json()["ok"]
+    assert len(client.calls) == 7 and client.calls[-1][0]["scheduledTime"] == "2026-10-07T06:02:00Z"
+    assert db.one("SELECT status, queue_pos FROM posts WHERE id=?", (second,))[:] == ("scheduled", None)
+    assert queue.lineup() == [(first, ist("2026-10-22 08:00")), (third, ist("2026-10-27 08:00"))]
+    coming = http.get("/api/schedule").json()["coming"]
+    assert coming[0]["kind"] == "publora" and coming[0]["post"]["id"] == second
+    assert [(c["post"]["id"], c["place"], c["of"]) for c in coming if c["kind"] == "queued"] == [(first, 1, 2), (third, 2, 2)]
+
+
+def test_post_now_is_refused_at_the_plans_limits_and_a_draft_refused_stays_a_draft(studio):
+    """On Starter: with the month's 15 posts used, or 3 posts already waiting at Publora, Post now is refused in words
+    before anything is sent, and the draft is still a draft."""
+    http, app, client = studio(plan="starter")
+    db = app.state.db
+    draft = add_post(db, "draft")
+    for _ in range(15):
+        add_post(db, "published", scheduled_at="2026-10-01T02:30:00+00:00", publora_post_id="pg-sent")
+    refused = http.post(f"/api/post/{draft}/now", json={"confirmed": True})
+    assert refused.status_code == 409 and refused.json()["error"] == ("Monthly limit reached: 15/15 posts are already "
+                                                                       "scheduled or published in October 2026.")
+    db.run("DELETE FROM posts WHERE status='published'")
+    for day in ("08", "09", "10"):
+        add_post(db, "scheduled", scheduled_at=f"2026-10-{day}T02:30:00+00:00", publora_post_id=f"pg-{day}")
+    said = http.post(f"/api/post/{draft}/now", json={"confirmed": True}).json()["error"]
+    assert said == ("Your Publora plan holds 3 scheduled posts at a time, and 3 are waiting there now. Post it now once one "
+                    "of them has gone out, or make room with Cancel on Publora, in its gear.")
+    assert db.one("SELECT status FROM posts WHERE id=?", (draft,))["status"] == "draft" and client.calls == []
+
+
+def test_a_publora_failure_on_post_now_is_reported_and_try_again_sends_the_same_request(studio):
+    """Publora's own words come back to the page and stay on the post, Failed, with Try again; pressed once its time has
+    passed, Try again resends the very same request."""
+    http, app, client = studio()
+    db = app.state.db
+    pid = add_post(db, "approved")
+    client.fail = RuntimeError("HTTP 503: {'error': 'Service unavailable'}")
+    said = http.post(f"/api/post/{pid}/now", json={"confirmed": True}).json()
+    assert said == {"ok": False, "error": "HTTP 503: {'error': 'Service unavailable'}"}
+    shown = http.get(f"/api/post/{pid}").json()
+    assert (shown["status"], shown["error"], shown["can_retry"]) == ("failed", said["error"], True)
+    client.fail = None
+    app.state.publisher.now = lambda: NOW + timedelta(minutes=5)
+    assert http.post(f"/api/post/{pid}/retry", json={}).json() == {"ok": True, "error": ""}
+    (p1, k1), (p2, k2) = client.calls
+    assert (p1, k1) == (p2, k2) and db.one("SELECT status FROM posts WHERE id=?", (pid,))["status"] == "scheduled"
+
+
+def test_picking_a_plan_writes_its_limits_as_numbers(studio, tmp_path, monkeypatch):
+    local = tmp_path / "config.local.toml"
+    local.write_text("# kept\nport = 8799\nmonthly_post_limit = 15\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "LOCAL", local)
+    http, _app, _client = studio(plan="starter")
+    shown = http.get("/api/settings").json()
+    assert (shown["plan"], shown["plan_words"]) == ("starter", "15 posts a month, 3 scheduled at a time, 7 days ahead")
+    assert [p["value"] for p in shown["plans"]] == ["starter", "pro"]
+    assert http.post("/api/settings/publora-plan", json={"plan": "gold"}).status_code == 422
+    assert http.post("/api/settings/publora-plan", json={"plan": "pro"}).json() == {"ok": True, "restarts": False}
+    assert local.read_text(encoding="utf-8") == ("# kept\nport = 8799\nmonthly_post_limit = 0\npublora_at_once = 0\n"
+                                                 "publora_days_ahead = 14\n")
+
