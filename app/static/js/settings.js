@@ -121,13 +121,14 @@ async function settings(quiet = false) {
         ["Skills", h("code", null, c.skills)]),
       h("div", { class: "form-foot" }, check, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
         icon("folder", 14), h("span", null, "Change folders")))),
-    section("publishing", "plane", "Publishing", "Publora’s keys live in linkedin-skills\\.env, the Apify key in Windows (APIFY_TOKEN). Each shows as dots: the eye shows it, after a warning.",
+    section("publishing", "plane", "Publishing", "Publora’s key lives in linkedin-skills\\.env, the Apify key in Windows (APIFY_TOKEN); both are set here. Each shows as dots: the eye shows it, after a warning.",
       planForm(data),
-      facts(["Publora key", data.keys && data.keys.publora ? publoraBox(data.keys.publora) : "Missing"],
+      facts(["Publora key", data.publora.key ? "Set" : "Missing: paste it below"],
         ["LinkedIn channel", data.publora.platform_id ? "Set" : "Worked out from the key when you schedule"],
         ["Apify key", data.publora.apify ? "Set: post links can be fetched" : "Not set: paste post text instead of links"],
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
         ["Times shown in", `${data.timezone} (${data.tz})`]),
+      publoraForm(data),
       apifyForm(data)),
     postingSection(times),
     chatgpt(codex),
@@ -242,11 +243,44 @@ function eyeFor(input, what, keep) {
   return eye;
 }
 
-// The Publora key as linkedin-skills\.env holds it: dots, the eye; changed in that file, not here.
-function publoraBox(value) {
-  const box = h("input", { class: "input secret", id: "publora-key", type: "text", value, readonly: true, autocomplete: "off",
-    spellcheck: "false", "aria-label": "Publora key" });
-  return h("span", { class: "secret-row" }, box, eyeFor(box, "Publora key", "publora-eye"));
+// The Publora key (Publisher.set_key; the owner's word, 18 Nov 2026: "make this changeable too"): pasted here, asked of
+// Publora (the key's channels, a read), then written to the PUBLORA_API_KEY line of linkedin-skills\.env, where the
+// skills read it too. Dots, the eye; what was typed is kept through redraws until it is saved, and so is what the last
+// save said (a save redraws the page: a warning about the LinkedIn channel must stay to be read).
+let publoraSaid = null;
+function publoraForm(data) {
+  const keyBox = h("input", { class: "input secret", id: "publora-key", type: "text", autocomplete: "off", spellcheck: "false",
+    placeholder: "sk_…", "data-keep": "publora-key", "aria-describedby": "publora-key-hint" });
+  keyBox.value = typed.publoraKey ?? ((data.keys && data.keys.publora) || "");
+  keyBox.addEventListener("input", () => {
+    typed.publoraKey = keyBox.value;
+    keyBox.removeAttribute("aria-invalid");
+  });
+  const out = h("div", { class: "results", id: "publora-key-said" }, publoraSaid ? note(...publoraSaid) : null);
+  const save = h("button", { class: "btn small", type: "submit", "data-keep": "publora-save" }, h("span", null, "Save the key"));
+  return h("form", { class: "model-form", onsubmit: (event) => {
+    event.preventDefault();
+    whileBusy(save, async () => {
+      const reply = await post("/api/settings/publora-key", { key: keyBox.value });
+      if (reply.error) {
+        keyBox.setAttribute("aria-invalid", "true");
+        publoraSaid = null;
+        put(out, note("bad", reply.error));
+        return announce(reply.error, { urgent: true });
+      }
+      delete typed.publoraKey;
+      const said = "Saved: Publora took the key. Posts are scheduled with it from now on.";
+      publoraSaid = reply.warning ? ["warn", said, reply.warning] : ["ok", said];
+      put(out, note(...publoraSaid));
+      announce(reply.warning ? `${said} ${reply.warning}` : said, { urgent: !!reply.warning });
+      await settings(true);
+    });
+  } },
+  h("div", { class: "field" }, h("label", { class: "field-label", for: "publora-key" }, "Publora key"),
+    h("span", { class: "secret-row" }, keyBox, eyeFor(keyBox, "Publora key", "publora-eye")),
+    h("span", { class: "field-hint", id: "publora-key-hint" },
+      "From Publora › Settings › API. Publora is asked whether it takes the key, then it is written to linkedin-skills\\.env.")),
+  h("div", { class: "form-foot" }, save), out);
 }
 
 // The Apify key (app/apify_key.py): pasted here, asked of Apify, then kept as the Windows user variable APIFY_TOKEN. It is

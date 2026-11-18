@@ -317,12 +317,34 @@ def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
         [["text", "none", "off"], "true", "Hide the Apify key"]
     eye.click()
     assert [page.eval_on_selector("#apify-key", MASK), page.locator("#dialog").is_visible()] == [["text", "disc", "off"], False]
-    # the Publora key as the skills' .env holds it: dots, read-only, the eye the same way
+    # the Publora key as the skills' .env holds it: dots, the eye the same way, and changed here (the owner's word, 18 Nov
+    # 2026: "make this changeable too"), asked of the demo's stand-in Publora first
     assert [page.eval_on_selector("#publora-key", MASK), page.eval_on_selector("#publora-key", "(el) => [el.readOnly, el.value]")] == \
-        [["text", "disc", "off"], [True, "sk_demo"]]
+        [["text", "disc", "off"], [False, "sk_demo"]]
     page.locator('[data-eye="publora-eye"]').click()
     page.locator("#dialog").get_by_role("button", name="Show it").click()
     assert page.eval_on_selector("#publora-key", MASK) == ["text", "none", "off"]
+    page.fill("#publora-key", "sk_live_" + "c3" * 12)                     # one Publora refuses: said, the box marked
+    page.locator('[data-keep="publora-save"]').click()
+    page.wait_for_selector("#publora-key[aria-invalid=true]")
+    assert "Publora didn't take that key" in page.locator("#publora-key-said").inner_text()
+    elsewhere = "sk_demo_elsewhere_" + "d4" * 6                            # taken, for an account with another channel
+    page.fill("#publora-key", elsewhere)
+    page.locator('[data-keep="publora-save"]').click()
+    page.wait_for_selector("#publora-key-said .result.warn")
+    page.eval_on_selector("#publora-key", "(el) => el.setAttribute('data-before', '')")   # Settings drawn afresh: the warning
+    page.evaluate("location.hash = '#~schedule'")                                         # stays, to be read
+    page.wait_for_function("() => location.hash === '#~schedule'")
+    page.evaluate("location.hash = '#~settings-publishing'")
+    page.wait_for_selector("#publora-key:not([data-before])")
+    page.wait_for_selector("#publora-key-said .result.warn")
+    said = page.locator("#publora-key-said").inner_text()
+    assert [page.input_value("#publora-key") == elsewhere, "Saved: Publora took the key" in said, "no channel linkedin-demo" in said,
+            "linkedin-elsewhere" in said] == [True, True, True, True]
+    page.fill("#publora-key", "sk_demo")                                    # the demo's own back, as it was
+    page.locator('[data-keep="publora-save"]').click()
+    page.wait_for_selector("#publora-key-said .result.ok")
+    assert [page.input_value("#publora-key"), page.get_attribute("#publora-key", "aria-invalid")] == ["sk_demo", None]
     assert page.locator("input[type=password]").count() == 0
     # under the key, the month as Apify says it, in the owner's other studios' own words
     page.wait_for_selector("#apify-month")

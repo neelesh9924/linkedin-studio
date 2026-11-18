@@ -196,7 +196,8 @@ Then:
    `requirements.txt` changes. Otherwise there is no console.
 2. **Set the three folders.** On a new PC the app opens its setup screen first. See below.
 3. **Keys.** In your skills folder, copy `.env.example` to `.env` and set:
-   - `PUBLORA_API_KEY=sk_…` (Publora → Settings → API)
+   - `PUBLORA_API_KEY=sk_…` (Publora → Settings → API), or paste the key in **Settings →
+     Publishing** once the app runs
    - `LINKEDIN_PLATFORM_ID=linkedin-…` (Publora → Channels → your LinkedIn account)
    - **Delete the lines you don't use.** The placeholders from `.env.example` are ignored by this
      app but count as "set" for the skills' own scripts.
@@ -206,7 +207,9 @@ Then:
    and then it is kept as the Windows user variable `APIFY_TOKEN`, which other apps of yours that use
    Apify can read too. The app reads that variable first, then an `APIFY_TOKEN=` line in `.env`.
    The key shows in its box as dots; the eye beside it shows it, after a warning. The Publora key
-   shows the same way under **Settings → Publishing**, and is changed in `.env`.
+   shows the same way under **Settings → Publishing**, and is changed there too: Publora is asked
+   whether it takes the new key, then the app writes that one line of `.env`. If the key's account
+   lacks the LinkedIn channel `LINKEDIN_PLATFORM_ID` names, Settings says so.
 4. **Pictures (optional).** Install the Codex CLI (`npm install -g @openai/codex`). In
    **Settings → ChatGPT**, name a folder of its own for Codex's sign-in (its Codex home), save,
    and press **Sign in**. There is no default: the PC's own `.codex` folder may be signed in to

@@ -21,8 +21,10 @@ passed, where a post scheduled for a time of its own is refused.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -214,6 +216,39 @@ def read_env(cfg: Config) -> dict[str, str]:
     return {k: v for k, v in ((k, real_value(v)) for k, v in raw.items()) if v}
 
 
+KEY_WHERE = "Publora › Settings › API"
+KEY_SHAPE = re.compile(r"sk_[A-Za-z0-9_\-]{4,200}")
+
+
+def write_env_value(cfg: Config, name: str, value: str) -> None:
+    """One line of linkedin-skills\\.env set to `name=value` (an `export` line too; a commented one is left alone), every
+    other line as it was, with its own line ending; added at the end when missing. Written whole beside it, then swapped
+    in (on Windows a moment's reader makes the swap fail, so it is tried again)."""
+    path = Path(cfg.env_file)
+    lines = path.read_bytes().decode("utf-8-sig").splitlines(keepends=True) if path.exists() else []   # as written: CRLF kept
+    own = re.compile(rf"\s*(?:export\s+)?{re.escape(name)}\s*=")
+    found = False
+    for i, line in enumerate(lines):
+        if own.match(line):
+            lines[i] = f"{name}={value}" + line[len(line.rstrip("\r\n")):]
+            found = True
+    if not found:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += "\n"
+        lines.append(f"{name}={value}\n")
+    temp = path.with_name(path.name + ".saving")
+    temp.write_text("".join(lines), encoding="utf-8", newline="")
+    for attempt in range(10):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                temp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
+
+
 def _lib(cfg: Config):
     if str(cfg.skills_dir) not in sys.path:
         sys.path.insert(0, str(cfg.skills_dir))
@@ -282,10 +317,12 @@ def parse_utc(value: str) -> datetime:
 
 class Publisher:
     def __init__(self, db: DB, cfg: Config, client_factory: Callable[[], Any] | None = None,
-                 now: Callable[[], datetime] | None = None):
+                 now: Callable[[], datetime] | None = None, key_client: Callable[[str], Any] | None = None):
         self.db = db
         self.cfg = cfg
         self.client_factory = client_factory or (lambda: make_client(cfg))
+        # a client for a key not kept yet: Settings asks Publora about a pasted one with it (tests and the demo: a stand-in)
+        self.key_client = key_client or (lambda key: studio_client_class(cfg)(api_key=key))
         self.now = now or (lambda: datetime.now(timezone.utc))
         self._platform_id: str | None = None
 
@@ -306,6 +343,42 @@ class Publisher:
         from . import apify_key  # noqa: PLC0415  (it reads .env through this module)
         return {"key": bool(env.get("PUBLORA_API_KEY")), "platform_id": bool(env.get("LINKEDIN_PLATFORM_ID")),
                 "apify": bool(apify_key.token(self.cfg))}
+
+    def set_key(self, value: str) -> tuple[str | None, str | None]:
+        """Settings › Publishing's Publora key (the owner's word, 18 Nov 2026): only something shaped like a key is sent,
+        and only to Publora, which is asked for the key's channels (a read: nothing changes there) before it is written to
+        linkedin-skills\\.env's PUBLORA_API_KEY line, where the skills read it too. Never logged or kept anywhere else.
+        (what went wrong, what to look at next), each in the owner's words or None."""
+        value = str(value or "").strip()
+        if not value:
+            return f"Paste your Publora API key: {KEY_WHERE}.", None
+        if not KEY_SHAPE.fullmatch(value) or not real_value(value):
+            return f"That isn't a Publora API key: one starts sk_ ({KEY_WHERE}).", None
+        try:
+            channels = self.key_client(value).list_platform_connections()
+        except Exception as exc:   # the client's PubloraError, or requests' own when Publora can't be reached
+            said = str(exc).replace(value, "…")
+            if said.startswith(("HTTP 401", "HTTP 403")):
+                return f"Publora didn't take that key: copy it again from {KEY_WHERE}.", None
+            return f"Publora could not be asked about the key: {said[:200]}", None
+        try:
+            write_env_value(self.cfg, "PUBLORA_API_KEY", value)
+        except OSError as exc:
+            return f"linkedin-skills\\.env could not be written: {exc.strerror or exc}", None
+        self._platform_id = None   # the LinkedIn channel is this key's account's: worked out afresh
+        ids = [str(c.get("platformId", "")) for c in channels if isinstance(c, dict)]
+        linkedin = [i for i in ids if i.startswith("linkedin-")]
+        chosen = read_env(self.cfg).get("LINKEDIN_PLATFORM_ID")
+        if chosen and chosen not in ids:
+            to = f"its LinkedIn channel, {', '.join(linkedin)}" if linkedin else "a LinkedIn channel, once one is connected in Publora"
+            return None, (f"This key's Publora account has no channel {chosen}, the LINKEDIN_PLATFORM_ID in "
+                          f"linkedin-skills\\.env: change that line to {to}, before scheduling.")
+        if not chosen and len(linkedin) != 1:
+            return None, ("This key's Publora account has no LinkedIn channel yet: connect one in Publora › Channels before "
+                          "scheduling." if not linkedin else
+                          f"This key's Publora account has {len(linkedin)} LinkedIn channels: set LINKEDIN_PLATFORM_ID in "
+                          "linkedin-skills\\.env to the one to post to.")
+        return None, None
 
     def platform_id(self, client: Any) -> str:
         if self._platform_id:

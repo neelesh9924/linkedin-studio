@@ -10,7 +10,7 @@ import pytest
 from conftest import TOKEN
 from fastapi.testclient import TestClient
 
-from app import api_pages, apify_key, guide, paths, render
+from app import api_pages, apify_key, guide, paths, publishing, render
 from app.claude_runner import build_command
 from app.skills import build_request
 from app.main import create_app
@@ -229,6 +229,66 @@ def test_the_apify_key_is_asked_of_apify_then_kept_and_never_shown(web, cfg, mon
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as kept, pytest.raises(FileNotFoundError):
             winreg.QueryValueEx(kept, "LINKEDIN_STUDIO_TEST_APIFY_KEY")
+
+
+def test_the_publora_key_is_asked_of_publora_then_written_to_its_env_line(web, cfg, monkeypatch):
+    """Settings › Publishing's Publora key (the owner's word, 18 Nov 2026: "make this changeable too"): only something
+    shaped like a key is sent, and only to Publora (a stand-in here, never the real one), which is asked for the key's
+    channels before the key is written to linkedin-skills\\.env's PUBLORA_API_KEY line, every other line as it was. Saved
+    unchanged, Publora is not asked; a key whose account lacks the .env's LinkedIn channel is kept, with what to change."""
+    asked = []
+
+    class StandIn:
+        def __init__(self, api_key):
+            self.key = api_key
+
+        def list_platform_connections(self):
+            asked.append(self.key)
+            if self.key.endswith("refused"):
+                raise RuntimeError("HTTP 401: {'error': 'Invalid API key'}")
+            return [{"platformId": "linkedin-mine"}, {"platformId": "x-mine"}]
+
+    monkeypatch.setattr(publishing, "studio_client_class", lambda _cfg: StandIn)
+    env = cfg.skills_dir / ".env"
+    before = "# from .env.example\nPUBLORA_API_KEY=sk_test_secret\nLINKEDIN_PLATFORM_ID=linkedin-mine\nAPIFY_TOKEN=apify_api_your_token_here\n"
+    env.write_text(before, encoding="utf-8")
+    for text, words in (("", "Paste your Publora API key"), ("my password", "isn't a Publora API key"),
+                        ("sk_your_key_here", "isn't a Publora API key"), ("sk_live_good\r\nAPIFY_TOKEN=x", "isn't a Publora API key"),
+                        (7, "Paste your Publora API key")):
+        said = web.post("/api/settings/publora-key", json={"key": text})
+        assert said.status_code == 422 and words in said.json()["error"], text
+    assert asked == []                                                        # none of those was sent
+    refused = web.post("/api/settings/publora-key", json={"key": "sk_live_refused"})
+    assert refused.status_code == 422 and "didn't take that key" in refused.json()["error"] and "sk_live_refused" not in refused.text
+    assert env.read_text(encoding="utf-8") == before                          # a refused key changes nothing
+    good = "sk_live_" + "a1" * 12
+    assert web.post("/api/settings/publora-key", json={"key": f"  {good}\n"}).json() == {"ok": True, "warning": None}
+    assert asked[-1] == good
+    assert env.read_text(encoding="utf-8") == before.replace("sk_test_secret", good)
+    assert web.get("/api/settings").json()["keys"]["publora"] == good
+    assert all(good not in web.get(where).text for where in ("/api/state", "/api/tools"))
+    calls = len(asked)
+    assert web.post("/api/settings/publora-key", json={"key": good}).json()["ok"] is True   # saved unchanged: not asked
+    assert len(asked) == calls
+    # a key whose Publora account lacks the channel the .env names: kept, and said what to change
+    env.write_text(env.read_text(encoding="utf-8").replace("linkedin-mine", "linkedin-old"), encoding="utf-8")
+    other = "sk_live_" + "b2" * 12
+    warned = web.post("/api/settings/publora-key", json={"key": other}).json()
+    assert warned["ok"] is True and "no channel linkedin-old" in warned["warning"] and "linkedin-mine" in warned["warning"]
+    assert f"PUBLORA_API_KEY={other}\n" in env.read_text(encoding="utf-8")
+
+
+def test_one_env_line_is_set_and_every_other_kept_as_written(cfg):
+    """write_env_value changes the one line it is given (an export line too, never a commented one), keeps each line's own
+    ending, and adds the line at the end when the file has none."""
+    env = cfg.skills_dir / ".env"
+    env.write_bytes(b"# PUBLORA_API_KEY=sk_example\r\nexport PUBLORA_API_KEY=sk_old\r\nLINKEDIN_PLATFORM_ID=linkedin-x\r\n")
+    publishing.write_env_value(cfg, "PUBLORA_API_KEY", "sk_new_one")
+    assert env.read_bytes() == b"# PUBLORA_API_KEY=sk_example\r\nPUBLORA_API_KEY=sk_new_one\r\nLINKEDIN_PLATFORM_ID=linkedin-x\r\n"
+    env.write_text("LINKEDIN_PLATFORM_ID=linkedin-x", encoding="utf-8")       # no such line, and no newline at the end
+    publishing.write_env_value(cfg, "PUBLORA_API_KEY", "sk_new_one")
+    assert env.read_text(encoding="utf-8") == "LINKEDIN_PLATFORM_ID=linkedin-x\nPUBLORA_API_KEY=sk_new_one\n"
+    assert not (cfg.skills_dir / ".env.saving").exists()
 
 
 def test_the_key_is_read_from_windows_first_then_this_process_then_the_skills_env(cfg, monkeypatch):

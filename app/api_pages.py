@@ -522,6 +522,18 @@ def register(app: FastAPI, s: Studio) -> None:
                  None if value.strip() and value.strip() == apify_key.token(cfg) else apify_key.set_token(value))   # unchanged: nothing to ask
         return fail(error) if error else {"ok": True}
 
+    # Settings › Publishing's Publora key (the owner's word, 18 Nov 2026): asked of Publora, then written to its line of
+    # linkedin-skills\.env (Publisher.set_key); what to look at next comes back as the warning.
+    @app.post("/api/settings/publora-key")
+    def settings_publora_key(data: dict = Body(default={})):
+        value = data.get("key")
+        if not isinstance(value, str):
+            return fail("Paste your Publora API key.")
+        if value.strip() and value.strip() == read_env(cfg).get("PUBLORA_API_KEY"):
+            return {"ok": True, "warning": None}   # unchanged: nothing to ask
+        error, warning = pub.set_key(value)
+        return fail(error) if error else {"ok": True, "warning": warning}
+
     @app.post("/api/settings/claude/check")
     def settings_sign_in():
         return {"sign_in": sign_in(fresh=True)}

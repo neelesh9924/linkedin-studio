@@ -313,6 +313,21 @@ class ScriptedRunner:
         return RunResult(outcome="ok", text=reply, clean_text=reply, num_turns=5, usage=usage, skill_invoked=True)
 
 
+class DemoPubloraKey:
+    """Publora as Settings › Publishing asks it about a pasted key (its channels): the demo's made-up keys (sk_demo…) are
+    taken, one of them (sk_demo_elsewhere…) for an account whose LinkedIn channel is another; any other is refused, as
+    Publora refuses a wrong key. Nothing is sent anywhere."""
+
+    def __init__(self, key):
+        self.key = key
+
+    def list_platform_connections(self):
+        time.sleep(0.2)
+        if not self.key.startswith("sk_demo"):
+            raise RuntimeError("HTTP 401: {'error': 'Invalid API key'}")
+        return [{"platformId": "linkedin-elsewhere" if self.key.startswith("sk_demo_elsewhere") else "linkedin-demo"}]
+
+
 class ScriptedPublora:
     """Publora as the studio's client sees it, kept in memory: a post, and a picture going up with it. A post it was
     given goes out at its time: asked after that, it answers published, with a made-up LinkedIn address."""
@@ -464,7 +479,7 @@ def main() -> None:
     db = DB(db_path)
     if fresh and "--empty" not in args and "--db" not in args:
         seed(db)
-    publisher = Publisher(db, cfg, client_factory=lambda publora=ScriptedPublora(): publora)
+    publisher = Publisher(db, cfg, client_factory=lambda publora=ScriptedPublora(): publora, key_client=DemoPubloraKey)
     app = create_app(cfg, "demo", db_path=db_path, runner=ScriptedRunner(cfg.story_bank), publisher=publisher,
                      check_publora=True)   # the light check, on the stand-in: a post given a time goes out at it
     publisher.db = app.state.db   # the app's own, as in the real app: Approve, Schedule… and the rest move the page's poll
