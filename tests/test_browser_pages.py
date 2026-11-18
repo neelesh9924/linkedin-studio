@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT))
 from launch import find_browser  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not find_browser(""), reason="needs Chrome or Edge")
+# a key's box as drawn: its type, whether it shows as dots ("disc") or as text ("none"), and its autocomplete
+MASK = "(el) => [el.type, getComputedStyle(el).getPropertyValue('-webkit-text-security'), el.getAttribute('autocomplete')]"
 
 
 @pytest.fixture(scope="module")
@@ -286,7 +288,10 @@ def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
     page.wait_for_selector("#apify-key")
     publishing = page.locator("#settings-publishing")
     assert "Not set: paste post text instead of links" in publishing.inner_text()
-    assert page.eval_on_selector("#apify-key", "(el) => el.type") == "password"
+    # a key's box is plain text drawn as dots, never a password box: Chrome offers to save a password box's value, and
+    # did when the eye showed one (the owner's word, 18 Nov 2026)
+    assert page.eval_on_selector("#apify-key", MASK) == ["text", "disc", "off"]
+    assert page.locator("input[type=password]").count() == 0
     page.fill("#apify-key", "apify_api_" + "wrong" * 8)
     page.locator('[data-keep="apify-save"]').click()
     page.wait_for_selector("#apify-key[aria-invalid=true]")
@@ -296,7 +301,7 @@ def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
     page.locator('[data-keep="apify-save"]').click()
     page.wait_for_function("() => document.querySelector('#settings-publishing').innerText.includes('Set: post links can be fetched')")
     page.wait_for_function(f"() => document.querySelector('#apify-key').value === '{demo_key}'")
-    assert page.eval_on_selector("#apify-key", "(el) => [el.type, el.getAttribute('aria-invalid')]") == ["password", None]
+    assert [page.eval_on_selector("#apify-key", MASK), page.get_attribute("#apify-key", "aria-invalid")] == [["text", "disc", "off"], None]
     assert demo_key not in page.content()                                # in its box only, never in the page's text
     # the eye (the owner's word, 18 Nov 2026): it asks first, saying what showing the key risks; shows; hides at once
     eye = page.locator('[data-eye="apify-eye"]')
@@ -305,17 +310,20 @@ def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
     assert [page.locator("#dialog h2").inner_text(), page.locator("#dialog p").inner_text().startswith("Anyone who can see your screen"),
             page.evaluate("document.activeElement.textContent")] == ["Show your Apify key?", True, "Keep it hidden"]
     page.locator("#dialog").get_by_role("button", name="Keep it hidden").click()
-    assert page.eval_on_selector("#apify-key", "(el) => el.type") == "password"
+    assert page.eval_on_selector("#apify-key", MASK) == ["text", "disc", "off"]
     eye.click()
     page.locator("#dialog").get_by_role("button", name="Show it").click()
-    assert [page.eval_on_selector("#apify-key", "(el) => el.type"), eye.get_attribute("aria-pressed"), eye.get_attribute("aria-label")] ==         ["text", "true", "Hide the Apify key"]
+    assert [page.eval_on_selector("#apify-key", MASK), eye.get_attribute("aria-pressed"), eye.get_attribute("aria-label")] == \
+        [["text", "none", "off"], "true", "Hide the Apify key"]
     eye.click()
-    assert [page.eval_on_selector("#apify-key", "(el) => el.type"), page.locator("#dialog").is_visible()] == ["password", False]
+    assert [page.eval_on_selector("#apify-key", MASK), page.locator("#dialog").is_visible()] == [["text", "disc", "off"], False]
     # the Publora key as the skills' .env holds it: dots, read-only, the eye the same way
-    assert page.eval_on_selector("#publora-key", "(el) => [el.type, el.readOnly, el.value]") == ["password", True, "sk_demo"]
+    assert [page.eval_on_selector("#publora-key", MASK), page.eval_on_selector("#publora-key", "(el) => [el.readOnly, el.value]")] == \
+        [["text", "disc", "off"], [True, "sk_demo"]]
     page.locator('[data-eye="publora-eye"]').click()
     page.locator("#dialog").get_by_role("button", name="Show it").click()
-    assert page.eval_on_selector("#publora-key", "(el) => el.type") == "text"
+    assert page.eval_on_selector("#publora-key", MASK) == ["text", "none", "off"]
+    assert page.locator("input[type=password]").count() == 0
     # under the key, the month as Apify says it, in the owner's other studios' own words
     page.wait_for_selector("#apify-month")
     assert re.fullmatch(r"Apify this month: \$0\.42 of \$5 used, \$4\.58 left, renews 5 Dec \(as of \d+ \w{3}, \d+:\d\d [ap]m\)\.",

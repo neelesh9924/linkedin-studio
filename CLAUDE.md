@@ -36,7 +36,8 @@ username in them).
   the Windows user variable `APIFY_TOKEN`); never call the real Apify from tests or checks either. Settings shows the
   two keys to the owner as dots, and as text only through the eye after its warning (`settings.js` `eyeFor`, the
   owner's word, 18 Nov 2026); `/api/settings` is the one answer that carries them, and the browser keeps no API
-  answer (`no-store`, set in `main.py`'s `setup_first`).
+  answer (`no-store`, set in `main.py`'s `setup_first`). A key's box is plain text drawn as dots (`.secret`), never a
+  password box: Chrome offers to save a password box's value, and did when the eye showed one.
 - **The light check only reads.** `app/status_check.py` asks Publora's get-post about scheduled posts whose time has
   passed, in a background thread kicked by `/api/state`: one check at a time, at most every 3 minutes, never during
   setup or for the Trash. It is off unless `create_app(..., check_publora=True)` (`launch.py`, `python -m app`, the

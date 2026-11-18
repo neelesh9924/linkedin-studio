@@ -712,6 +712,8 @@ button.coming-what:focus-visible { outline: 2px solid var(--accent); outline-off
 .path-row .input { flex: 1; min-width: 0; }
 .secret-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .secret-row .input { flex: 1 1 auto; min-width: 0; }
+/* a key: plain text drawn as dots, never a password box (Chrome offers to save those); the eye adds .shown */
+.input.secret:not(.shown) { -webkit-text-security: disc; }
 .field-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .setup { width: min(820px, 100%); display: grid; gap: 16px; }
 .setup .brand { padding: 0; }

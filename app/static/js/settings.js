@@ -213,13 +213,14 @@ function monthWords(month) {
 }
 
 // The eye beside a key (the owner's word, 18 Nov 2026), as the owner's other studios have it: the key shown as dots, and
-// as text only once a warning has said what that risks; hidden again with one press.
+// as text only once a warning has said what that risks; hidden again with one press. A key's box is plain text drawn as
+// dots (.secret), never a password box: Chrome offers to save a password box's value, and did when the eye showed it.
 function eyeFor(input, what, keep) {
   const eye = h("button", { class: "btn small", type: "button", "aria-pressed": "false", "aria-label": `Show the ${what}`, "data-keep": keep,
     "data-eye": keep }, icon("eye", 15));
   eye.addEventListener("click", () => {
-    if (input.type === "text") {
-      input.type = "password";
+    if (input.classList.contains("shown")) {
+      input.classList.remove("shown");
       eye.setAttribute("aria-pressed", "false");
       eye.setAttribute("aria-label", `Show the ${what}`);
       return;
@@ -229,7 +230,7 @@ function eyeFor(input, what, keep) {
     hide.addEventListener("click", () => { closeDialog(); eye.focus(); });
     show.addEventListener("click", () => {
       closeDialog();
-      input.type = "text";
+      input.classList.add("shown");
       eye.setAttribute("aria-pressed", "true");
       eye.setAttribute("aria-label", `Hide the ${what}`);
       eye.focus();
@@ -243,7 +244,8 @@ function eyeFor(input, what, keep) {
 
 // The Publora key as linkedin-skills\.env holds it: dots, the eye; changed in that file, not here.
 function publoraBox(value) {
-  const box = h("input", { class: "input", id: "publora-key", type: "password", value, readonly: true, "aria-label": "Publora key" });
+  const box = h("input", { class: "input secret", id: "publora-key", type: "text", value, readonly: true, autocomplete: "off",
+    spellcheck: "false", "aria-label": "Publora key" });
   return h("span", { class: "secret-row" }, box, eyeFor(box, "Publora key", "publora-eye"));
 }
 
@@ -251,7 +253,7 @@ function publoraBox(value) {
 // shown in its box as dots (the eye shows it, after a warning); what was typed is kept through redraws until it is saved.
 // Under it, the month.
 function apifyForm(data) {
-  const keyBox = h("input", { class: "input", id: "apify-key", type: "password", autocomplete: "off", spellcheck: "false",
+  const keyBox = h("input", { class: "input secret", id: "apify-key", type: "text", autocomplete: "off", spellcheck: "false",
     placeholder: "apify_api_…", "data-keep": "apify-key", "aria-describedby": "apify-key-hint" });
   keyBox.value = typed.apifyKey ?? ((data.keys && data.keys.apify) || "");
   keyBox.addEventListener("input", () => {
