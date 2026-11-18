@@ -4,6 +4,7 @@ config.local.toml
 *.log
 __pycache__/
 .pytest_cache/
+.claude/worktrees/
 
 # Personal material never belongs in this repository, wherever a copy turns up
 # (a backup dropped here, a file saved in the wrong folder).
