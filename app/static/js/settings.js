@@ -4,7 +4,7 @@
 // Each panel has an address, #~settings-<id>: the jump links at the top use it, and it opens with that panel's heading
 // focused. The focus stays where it was through every redraw (data-keep), with what was typed and not yet saved, and a
 // health check says how it ended.
-import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, go, showDialog, closeButton } from "./core.js";
+import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, go, showDialog, closeDialog, closeButton } from "./core.js";
 import { setTheme } from "./sidebar.js";
 import { YOU, liHead, paintWho } from "./editor.js";
 import { ALWAYS, styleSliders } from "./style.js";
@@ -121,9 +121,9 @@ async function settings(quiet = false) {
         ["Skills", h("code", null, c.skills)]),
       h("div", { class: "form-foot" }, check, h("button", { class: "btn small", type: "button", "data-keep": "folders", onclick: () => go("#~setup") },
         icon("folder", 14), h("span", null, "Change folders")))),
-    section("publishing", "plane", "Publishing", "Publora’s keys live in linkedin-skills\\.env, the Apify key in Windows, shared with your other studios. The app reads them and never shows them.",
+    section("publishing", "plane", "Publishing", "Publora’s keys live in linkedin-skills\\.env, the Apify key in Windows (APIFY_TOKEN). Each shows as dots: the eye shows it, after a warning.",
       planForm(data),
-      facts(["Publora key", data.publora.key ? "Set" : "Missing"],
+      facts(["Publora key", data.keys && data.keys.publora ? publoraBox(data.keys.publora) : "Missing"],
         ["LinkedIn channel", data.publora.platform_id ? "Set" : "Worked out from the key when you schedule"],
         ["Apify key", data.publora.apify ? "Set: post links can be fetched" : "Not set: paste post text instead of links"],
         ["Story Bank & voice", data.protection.ok ? "Kept out of git" : `Not protected: ${data.protection.detail}`],
@@ -212,13 +212,48 @@ function monthWords(month) {
   return `Apify this month: $${month.used.toFixed(2)}${typeof month.of === "number" ? ` of $${month.of} used` : " used"}${left}${renews} (as of ${month.when}).`;
 }
 
-// The Apify key (app/apify_key.py): pasted here, asked of Apify, then kept as the Windows user variable APIFY_TOKEN, which
-// the owner's other studios read too. The page is told only whether one is set; what was typed is kept through redraws
-// until it is saved, and never drawn back. Under it, the month.
+// The eye beside a key (the owner's word, 18 Nov 2026), as the owner's other studios have it: the key shown as dots, and
+// as text only once a warning has said what that risks; hidden again with one press.
+function eyeFor(input, what, keep) {
+  const eye = h("button", { class: "btn small", type: "button", "aria-pressed": "false", "aria-label": `Show the ${what}`, "data-keep": keep,
+    "data-eye": keep }, icon("eye", 15));
+  eye.addEventListener("click", () => {
+    if (input.type === "text") {
+      input.type = "password";
+      eye.setAttribute("aria-pressed", "false");
+      eye.setAttribute("aria-label", `Show the ${what}`);
+      return;
+    }
+    const hide = h("button", { class: "btn", type: "button" }, "Keep it hidden");
+    const show = h("button", { class: "btn primary", type: "button" }, "Show it");
+    hide.addEventListener("click", () => { closeDialog(); eye.focus(); });
+    show.addEventListener("click", () => {
+      closeDialog();
+      input.type = "text";
+      eye.setAttribute("aria-pressed", "true");
+      eye.setAttribute("aria-label", `Hide the ${what}`);
+      eye.focus();
+    });
+    showDialog(h("h2", null, `Show your ${what}?`),
+      h("p", null, "Anyone who can see your screen, or a screenshot or recording of it, can copy it and use your account. Show it only with no one watching."),
+      h("div", { class: "form-foot" }, hide, show));
+  });
+  return eye;
+}
+
+// The Publora key as linkedin-skills\.env holds it: dots, the eye; changed in that file, not here.
+function publoraBox(value) {
+  const box = h("input", { class: "input", id: "publora-key", type: "password", value, readonly: true, "aria-label": "Publora key" });
+  return h("span", { class: "secret-row" }, box, eyeFor(box, "Publora key", "publora-eye"));
+}
+
+// The Apify key (app/apify_key.py): pasted here, asked of Apify, then kept as the Windows user variable APIFY_TOKEN. It is
+// shown in its box as dots (the eye shows it, after a warning); what was typed is kept through redraws until it is saved.
+// Under it, the month.
 function apifyForm(data) {
   const keyBox = h("input", { class: "input", id: "apify-key", type: "password", autocomplete: "off", spellcheck: "false",
     placeholder: "apify_api_…", "data-keep": "apify-key", "aria-describedby": "apify-key-hint" });
-  keyBox.value = typed.apifyKey || "";
+  keyBox.value = typed.apifyKey ?? ((data.keys && data.keys.apify) || "");
   keyBox.addEventListener("input", () => {
     typed.apifyKey = keyBox.value;
     keyBox.removeAttribute("aria-invalid");
@@ -235,13 +270,13 @@ function apifyForm(data) {
         return announce(reply.error, { urgent: true });
       }
       delete typed.apifyKey;
-      keyBox.value = "";
       put(out, note("ok", "Saved: Apify took the key. Post links can be fetched from now on."));
       announce("Saved: Apify took the key. Post links can be fetched from now on.");
       await settings(true);
     });
   } },
-  h("label", { class: "field" }, h("span", { class: "field-label" }, "Apify key"), keyBox,
+  h("div", { class: "field" }, h("label", { class: "field-label", for: "apify-key" }, "Apify key"),
+    h("span", { class: "secret-row" }, keyBox, eyeFor(keyBox, "Apify key", "apify-eye")),
     h("span", { class: "field-hint", id: "apify-key-hint" },
       "From Apify Console › Settings › API & Integrations. Apify is asked whether it takes the key before it is kept.")),
   data.apify_month ? h("p", { class: "field-hint", id: "apify-month" }, monthWords(data.apify_month)) : null,
@@ -720,14 +755,38 @@ function drawSetup(data) {
           input.value = place;
           pick.parentElement.querySelectorAll(".pick").forEach((p) => p.setAttribute("aria-pressed", String(p === pick)));
           showWho(place);
+          drawFound();
         });
         return pick;
       })) : null;
     showWho(input.value);
-    return h("div", { class: "field" }, h("label", { class: "field-label", for: `path-${f.key}` }, f.label),
-      h("div", { class: "path-row" }, input, browse),
+    // what was found on this PC (the owner's word, 18 Nov 2026): "Found by itself" beside the name while the box holds it,
+    // "Not found" while it is empty with nothing found, and Find it once the box is emptied
+    const places = data.found[f.key] || [];
+    const chip = h("span", { class: "chip", "data-found": f.key, hidden: true });
+    const find = data.saved ? null : h("button", { class: "btn", type: "button", "data-find": f.key, hidden: true }, icon("search", 15), h("span", null, "Find it"));
+    const drawFound = () => {
+      const value = input.value.trim();
+      const isFound = !data.saved && places.includes(value);
+      chip.hidden = !isFound && (data.saved || value !== "" || places.length > 0);
+      chip.className = `chip ${isFound ? "ok" : "bad"}`;
+      chip.textContent = isFound ? "Found by itself" : "Not found";
+      if (find) find.hidden = value !== "";
+    };
+    input.addEventListener("input", drawFound);
+    if (find) find.addEventListener("click", () => {
+      input.value = places[0] || "";
+      input.closest(".field").querySelectorAll(".pick").forEach((p) => p.setAttribute("aria-pressed", String(p.firstChild.textContent === input.value)));
+      showWho(input.value);
+      drawFound();
+      announce(input.value ? `Found by itself: ${input.value}` : "Not found on this PC: Browse… or paste its path.", { urgent: !input.value });
+      focusFirst(input);
+    });
+    drawFound();
+    return h("div", { class: "field" }, h("span", { class: "field-head" }, h("label", { class: "field-label", for: `path-${f.key}` }, f.label), chip),
+      h("div", { class: "path-row" }, input, browse, find),
       data.errors[f.key] ? h("div", { class: "field-error" }, data.errors[f.key])
-        : data.values[f.key] ? h("div", { class: "field-hint good" }, icon("check", 13), data.saved ? "Saved" : "Found") : null,
+        : data.values[f.key] && data.saved ? h("div", { class: "field-hint good" }, icon("check", 13), "Saved") : null,
       data.errors[f.key] ? null : who,
       found, h("div", { class: "field-hint" }, `${f.what} For example `, h("code", null, data.examples[f.key])));
   }), data.errors[""] ? h("div", { class: "field-error" }, data.errors[""]) : null);

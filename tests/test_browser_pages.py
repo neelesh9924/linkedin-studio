@@ -257,10 +257,30 @@ def test_add_to_queue_takes_the_next_free_posting_time_and_coming_up_and_setting
     assert errors == []
 
 
+def test_the_setup_screen_says_what_it_found_and_finds_it_again(studio):
+    """The setup screen (Settings › Change folders), on the demo's own made-up places: "Found by itself" beside each folder
+    found on this PC while its box holds it, nothing beside the program the demo names; a box emptied offers Find it,
+    which puts the found one back. Nothing is saved (the demo keeps its folders)."""
+    page, errors = studio
+    page.evaluate("location.hash = '#~setup'")
+    page.wait_for_selector("#path-skills_dir")
+    chip = lambda key: page.locator(f'[data-found="{key}"]')  # noqa: E731
+    assert [chip("skills_dir").is_visible(), chip("skills_dir").inner_text(), chip("claude_config_dir").inner_text()] ==         [True, "Found by itself", "Found by itself"]
+    assert chip("claude_bin").is_visible() is False                     # the demo names Python as the program: not found here
+    found = page.input_value("#path-skills_dir")
+    page.fill("#path-skills_dir", "")
+    assert [page.locator('[data-find="skills_dir"]').is_visible(), chip("skills_dir").is_visible()] == [True, False]
+    page.locator('[data-find="skills_dir"]').click()
+    assert [page.input_value("#path-skills_dir"), chip("skills_dir").inner_text(), page.locator('[data-find="skills_dir"]').is_visible()] ==         [found, "Found by itself", False]
+    page.evaluate("location.hash = '#~settings'")
+    page.wait_for_selector("#settings-claude")
+    assert errors == []
+
+
 def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
     """Settings › Publishing's Apify key, on the demo's stand-in Apify (last in this file: the demo keeps it after): a
     key it refuses is said and the box marked; the demo's key is kept, Settings then says post links can be fetched,
-    and what was typed is never drawn back."""
+    and it shows in its box as dots, the eye showing it once a warning has been read; the Publora key the same way."""
     page, errors = studio
     page.evaluate("location.hash = '#~settings-publishing'")
     page.wait_for_selector("#apify-key")
@@ -275,8 +295,27 @@ def test_the_apify_key_in_settings_is_asked_of_apify_and_never_shown(studio):
     page.fill("#apify-key", demo_key)
     page.locator('[data-keep="apify-save"]').click()
     page.wait_for_function("() => document.querySelector('#settings-publishing').innerText.includes('Set: post links can be fetched')")
-    assert page.eval_on_selector("#apify-key", "(el) => [el.value, el.getAttribute('aria-invalid')]") == ["", None]
-    assert demo_key not in page.content()
+    page.wait_for_function(f"() => document.querySelector('#apify-key').value === '{demo_key}'")
+    assert page.eval_on_selector("#apify-key", "(el) => [el.type, el.getAttribute('aria-invalid')]") == ["password", None]
+    assert demo_key not in page.content()                                # in its box only, never in the page's text
+    # the eye (the owner's word, 18 Nov 2026): it asks first, saying what showing the key risks; shows; hides at once
+    eye = page.locator('[data-eye="apify-eye"]')
+    eye.click()
+    page.wait_for_selector("#dialog h2")
+    assert [page.locator("#dialog h2").inner_text(), page.locator("#dialog p").inner_text().startswith("Anyone who can see your screen"),
+            page.evaluate("document.activeElement.textContent")] == ["Show your Apify key?", True, "Keep it hidden"]
+    page.locator("#dialog").get_by_role("button", name="Keep it hidden").click()
+    assert page.eval_on_selector("#apify-key", "(el) => el.type") == "password"
+    eye.click()
+    page.locator("#dialog").get_by_role("button", name="Show it").click()
+    assert [page.eval_on_selector("#apify-key", "(el) => el.type"), eye.get_attribute("aria-pressed"), eye.get_attribute("aria-label")] ==         ["text", "true", "Hide the Apify key"]
+    eye.click()
+    assert [page.eval_on_selector("#apify-key", "(el) => el.type"), page.locator("#dialog").is_visible()] == ["password", False]
+    # the Publora key as the skills' .env holds it: dots, read-only, the eye the same way
+    assert page.eval_on_selector("#publora-key", "(el) => [el.type, el.readOnly, el.value]") == ["password", True, "sk_demo"]
+    page.locator('[data-eye="publora-eye"]').click()
+    page.locator("#dialog").get_by_role("button", name="Show it").click()
+    assert page.eval_on_selector("#publora-key", "(el) => el.type") == "text"
     # under the key, the month as Apify says it, in the owner's other studios' own words
     page.wait_for_selector("#apify-month")
     assert re.fullmatch(r"Apify this month: \$0\.42 of \$5 used, \$4\.58 left, renews 5 Dec \(as of \d+ \w{3}, \d+:\d\d [ap]m\)\.",

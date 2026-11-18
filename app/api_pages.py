@@ -25,7 +25,7 @@ from .config import ConfigError, path_problems, problems
 from .db import dumps, loads, utcnow
 from .health import claude_account, claude_version
 from .main import ACTIVE, PROBLEM, TARGET, Studio
-from .publishing import MIN_LEAD, PLANS, POST_MAX, limit_words, plan_of
+from .publishing import MIN_LEAD, PLANS, POST_MAX, limit_words, plan_of, read_env
 from .skills import ACTIONS, TOOL_KINDS
 
 GOALS = ("comments", "reposts", "likes", "saves")
@@ -459,6 +459,8 @@ def register(app: FastAPI, s: Studio) -> None:
                        "chat_turns": cfg.chat_max_turns, "chat_seconds": cfg.chat_timeout_seconds,
                        "program": str(cfg.claude_bin), "skills": str(cfg.skills_dir)},
             "publora": pub.status(), "apify_month": apify_key.month(cfg), "limit": cfg.monthly_post_limit, "timezone": cfg.timezone, "tz": s.tz_label,
+            # the keys themselves, for Settings' boxes: dots, the eye showing one after a warning (the owner's word, 18 Nov 2026)
+            "keys": {"apify": apify_key.token(cfg), "apify_variable": apify_key.VARIABLE, "publora": read_env(cfg).get("PUBLORA_API_KEY", "")},
             "plan": plan_of(cfg), "plan_words": limit_words(cfg), "restarts": s.on_restart is not None,
             "plans": [{"value": key, "label": plan["label"], "hint": limit_words(dataclasses.replace(cfg, **{
                 k: v for k, v in plan.items() if k != "label"}))} for key, plan in PLANS.items()],
@@ -516,7 +518,8 @@ def register(app: FastAPI, s: Studio) -> None:
     @app.post("/api/settings/apify")
     def settings_apify(data: dict = Body(default={})):
         value = data.get("key")
-        error = apify_key.set_token(value) if isinstance(value, str) else "Paste your Apify API token."
+        error = ("Paste your Apify API token." if not isinstance(value, str) else
+                 None if value.strip() and value.strip() == apify_key.token(cfg) else apify_key.set_token(value))   # unchanged: nothing to ask
         return fail(error) if error else {"ok": True}
 
     @app.post("/api/settings/claude/check")

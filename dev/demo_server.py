@@ -447,6 +447,12 @@ def main() -> None:
     # What Settings and the setup screen save (the model, the folders) goes to the demo's own config.local.toml, never
     # to the app folder's, which is the real studio's.
     paths.LOCAL = folder / "config.local.toml"
+    # The setup screen's "found on this PC": made-up places in the demo's own folder, never this PC's real ones (a claude.exe
+    # that is an empty file: nothing runs it, the account it names is DEMO_ACCOUNT)
+    (folder / "claude-bin").mkdir(exist_ok=True)
+    (folder / "claude-bin" / "claude.exe").touch()
+    paths.usual_places = lambda home=None, root=None: {"skills_dir": [skills], "claude_bin": [folder / "claude-bin" / "claude.exe"],
+                                                      "claude_config_dir": [login]}
     api_pages.claude_version = paths.claude_version = lambda _cfg: "2.1.292 (Claude Code), the demo's stand-in"
     api_pages.claude_account = paths.claude_account = lambda _cfg, _prefix=None: DEMO_ACCOUNT
     hot.read_all = demo_news                                  # Hot topics: made-up news, never the web

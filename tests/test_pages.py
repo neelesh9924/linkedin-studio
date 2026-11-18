@@ -190,7 +190,7 @@ def test_the_model_box_saves_into_config_local_and_the_next_run_uses_it(web, cfg
 def test_the_apify_key_is_asked_of_apify_then_kept_and_never_shown(web, cfg, monkeypatch):
     """Settings › Publishing's Apify key: only something shaped like a key is sent, and only to Apify (the demo's stand-in
     here), which is asked whether it takes it before it is kept, as the test's own variable (apify_key.REGISTRY is off:
-    the Windows user variable is never written). The page is told only whether one is set."""
+    the Windows user variable is never written). Settings gets the keys for its boxes, and no other answer has them."""
     from dev.demo_server import DemoApify
     good, wrong = "apify_api_" + "e5" * 18, "apify_api_" + "f6" * 18
     apify = DemoApify(good)
@@ -214,7 +214,15 @@ def test_the_apify_key_is_asked_of_apify_then_kept_and_never_shown(web, cfg, mon
         shown = web.get("/api/settings").json()["apify_month"]
         assert {k: shown[k] for k in ("used", "of", "renews")} == {"used": 0.42, "of": 5.0, "renews": "2026-12-05"}
         assert apify.calls[-1] == "/v2/users/me/limits"
-        assert all(good not in web.get(where).text for where in ("/api/settings", "/api/state", "/api/tools"))
+        # the keys themselves, for Settings' boxes (dots, the eye showing one after a warning: the owner's word, 18 Nov 2026):
+        # the Apify key with the variable it is kept in, and Publora's from the skills' .env; nowhere else
+        assert web.get("/api/settings").json()["keys"] == {"apify": good, "apify_variable": "LINKEDIN_STUDIO_TEST_APIFY_KEY", "publora": "sk_test_secret"}
+        assert all(good not in web.get(where).text for where in ("/api/state", "/api/tools"))
+        # and the app window's browser keeps no copy of an answer, so the keys never land in its cache on disk
+        assert all(web.get(where).headers["cache-control"] == "no-store" for where in ("/api/settings", "/api/state"))
+        asked = len(apify.calls)
+        assert web.post("/api/settings/apify", json={"key": good}).json() == {"ok": True}   # saved unchanged: Apify not asked
+        assert len(apify.calls) == asked
     finally:
         apify.stop()
     if sys.platform == "win32":

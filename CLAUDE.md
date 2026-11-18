@@ -33,7 +33,10 @@ username in them).
   each of Publora's four media steps (`posts.media`, `posts.media_step`), and Retry carries on
   from the one that failed. Keep a picture's file while its post is scheduling. Never call the
   real Publora from tests or checks; never read or print the keys (the skills folder's `.env`, and the Apify key in
-  the Windows user variable `APIFY_TOKEN`); never call the real Apify from tests or checks either.
+  the Windows user variable `APIFY_TOKEN`); never call the real Apify from tests or checks either. Settings shows the
+  two keys to the owner as dots, and as text only through the eye after its warning (`settings.js` `eyeFor`, the
+  owner's word, 18 Nov 2026); `/api/settings` is the one answer that carries them, and the browser keeps no API
+  answer (`no-store`, set in `main.py`'s `setup_first`).
 - **The light check only reads.** `app/status_check.py` asks Publora's get-post about scheduled posts whose time has
   passed, in a background thread kicked by `/api/state`: one check at a time, at most every 3 minutes, never during
   setup or for the Trash. It is off unless `create_app(..., check_publora=True)` (`launch.py`, `python -m app`, the
@@ -75,6 +78,10 @@ username in them).
   it is stored. Settings, Schedule (`claude.sign_in`) and the setup screen show it; Save refuses
   a login folder signed in to nobody, and an unreadable answer never blocks. Tests answer it with
   `tests/fake_claude.py` only.
+- **What the setup screen found shows as found** (the owner's word, 18 Nov 2026; their other studios do the same).
+  Each box holds the whole path; beside its name a chip says Found by itself while the box holds a place
+  `paths.usual_places` found (Not found when it is empty and nothing was), and an emptied box offers Find it, which
+  puts the first place found back (`settings.js` `drawSetup`).
 - **The Trash keeps posts, never sends them.** A post in it is `posts.trashed_at`, refused by every post endpoint
   (`api_posts.find`), by the studio's tools (`mcp.py`) and by `Publisher.schedule`/`retry`. Scheduled and sending
   posts, a post Publora holds a draft of, and a post Claude is working on are never moved there. A published post
@@ -112,7 +119,7 @@ username in them).
 | `app/skills.py`, `app/claude_runner.py` | Each action's skill, prompt and tools; the `claude -p` command, its env and MCP config |
 | `app/mcp.py`, `app/codex.py` | The post chat's tools (`set_post_text`, `make_image`, `record_audit`, `fetch_post`); ChatGPT's pictures through `codex.exe` |
 | `app/publishing.py` | Publora: schedule (with a picture), Post now (the soonest time), retry, back to draft, refresh (read-only: published with its LinkedIn link, failed in Publora's words) |
-| `app/apify_key.py` | The Apify key that fetches a post from its link: the Windows user variable `APIFY_TOKEN` first (where the owner's studios keep it, so a key set in one reaches the others), then this process, then the skills' `.env`. Settings › Publishing sets it (`set_token`: only a value shaped like a key, asked of Apify's `/users/me` before it is kept); the page is told only whether one is set, and the month as Apify says it for that key's account (`month`: `/users/me/limits`, kept a minute; the line "Apify this month: $X of $5 used, $Y left, renews 5 Dec", the owner's other studios' words). Tests and the demo use a variable of their own with `REGISTRY` off and a stand-in Apify (`dev/demo_server.py` `DemoApify`) |
+| `app/apify_key.py` | The Apify key that fetches a post from its link: the Windows user variable `APIFY_TOKEN` first (where the owner's studios keep it, so a key set in one reaches the others), then this process, then the skills' `.env`. Settings › Publishing sets it (`set_token`: only a value shaped like a key, asked of Apify's `/users/me` before it is kept); Settings gets the key itself for its box (`keys` in `/api/settings`, beside the Publora key from `.env`; a key saved unchanged is not asked of Apify again), and the month as Apify says it for that key's account (`month`: `/users/me/limits`, kept a minute; the line "Apify this month: $X of $5 used, $Y left, renews 5 Dec", the owner's other studios' words). Tests and the demo use a variable of their own with `REGISTRY` off and a stand-in Apify (`dev/demo_server.py` `DemoApify`) |
 | `app/status_check.py` | The light check: due scheduled posts asked of Publora (get-post only) in the background, every few minutes; what it heard, for the post's notice |
 | `app/versions.py`, `app/images.py`, `app/attached.py` | A post's versions, its pictures and carousels (what goes out, in order), a chat's attached files |
 | `app/rank.py` | A post's rank: 1-10 with why and what would lift it (Claude's `set_rank`, judged by `rank.RUBRIC`, or the owner's own number); drafts list best first |

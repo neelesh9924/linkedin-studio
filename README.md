@@ -162,7 +162,7 @@ blank where it has no fact of yours, instead of inventing one:
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them. **Ask me about this** on a filled Story Bank entry starts a short interview about that entry alone, in a new conversation |
 | Tools | Humanize, Audit, Hook extractor, Comment drafter, Repurposer, Profile optimizer. Input, result, copy buttons, and each tool's last ten results under **Earlier results**. **Start a post from this** turns a rewrite, an audited draft (its findings with it), a hook's template or a repurposed post into a new post and opens it |
 | Guide | The routine step by step with a picture of each screen (light or dark, as the app is), what each button does, the four post states, shortcuts and limits |
-| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again), your **Publora plan** (Starter or Pro: how many posts a month, how many wait at Publora at a time, how far ahead; the studio restarts to use it), the **Model** every run uses (a dropdown: the account's default, Sonnet, Opus or Haiku, saved as you pick it into `config.local.toml`) and **Change folders**; publishing keys (set or missing, never shown), **Posting times** (the days and times the queue gives its posts), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview, and on carousels only when you tick **Put them on carousels too**), **Post style** (the four sliders new drafts are written with), light/dark/auto, **Backup and restore** (one file of everything of yours, never a key; see Backups below), the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-posting`, `-chatgpt`, `-profile`, `-style`, `-appearance`, `-backup`, `-health`, `-runs`, `-app`) |
+| Settings | Claude's version, **the account its login folder is signed in to** (**Check the sign-in** asks again), your **Publora plan** (Starter or Pro: how many posts a month, how many wait at Publora at a time, how far ahead; the studio restarts to use it), the **Model** every run uses (a dropdown: the account's default, Sonnet, Opus or Haiku, saved as you pick it into `config.local.toml`) and **Change folders**; publishing keys (as dots, or Missing: the eye beside one shows it, after a warning), **Posting times** (the days and times the queue gives its posts), ChatGPT, **You in the preview** (your name, headline and photo for each post's preview, and on carousels only when you tick **Put them on carousels too**), **Post style** (the four sliders new drafts are written with), light/dark/auto, **Backup and restore** (one file of everything of yours, never a key; see Backups below), the two health checks, recent runs, Quit. Jump links at the top; each section has its own address (`#~settings-claude`, `-publishing`, `-posting`, `-chatgpt`, `-profile`, `-style`, `-appearance`, `-backup`, `-health`, `-runs`, `-app`) |
 | Trash | Posts moved there: Put back, Delete forever…, Empty trash |
 
 **Keys.** / goes to the search (on Hot topics, the news's own); Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
@@ -205,6 +205,8 @@ Then:
    Publishing** (Apify Console → Settings → API & Integrations): Apify is asked whether it takes it,
    and then it is kept as the Windows user variable `APIFY_TOKEN`, which other apps of yours that use
    Apify can read too. The app reads that variable first, then an `APIFY_TOKEN=` line in `.env`.
+   The key shows in its box as dots; the eye beside it shows it, after a warning. The Publora key
+   shows the same way under **Settings → Publishing**, and is changed in `.env`.
 4. **Pictures (optional).** Install the Codex CLI (`npm install -g @openai/codex`). In
    **Settings → ChatGPT**, name a folder of its own for Codex's sign-in (its Codex home), save,
    and press **Sign in**. There is no default: the PC's own `.codex` folder may be signed in to
@@ -223,7 +225,8 @@ for this before anything else. Later the same screen is under **Settings → Cha
 
 For each one you can click a place the app **found on this PC**, press **Browse…** and choose
 it in a Windows file window, or paste the path (Explorer's "Copy as path" works, quotes
-included). **Save** checks all three, writes them to `config.local.toml` and restarts the app.
+included). While a box holds a place the app found, **Found by itself** shows beside its name;
+empty the box and **Find it** puts that place back. **Save** checks all three, writes them to `config.local.toml` and restarts the app.
 As part of the check it asks the program for its version, so a different `claude.exe` is caught
 there and not on your first job, and asks Claude Code (`claude auth status`, which sends Claude no
 request) who each login folder is signed in to. The screen shows the account beside every login
@@ -335,7 +338,7 @@ test fails if a tracked file ever looks like one of those or like a real Publora
 | Pictures made per day, Codex's sign-in log | `data\chatgpt.json`, `data\chatgpt.log` |
 | Launcher log, the app window's browser profile | `data\studio.log`, `data\browser-profile\` |
 | Story Bank, voice profile | `linkedin-skills\references\story-bank.md`, `voice-profile.md` |
-| API keys | `linkedin-skills\.env` (never shown by the app) |
+| API keys | `linkedin-skills\.env`, and the Apify key as the Windows user variable `APIFY_TOKEN` (Settings shows each as dots; the eye shows it, after a warning) |
 
 `data\` and `config.local.toml` are gitignored here. The ChatGPT sign-in itself stays in the
 Codex home you named; the app reads only who is signed in.

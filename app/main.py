@@ -225,12 +225,17 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
 
     @app.middleware("http")
     async def setup_first(request: Request, call_next):
-        """With the folders wrong, nothing but the setup screen works (inside LocalOnly: signed-in requests only)."""
+        """With the folders wrong, nothing but the setup screen works (inside LocalOnly: signed-in requests only).
+        The API's answers are never kept by the app window's browser (Settings' carries the keys), unless one says
+        otherwise itself (a picture)."""
         path = request.url.path
         if needs_setup and path.startswith("/api/") and not path.startswith(SETUP_OPEN):
             return JSONResponse({"error": "Tell the studio where its three folders are first.", "setup": True},
-                                status_code=409)
-        return await call_next(request)
+                                status_code=409, headers={"Cache-Control": "no-store"})
+        response = await call_next(request)
+        if path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
 
     app.add_middleware(LocalOnly, token=token, port=cfg.port)   # added last, so it runs first
     build = build_of(HERE / "static")
