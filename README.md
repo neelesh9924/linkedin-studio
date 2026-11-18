@@ -397,6 +397,31 @@ Then open LinkedIn Studio before you do anything else with git: it protects the 
 it starts. Afterwards, run **Settings → Health checks → Connections** and one Tools run to
 confirm the skills still load.
 
+## Commands for Claude Code
+
+Three commands come with this folder, for when you work in Claude Code itself instead of the app:
+
+| Command | What it does |
+|---|---|
+| `/hook-from <a post's link>` | Breaks down a viral post's hook and gives you a blank template of it. Reading the post from its link uses your Apify key (**Settings → Publishing**) and spends a little of its credit; without one, paste the post's text. |
+| `/post-audit <your draft>` | Audits a draft before you post it: AI tells, the hook, and the voice, judged against your voice profile from **Story Bank & Voice**. It never posts, schedules or queues anything. |
+| `/profile-review` | Reviews your LinkedIn profile (headline, About, Featured and the rest), built on the same voice profile. Paste the sections: a profile's link can't be read. It only suggests; nothing changes on LinkedIn. |
+
+They run the skills through the linkedin-skills plugin, a separate install from your clone of the
+skills. Install it once, in Claude Code:
+
+```
+/plugin marketplace add sergebulaev/linkedin-skills
+/plugin install linkedin-skills@linkedin-skills
+```
+
+To see them, open the `linkedin-studio` folder in Claude Code and type `/`. Claude Code loads a
+folder's commands when it starts in that folder; started in a parent folder, it loads them only
+after it opens a file in here, or after `/add-dir`. To have them in every folder, copy the three
+folders in `.claude\skills\` into the `skills` folder of your Claude login folder (usually
+`C:\Users\you\.claude\skills\`). They run only when you type them: Claude never starts one by
+itself.
+
 ## Troubleshooting
 
 | Symptom | Fix |
