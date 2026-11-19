@@ -37,18 +37,17 @@ def studio(tmp_path_factory):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_default_timeout(20000)
         page.goto(info["url"])
-        page.wait_for_selector("#list .nav-item")
+        page.wait_for_selector("#postList .post-row")
         yield page, errors
         browser.close()
     server.terminate()
     server.wait(timeout=20)
 
 
-def open_post(page, has_text, status):
-    item = page.locator("#list .nav-item", has_text=has_text)
-    if not item.count():
-        page.click("#earlierFold")          # published and cancelled posts sit under Earlier, closed at first
-    item.click()
+def open_post(page, has_text, status, tab):
+    page.click(f"#tab-{tab}")               # its tab in the sidebar, then its row in the list
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.locator("#postList .post-row", has_text=has_text).first.click()
     page.wait_for_function("(s) => document.querySelector('#status').innerText.includes(s)", arg=status)
 
 
@@ -57,7 +56,7 @@ NOTICE = "#postPage > .notice"
 
 def test_the_scheduled_top_bar_says_its_time_once_and_check_now_answers_in_words(studio):
     page, errors = studio
-    open_post(page, "Scheduled", "Scheduled ·")
+    open_post(page, "Scheduled", "Scheduled ·", "scheduled")
     when = page.locator("#status").inner_text().split("·", 1)[1].strip()          # the chip says it: "Fri 30 Oct, 8:00 am"
     top = page.locator("#top").inner_text()
     assert top.count(when) == 1 and "Goes out" not in top and "Check status" not in top
@@ -75,7 +74,7 @@ def test_the_scheduled_top_bar_says_its_time_once_and_check_now_answers_in_words
 
 def test_a_published_post_offers_open_on_linkedin_in_a_new_window(studio):
     page, errors = studio
-    open_post(page, "Published", "Published")
+    open_post(page, "Published", "Published", "published")
     link = page.locator("#topActions a[data-act=open]")
     link.wait_for()
     assert link.get_attribute("href").startswith("https://www.linkedin.com/")
@@ -87,7 +86,7 @@ def test_a_published_post_offers_open_on_linkedin_in_a_new_window(studio):
 
 def test_claude_replies_in_plain_words_and_compare_with_now_shows_the_words_that_changed(studio):
     page, errors = studio
-    page.locator("#list .nav-item", has_text="On 14 March").click()
+    open_post(page, "On 14 March", "Draft", "drafts")
     page.wait_for_selector(".li-read")
     page.fill("#askText", "Write a sharper hook")
     page.keyboard.press("Enter")
@@ -128,7 +127,7 @@ def test_post_now_asks_first_and_then_the_post_is_at_publora_two_minutes_ahead(s
     """Last here, as it adds a scheduled post. The demo's approved post: Post now…'s dialog shows its final text with Not
     yet first, so Enter sends nothing; Post it now hands it to the stand-in Publora, and the top bar says Scheduled."""
     page, errors = studio
-    open_post(page, "The best code review", "Approved")
+    open_post(page, "The best code review", "Approved", "approved")
     page.click("#topActions [data-act=now]")
     page.wait_for_selector("dialog[open] .confirm-text")
     assert page.locator("dialog[open] h2").inner_text() == "Post this now?"

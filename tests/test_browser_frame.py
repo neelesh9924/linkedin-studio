@@ -1,10 +1,11 @@
 """The page's frame, in Chrome (headless, through Playwright) on the demo studio with its stand-ins (dev/demo_server.py in a
 folder of its own: no Claude, Publora or ChatGPT). Skipped without Playwright or without Chrome or Edge.
 
-The sidebar's Earlier fold (closed at first, no count, kept across a reload; Ctrl+K and Alt+↑/↓ still reach every post,
-and the open post always shows); Ask Claude's edge (its keys, kept across a reload, the toasts following it, kept clear
-of the post at 941 px); Before you confirm (js/precheck.js, on made-up posts); the status line while Claude works and
-Approved's own colour."""
+The posts' tabs (every status in exactly one; each tab's list in the studio's order; the sidebar counting nothing; Ctrl+K
+opening a published post, its tab marked and Back to it; Alt+↑/↓ within the open post's tab; a post that did not go out
+first in Scheduled and named across the top of every page); Ask Claude's edge (its keys, kept across a reload, the
+toasts following it, kept clear of the post at 941 px); Before you confirm (js/precheck.js, on made-up posts); the status
+line while Claude works and Approved's own colour."""
 import json
 import re
 import socket
@@ -21,16 +22,15 @@ from launch import find_browser  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not find_browser(""), reason="needs Chrome or Edge")
 
-# The sidebar's own words, without the posts' (their first lines and times have figures of their own).
-# The sidebar's words, without the posts and without the one count the owner asked for beside Posts (28 Oct 2026):
-# nothing else in the frame counts.
+# The sidebar's words, all of them (its buttons' names and titles too): navigation only, so not one figure (the owner's
+# rule, 19 Nov 2026: no counts in a menu; the count once beside Posts went with the posts).
 SIDE_WORDS = """() => {
-  const side = document.querySelector('.sidebar').cloneNode(true);
-  side.querySelectorAll('[data-post], #postsCount').forEach((b) => b.remove());
+  const side = document.querySelector('.sidebar');
   return side.textContent + ' ' + [...side.querySelectorAll('[aria-label], [title]')]
     .map((el) => `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`).join(' ');
 }"""
 POSTS = "() => import(document.querySelector('meta[name=studio-static]').content + 'js/core.js').then((m) => m.state.posts.map((p) => ({ id: p.id, status: p.status })))"
+ROWS = "() => [...document.querySelectorAll('#postList .post-row')].map((b) => Number(b.dataset.post))"
 WIDTH = "() => Math.round(document.getElementById('assist').getBoundingClientRect().width)"
 
 
@@ -50,92 +50,170 @@ def studio(tmp_path_factory):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_default_timeout(20000)
         page.goto(info["url"])
-        page.wait_for_selector("#list .nav-item")
+        page.wait_for_selector("#postList .post-row")
         yield page, errors
         browser.close()
     server.terminate()
     server.wait(timeout=20)
 
 
+def show_tab(page, tab):
+    page.click(f"#tab-{tab}")
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+
+
 def open_draft(page) -> int:
-    button = page.locator("#list .nav-item", has_text="14 March").first
+    show_tab(page, "drafts")
+    button = page.locator("#postList .post-row", has_text="14 March").first
     draft = int(button.get_attribute("data-post"))
     button.click()
     page.wait_for_function(f"() => location.hash === '#post-{draft}'")
+    page.wait_for_selector('#topActions [data-act="approve"]')     # drawn: the page held the post before it till then
     page.wait_for_selector(".li-read")
     return draft
 
 
 def reload(page):
     page.reload()
-    page.wait_for_selector("#list .nav-item")
+    page.wait_for_selector("#tab-drafts")
+    page.wait_for_function("() => document.getElementById('title').textContent !== ''")
 
 
-def test_earlier_is_closed_at_first_counts_nothing_and_is_kept_across_a_reload(studio):
+# Where each status goes (posts.js tabOf, the one definition): every status in exactly one tab.
+TAB_OF = """async () => {
+  const { tabOf, TABS } = await import(document.querySelector('meta[name=studio-static]').content + 'js/posts.js');
+  const posts = [['draft'], ['approved'], ['approved', true], ['scheduling'], ['scheduled'], ['failed'], ['published'], ['cancelled']];
+  return { tabs: Object.fromEntries(posts.map(([status, queued]) => [`${status}${queued ? ' queued' : ''}`, tabOf({ status, queued: !!queued })])),
+           statuses: TABS.flatMap((t) => t.statuses) };
+}"""
+
+
+def test_every_status_is_in_one_tab_and_each_tab_lists_its_posts_in_the_studios_order(studio):
     page, errors = studio
-    open_draft(page)
-    published = [p["id"] for p in page.evaluate(POSTS) if p["status"] == "published"]
-    fold = page.locator("#earlierFold")
-    assert fold.get_attribute("aria-expanded") == "false" and fold.get_attribute("aria-controls") == "earlierList"
-    assert fold.inner_text().strip().lower() == "earlier"
-    assert published and all(page.locator(f'#list [data-post="{i}"]').count() == 0 for i in published)
-    assert page.locator("#list [data-post]").count() == 3                  # the draft, the approved and the scheduled post
-    assert not re.search(r"\d", page.evaluate(SIDE_WORDS))                 # no count anywhere: not a digit outside the posts
-    fold.click()
-    page.wait_for_selector("#earlierList [data-post]")
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "true"
-    assert page.locator("#earlierList .sub").all_inner_texts() == ["Published"]
-    assert page.evaluate("document.activeElement.id") == "earlierFold"     # drawn again, the focus stays on it
-    assert not re.search(r"\d", page.evaluate(SIDE_WORDS))
-    reload(page)
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "true"
-    page.click("#earlierFold")
-    reload(page)
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false"
-    assert page.locator("#earlierList [data-post]").count() == 0
+    out = page.evaluate(TAB_OF)
+    assert out["tabs"] == {"draft": "drafts", "approved": "approved", "approved queued": "approved", "scheduling": "scheduled",
+                           "scheduled": "scheduled", "failed": "scheduled", "published": "published", "cancelled": "published"}
+    assert sorted(out["statuses"]) == sorted(set(out["statuses"]))               # no status in two tabs
+    for title in ("Feature flags are cheap to add and expensive to forget.", "A retry without a limit is an outage waiting for a reason."):
+        made = page.evaluate("fetch('/api/posts/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then((r) => r.json())")
+        page.evaluate("([id, text]) => fetch(`/api/post/${id}/save`, { method: 'POST', headers: { 'Content-Type': 'application/json' },"
+                      " body: JSON.stringify({ text }) })", [made["id"], f"{title}\n\nA made-up draft for the list's order."])
+        page.evaluate("([id, rank]) => fetch(`/api/post/${id}/rank`, { method: 'POST', headers: { 'Content-Type': 'application/json' },"
+                      " body: JSON.stringify({ rank }) })", [made["id"], 9 if "flags" in title else 5])
+    show_tab(page, "drafts")
+    page.wait_for_function("() => [...document.querySelectorAll('#postList .rank')].map((r) => r.textContent).join() === '–,9,5'")
+    posts = page.evaluate(POSTS)
+    for tab, statuses in (("drafts", {"draft"}), ("approved", {"approved"}), ("scheduled", {"scheduled"}), ("published", {"published"})):
+        show_tab(page, tab)
+        page.wait_for_function(f"() => document.querySelectorAll('#postList .post-row').length === {sum(p['status'] in statuses for p in posts)}")
+        assert page.evaluate(ROWS) == [p["id"] for p in posts if p["status"] in statuses], tab    # the studio's order, as sent
+    show_tab(page, "drafts")
+    firsts = page.locator("#postList .post-first").all_inner_texts()        # the one not ranked yet on top, then the best
+    assert firsts[0].startswith("On 14 March") and firsts[1].startswith("Feature flags") and firsts[2].startswith("A retry")
+    assert [t.strip() for t in page.locator("#postList .rank").all_inner_texts()] == ["–", "9", "5"]
+    assert page.locator("#postList .rank").nth(1).get_attribute("class") == "rank post"
+    assert page.locator("#postList .rank").nth(2).get_attribute("class") == "rank strengthen"
     assert errors == []
 
 
-def test_ctrl_k_opens_a_published_post_while_earlier_is_closed_and_the_list_shows_it(studio):
+def test_each_tab_says_how_many_on_its_page_and_the_sidebar_counts_nothing(studio):
+    page, errors = studio
+    for tab, said in (("drafts", "3 drafts, best first"), ("approved", "1 approved post: 1 waiting to be queued or scheduled."),
+                      ("scheduled", "1 scheduled at Publora, soonest first"), ("published", "1 published on LinkedIn")):
+        show_tab(page, tab)
+        assert page.locator("#posts-said").inner_text().startswith(said), tab
+        assert page.locator(f"#tab-{tab}").get_attribute("aria-current") == "page"
+        assert page.locator("#views [aria-current]").count() == 1
+        assert not re.search(r"\d", page.evaluate(SIDE_WORDS)), tab          # not one figure in the frame
+    open_draft(page)
+    assert not re.search(r"\d", page.evaluate(SIDE_WORDS))
+    assert errors == []
+
+
+def test_ctrl_k_opens_a_published_post_its_tab_is_marked_and_back_returns_to_it(studio):
     page, errors = studio
     open_draft(page)
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false"
-    kept = page.evaluate("localStorage.getItem('earlier')")
     page.keyboard.press("Control+K")
     page.locator("dialog[open] .palette-input").wait_for()
     page.keyboard.type("Three years ago")
     page.keyboard.press("Enter")
     page.wait_for_function("() => document.getElementById('title').textContent === 'Three years of Rust'")
     here = page.evaluate("location.hash.replace('#post-', '')")
-    row = page.locator(f'#earlierList [data-post="{here}"]')
-    assert row.is_visible() and row.get_attribute("aria-current") == "page"
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "true"
-    assert page.evaluate("localStorage.getItem('earlier')") == kept           # what is kept stays as it was
-    page.click("#earlierFold")                                                 # closed by hand: the open post stays listed
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false"
-    assert row.is_visible() and page.evaluate("document.activeElement.id") == "earlierFold"
-    open_draft(page)                                                           # another post: Earlier is closed again
-    page.wait_for_function("() => !document.querySelector('#earlierList [data-post]')")
+    assert page.locator("#tab-published").get_attribute("aria-current") == "true"
+    assert page.locator("#tab-drafts").get_attribute("aria-current") is None
+    assert page.locator("#backTo").get_attribute("aria-label") == "Back to Published"
+    page.click("#backTo")
+    page.wait_for_function(f"() => location.hash === '#~posts-published' && document.activeElement.dataset.post === '{here}'")
+    assert page.locator("#tab-published").get_attribute("aria-current") == "page" and page.locator("#title").inner_text() == "Published"
     assert errors == []
 
 
-def test_alt_arrows_still_walk_every_post_with_earlier_closed(studio):
+def test_a_post_that_is_gone_or_an_address_not_known_shows_drafts_at_its_own_address(studio):
+    page, errors = studio
+    for mark in ("#post-99999", "#~nowhere"):
+        page.evaluate("(m) => { location.hash = m; }", mark)
+        page.wait_for_function("() => location.hash === '#~posts-drafts' && document.getElementById('title').textContent === 'Drafts'")
+        assert page.locator("#tab-drafts").get_attribute("aria-current") == "page"
+    assert errors == []
+
+
+def test_alt_arrows_walk_the_posts_of_the_open_posts_tab(studio):
     page, errors = studio
     open_draft(page)
-    posts = [str(p["id"]) for p in page.evaluate(POSTS)]
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false" and len(posts) == 4
+    drafts = [str(p["id"]) for p in page.evaluate(POSTS) if p["status"] == "draft"]
+    assert len(drafts) == 3
     seen = []
-    for _ in posts:
+    for _ in drafts:
         before = page.evaluate("location.hash")
         page.keyboard.press("Alt+ArrowDown")
-        page.wait_for_function(f"""() => {{                      // opened, and listed as the open post: it always shows
-          const on = document.querySelector('#list [data-post][aria-current="page"]');
-          return location.hash !== '{before}' && !!on && location.hash === `#post-${{on.dataset.post}}`;
-        }}""")
+        page.wait_for_function(f"() => location.hash !== '{before}' && document.getElementById('tab-drafts').getAttribute('aria-current') === 'true'")
         seen.append(page.evaluate("location.hash.replace('#post-', '')"))
-    assert sorted(seen) == sorted(posts) and seen[-1] == page.evaluate("location.hash.replace('#post-', '')")
+    assert sorted(seen) == sorted(drafts) and seen[-1] == drafts[0]           # round the tab, back to the first: drafts only
     page.keyboard.press("Alt+ArrowUp")
-    page.wait_for_function(f"() => location.hash === '#post-{posts[(posts.index(seen[-1]) - 1) % len(posts)]}'")
+    page.wait_for_function(f"() => location.hash === '#post-{drafts[-1]}'")
+    show_tab(page, "approved")                                                 # alone in its tab: it stays, and says so
+    page.locator("#postList .post-row").first.click()
+    page.wait_for_function("() => document.querySelector('#status').innerText.includes('Approved')")
+    approved = page.evaluate("location.hash")
+    page.keyboard.press("Alt+ArrowDown")
+    page.wait_for_function("() => document.getElementById('announce').textContent === 'It is the only post under Approved.'")
+    assert page.evaluate("location.hash") == approved
+    assert errors == []
+
+
+# A post that did not go out, as the list and the banner show it: made up in the page's own state, drawn, read and taken
+# back before the next poll (the demo's stand-in Publora never fails).
+FAILED = """async () => {
+  const at = document.querySelector('meta[name=studio-static]').content;
+  const { state } = await import(at + 'js/core.js');
+  const posts = await import(at + 'js/posts.js');
+  const kept = state.posts;
+  state.posts = [{ id: 9900, title: 'Release notes', first: 'Nobody reads release notes. Here is how we made ours worth a click.',
+    status: 'failed', label: 'Failed', kind: 'bad', when: '', queued: false, busy: false, rank: null }, ...kept];   // as the studio orders it
+  posts.warnFailed();
+  posts.refresh();
+  const note = document.querySelector('#banners [data-banner="failed"]');
+  const row = document.querySelector('#postList .post-row');
+  const out = { banner: note ? note.innerText : '', bad: note ? note.classList.contains('bad') : false,
+    first: row ? [row.dataset.post, row.classList.contains('failed'), row.querySelector('.post-where').innerText] : null,
+    said: document.getElementById('posts-said').innerText };
+  state.posts = kept;
+  posts.warnFailed();
+  posts.refresh();
+  out.gone = !document.querySelector('#banners [data-banner="failed"]');
+  return out;
+}"""
+
+
+def test_a_post_that_did_not_go_out_comes_first_in_scheduled_and_is_named_across_the_top(studio):
+    page, errors = studio
+    show_tab(page, "scheduled")
+    out = page.evaluate(FAILED)
+    assert out["banner"].startswith("A post did not go out.") and "Nobody reads release notes" in out["banner"] and out["bad"]
+    assert "Open it" in out["banner"]
+    assert out["first"] == ["9900", True, "Failed"]                            # first, in red, ahead of the scheduled one
+    assert out["said"].startswith("1 did not go out: it comes first, in red.")
+    assert out["gone"]                                                         # dealt with: the banner goes
     assert errors == []
 
 
@@ -248,7 +326,7 @@ def test_before_you_confirm_names_what_to_look_at_and_stops_nothing(studio):
 
 STATUS = """async () => {
   const { state, h } = await import(document.querySelector('meta[name=studio-static]').content + 'js/core.js');
-  const { statusOf } = await import(document.querySelector('meta[name=studio-static]').content + 'js/sidebar.js');
+  const { statusOf } = await import(document.querySelector('meta[name=studio-static]').content + 'js/posts.js');
   const jobs = state.jobs;
   const p = { id: 4242, busy: true, status: 'draft', label: 'Draft', kind: '' };
   const said = [];
@@ -300,4 +378,22 @@ def test_the_status_line_says_how_long_claude_has_worked_and_approved_has_its_ow
         assert contrast(*look["chip"]) >= 4.5, theme                           # the chip's words, readable
         assert contrast(look["dot"], look["side"]) >= 3, theme                 # the dot, against the sidebar
         assert look["chip"][0] != look["okChip"] and look["dot"] != look["okDot"], theme   # not the green of Scheduled
+    assert errors == []
+
+
+def test_move_to_trash_from_mid_list_leaves_the_focus_on_the_post_after_it(studio):
+    """Last here: a draft from the middle of Drafts goes to the Trash (and is put back after, through the API)."""
+    page, errors = studio
+    show_tab(page, "drafts")
+    first, middle, last = page.evaluate(ROWS)
+    page.click(f'#postList [data-post="{middle}"]')
+    page.wait_for_selector('#topActions [data-act="approve"]')
+    page.click("#postGear")
+    page.get_by_role("button", name="Move to Trash…").click()
+    page.locator("dialog").get_by_role("button", name="Move to Trash").click()
+    page.wait_for_function(f"() => location.hash === '#~posts-drafts' && document.activeElement.dataset.post === '{last}'")
+    assert page.evaluate(ROWS) == [first, last]                                # its list, without it, on the post after it
+    page.evaluate("(id) => fetch('/api/trash/back', { method: 'POST', headers: { 'Content-Type': 'application/json' },"
+                  " body: JSON.stringify({ id }) })", middle)
+    page.wait_for_function(f"() => document.querySelectorAll('#postList .post-row').length === 3")
     assert errors == []

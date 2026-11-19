@@ -1,7 +1,7 @@
 """The pages beside the posts in Chrome (headless, through Playwright), on the demo studio with its stand-ins: Ask Claude
 on a locked post, Settings' sections and the account, You in the preview, Schedule's order, the Guide's pictures and
-its practice editor, the post style, the count beside Posts, and the posting queue. Skipped without Playwright or
-without Chrome or Edge. Made-up words only."""
+its practice editor, the post style, how many each tab's page says there are (the sidebar saying none), and the posting
+queue. Skipped without Playwright or without Chrome or Edge. Made-up words only."""
 import json
 import re
 import socket
@@ -43,16 +43,23 @@ def studio(tmp_path_factory):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_default_timeout(20000)
         page.goto(info["url"])
-        page.wait_for_selector("#list .nav-item")
+        page.wait_for_selector("#postList .post-row")
         yield page, errors
         browser.close()
     server.terminate()
     server.wait(timeout=20)
 
 
+def listed(page, has_text, tab="drafts"):
+    """A post's row in its tab's list, the tab picked in the sidebar."""
+    page.click(f"#tab-{tab}")
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    return page.locator("#postList .post-row", has_text=has_text).first
+
+
 def test_ask_claude_on_an_approved_post_says_it_is_locked_and_changes_nothing(studio):
     page, errors = studio
-    page.locator("#list .nav-item", has_text="Approved").click()
+    listed(page, "Approved", "approved").click()
     page.wait_for_function("() => document.querySelector('#status').innerText.includes('Approved')")
     page.wait_for_selector("#assistEmpty:not([hidden])")
     empty = page.locator("#assistEmpty").inner_text()
@@ -102,7 +109,7 @@ def head_of(page):
 
 
 def open_draft(page):
-    page.locator("#list .nav-item", has_text="On 14 March").first.click()
+    listed(page, "On 14 March").click()
     page.wait_for_selector("#postPage .li-card .li-head [data-who='name']")
 
 
@@ -214,15 +221,16 @@ def test_post_style_saved_in_settings_is_a_posts_style_and_its_restyle_waits_bes
     assert errors == []
 
 
-def test_the_posts_heading_counts_the_drafts_and_what_waits_to_go_out(studio):
+def test_each_tabs_page_says_how_many_and_posts_in_the_sidebar_says_none(studio):
     page, errors = studio
     statuses = page.evaluate("fetch('/api/state').then((r) => r.json()).then((s) => s.posts.map((p) => p.status))")
     drafts = statuses.count("draft")
-    said = page.locator("#postsLabel").text_content()
-    assert said.startswith(f"Posts · {drafts} draft{'' if drafts == 1 else 's'}")
-    for status in ("approved", "scheduled"):     # the demo queues nothing before this test: approved is not queued
-        assert (f"{statuses.count(status)} {status}" in said) == (statuses.count(status) > 0)
-    assert page.locator("#list").evaluate("(nav) => document.getElementById(nav.getAttribute('aria-labelledby')).textContent") == said
+    listed(page, "", "drafts")
+    assert page.locator("#posts-said").inner_text().startswith(f"{drafts} draft{'' if drafts == 1 else 's'}, best first")
+    listed(page, "", "approved")                 # the demo queues nothing before this test: approved is not queued
+    assert page.locator("#posts-said").inner_text() == "1 approved post: 1 waiting to be queued or scheduled."
+    assert page.locator("#postsLabel").text_content() == "Posts"           # the heading counts nothing
+    assert page.locator("#postList ol").get_attribute("aria-label") == "Approved"
     assert errors == []
 
 

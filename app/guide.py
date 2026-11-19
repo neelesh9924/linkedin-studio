@@ -44,8 +44,8 @@ LANES = [
                 "with its link in the first comment.",
                 "Or press + New post and tell Claude, on the right, what the post is about.",
                 "You can leave the page while it runs; a notice tells you when it is ready.",
-                "The drafts you have wait in the list on the left, the best ranked first."],
-         "gives": "A draft in your voice, in the list on the left."},
+                "Your drafts wait under Drafts, on the left, the best ranked first."],
+         "gives": "A draft in your voice, under Drafts."},
         {"id": "blanks", "shot": "post", "title": "Fill the blanks", "icon": "target", "where": "The post", "href": "#~posts",
          "claude": "", "demo": "blanks",
          "do": ["Where the writer had no real fact it left a blank like [N], marked in yellow.",
@@ -148,6 +148,22 @@ STATES = [
 ]
 
 SCREENS = [
+    {"key": "posts", "title": "Your posts", "href": "#~posts", "icon": "list", "shot": "posts",
+     "purpose": "Every post in one of four tabs, each tab a page of its own.",
+     "points": ["The sidebar's Posts tabs: Drafts; Approved, in the queue or waiting to be queued; Scheduled, at Publora, "
+                "with a post being sent and one that did not go out (first, in red); Published, with the posts cancelled "
+                "on Publora.",
+                "A tab's page lists its posts best first: drafts not ranked yet on top, then the highest rank; what goes "
+                "out, soonest first. Each row shows the post's rank, its first line and where it stands, and says when "
+                "Claude is at work on it.",
+                "The page says how many there are. The sidebar never counts anything.",
+                "Search all your posts, at the top of the page (/ from anywhere): every word somewhere in a post of any "
+                "tab, each post found with the line its words are on, marked. ↓ goes to the first post found, Enter "
+                "opens it, Esc empties the search.",
+                "Open a post from the list. Back, before its title, returns to its tab; Alt+↑ and Alt+↓ step through "
+                "the posts of that tab.",
+                "A post that did not go out is named across the top of every page, with Open it: Try again, Back to "
+                "draft, or a new draft from it."]},
     {"key": "post", "title": "A post", "href": "#~posts", "icon": "file", "shot": "post",
      "purpose": "The post as LinkedIn shows it, and the place you finish it.",
      "points": ["The middle shows it as a reader sees it, at Desktop or Phone width, with \"…more\" after about {fold} "
@@ -169,9 +185,7 @@ SCREENS = [
                 "New draft from this and Move to Trash…; a scheduled post stays out of the Trash.",
                 "Rank, beside it: how worth posting it is, 1 to 10, with why and the one change that would lift it. "
                 "Ask Claude to rank it, or give it your own number.",
-                "The sidebar lists your posts as they are today, drafts best first by rank (any not ranked yet on top), "
-                "each draft with its rank; published and cancelled ones fold away under "
-                "Earlier, which stays as you leave it. The post you have open always shows."]},
+                "Back to its tab, before its title, returns to the list it is in; the sidebar marks that tab."]},
     {"key": "chat", "title": "Ask Claude", "href": "#~posts", "icon": "sparkle", "shot": "chat",
      "purpose": "A conversation beside each post, kept with it.",
      "points": ["Ask for any change; Claude rewrites the post and keeps a version.",
@@ -271,7 +285,7 @@ SHORTCUTS = [
     ("Ctrl + K", "Search posts, pages and actions"),
     ("Alt + N", "A new post"),
     ("Ctrl + /", "Ask Claude"),
-    ("Alt + ↑ / Alt + ↓", "The previous or next post"),
+    ("Alt + ↑ / Alt + ↓", "The previous or next post in its tab"),
     ("?", "These shortcuts"),
     ("Enter", "Send in Ask Claude and the interviews"),
     ("Shift + Enter", "A new line in a chat"),
@@ -285,6 +299,7 @@ SHORTCUTS = [
 
 # The Guide's pictures (static/guide/<name>-light|dark.webp or .jpg), each with the words a screen reader hears.
 SHOT_WORDS = {
+    "posts": "Drafts: the posts best first, each with its rank and where it stands, the search above them and the sidebar's tabs",
     "post": "A post as LinkedIn shows it, with Ask Claude beside it",
     "chat": "Ask Claude at work: each step numbered while it runs",
     "schedule": "Schedule…: the time, the recommended slots and the final check",

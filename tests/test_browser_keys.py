@@ -52,7 +52,7 @@ def studio(tmp_path_factory):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_default_timeout(20000)
         page.goto(info["url"])
-        page.wait_for_selector("#list .nav-item")
+        page.wait_for_selector("#postList .post-row")
         if not page.evaluate("!!window.studioPalette"):            # until index.html loads it itself
             page.add_script_tag(url="/static/js/palette.js", type="module")
             page.wait_for_function("!!window.studioPalette")
@@ -62,11 +62,19 @@ def studio(tmp_path_factory):
     server.wait(timeout=20)
 
 
+def listed(page, has_text, tab="drafts"):
+    """A post's row in its tab's list, the tab picked in the sidebar."""
+    page.click(f"#tab-{tab}")
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    return page.locator("#postList .post-row", has_text=has_text).first
+
+
 def open_draft(page) -> int:
-    button = page.locator("#list .nav-item", has_text="14 March").first
+    button = listed(page, "14 March")
     draft = int(button.get_attribute("data-post"))
     button.click()
     page.wait_for_function(f"() => location.hash === '#post-{draft}'")
+    page.wait_for_selector('#topActions [data-act="approve"]')     # drawn: the page held the post before it till then
     page.wait_for_selector(".li-read")
     return draft
 
@@ -112,7 +120,8 @@ def test_the_top_bar_keeps_its_next_step_after_another_page(studio):
     for leave in ("#goSchedule", "#goTrash"):
         page.click(leave)
         page.wait_for_function("() => !location.hash.startsWith('#post-')")
-        page.click(f'#list [data-post="{draft}"]')
+        page.click("#tab-drafts")
+        page.click(f'#postList [data-post="{draft}"]')
         page.wait_for_selector('#topActions [data-act="approve"]', timeout=5000)
     assert errors == []
 
@@ -121,7 +130,7 @@ def test_the_top_bar_keeps_its_next_step_after_another_page(studio):
 def test_back_to_draft_and_approve_reach_ask_claude_at_the_next_poll(studio):
     """Publora's side of a post (Approve, Back to draft) moves the page's poll too: Ask Claude's panel follows it."""
     page, errors = studio
-    page.locator("#list .nav-item", has_text="The best code review").first.click()
+    listed(page, "The best code review", "approved").click()
     locked = "() => document.querySelector('#assistEmpty').innerText.includes('locked')"
     page.wait_for_function(locked, timeout=6000)
     page.locator('#topActions [data-act="back"]').click()
@@ -274,12 +283,11 @@ def test_the_palette_and_the_keys(studio):
     page.keyboard.press("Enter")
     page.wait_for_function("() => document.getElementById('title').textContent === 'Three years of Rust'")
 
-    # every post, in the studio's order: the published ones are under Earlier, and Alt+↑/↓ reaches them too
-    order = page.evaluate("import(document.querySelector('meta[name=studio-static]').content + 'js/core.js').then((m) => m.state.posts.map((p) => String(p.id)))")
-    here = page.evaluate("location.hash.replace('#post-', '')")
+    # Alt+↑/↓ within the open post's tab: the published post is alone under Published, so it stays, and says so
+    here = page.evaluate("location.hash")
     page.keyboard.press("Alt+ArrowDown")
-    after = order[(order.index(here) + 1) % len(order)]
-    page.wait_for_function(f"() => location.hash === '#post-{after}'")
+    page.wait_for_function("() => document.getElementById('announce').textContent === 'It is the only post under Published.'")
+    assert page.evaluate("location.hash") == here
 
     page.keyboard.press("?")
     page.wait_for_selector("dialog[open] table.keys")
@@ -292,9 +300,9 @@ def test_the_palette_and_the_keys(studio):
 
     page.keyboard.press("Control+/")
     page.wait_for_function("() => document.activeElement.id === 'askText'")
-    before = page.locator("#list [data-post]").count()
-    page.keyboard.press("Alt+N")
-    page.wait_for_function(f"() => document.querySelectorAll('#list [data-post]').length === {before + 1}")
+    page.keyboard.press("Alt+N")                                       # a new draft, opened: Drafts is its tab
+    page.wait_for_function(f"() => location.hash !== '{here}' && document.getElementById('tab-drafts').getAttribute('aria-current') === 'true'")
+    assert page.locator("#backTo").get_attribute("aria-label") == "Back to Drafts"
     assert errors == []
 
 

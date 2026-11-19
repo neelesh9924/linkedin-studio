@@ -3,10 +3,10 @@
     .venv\\Scripts\\python dev\\guide_shots.py [--port 8795]
 
 It starts dev/demo_server.py itself, in a folder with no user name in its path, uses the page the way a person would
-and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Schedule…, the Schedule page (Coming
-up, with the demo's approved post and a few made-up ones queued on five posting days, so one waits beyond the window),
-Hot topics with the demo's news ranked, Story Bank & Voice, Tools with a result, and the Trash when the page has one (a demo
-draft is moved there through the API first). Each picture is the window at 1200 x 750, saved small as WebP by Chrome's own capture into app/static/guide/,
+and pictures, in light and dark: a post as LinkedIn shows it, Ask Claude at work, Drafts (the demo's draft and two
+made-up ones, ranked), Schedule…, the Schedule page (Coming up, with the demo's approved post and a few made-up ones
+queued on five posting days, so one waits beyond the window), Hot topics with the demo's news ranked, Story Bank &
+Voice, Tools with a result, and the Trash when the page has one (a demo draft is moved there through the API first). Each picture is the window at 1200 x 750, saved small as WebP by Chrome's own capture into app/static/guide/,
 where the Guide shows them (app/guide.py SHOT_WORDS). Retake them when a screen changes.
 
 It never pictures Settings, the setup screen or Schedule's Claude card (they show folders and the account), and it
@@ -45,6 +45,9 @@ QUEUED = ["A retry without a limit is an outage waiting for a reason.\n\nThree r
           "Every dashboard starts with one chart nobody asked for.\n\nHow we decide which ones stay.",
           "Writing the rollback plan first makes the release plan shorter.\n\nThe three lines we write before a deploy.",
           "A meeting with no written question at the top is a status update in disguise.\n\nWhat we put there instead."]
+# Made-up drafts for Drafts' picture, each with the rank it shows: one worth posting, one to strengthen first.
+DRAFTS = [("Logs you cannot search are a diary, not observability.\n\nThree fields we add to every line.", 8),
+          ("The fastest query is the one your page never sends.\n\nHow we found ours in a single afternoon.", 6)]
 
 
 def neutral_folder() -> Path:
@@ -145,7 +148,7 @@ def post_id(page: Page, first: str = "", status: str = "") -> int:
 
 def take(page: Page) -> list[Path]:
     cam = Camera(page)
-    page.wait_for_selector("#list .nav-item")
+    page.wait_for_selector("#postList .post-row")
     has_trash = api(page, "GET", TRASH_LIST)[0] == 200
     if has_trash:                                  # a demo draft in the Trash, so its picture has something in it
         _code, made = api(page, "POST", "/api/posts/new")
@@ -166,6 +169,19 @@ def take(page: Page) -> list[Path]:
     page.wait_for_selector("#activity .activity li:nth-child(3)")
     cam.both("chat")
     idle(page)
+
+    # Drafts: the demo's draft and two made-up ones with their ranks, best first, from the sidebar's tab.
+    for text, rank in DRAFTS:
+        _code, made = api(page, "POST", "/api/posts/new")
+        api(page, "POST", f"/api/post/{made['id']}/save", {"text": text})
+        api(page, "POST", f"/api/post/{made['id']}/rank", {"rank": rank})
+    page.click("#tab-drafts")
+    page.wait_for_function(f"() => document.querySelectorAll('#postList .post-row').length === {len(DRAFTS) + 1}"
+                           f" && document.querySelectorAll('#postList .rank:not(.none)').length === {len(DRAFTS)}")
+    page.mouse.move(5, 5)
+    page.evaluate("() => document.activeElement && document.activeElement.blur()")
+    page.wait_for_timeout(300)
+    cam.both("posts")
 
     # Schedule… on the approved post.
     open_(page, f"#post-{post_id(page, status='approved')}")
@@ -189,8 +205,12 @@ def take(page: Page) -> list[Path]:
     # Schedule from the top: Coming up (the posts at Publora, the one queued beyond the window with its buttons).
     open_(page, "#~schedule")
     page.wait_for_selector("#coming-up .coming-row.queued")
-    page.wait_for_function("""() => [...document.querySelectorAll('#list .sub')].some((s) => s.textContent.startsWith('Queued'))
-      && ![...document.querySelectorAll('#list .sub')].some((s) => s.textContent.startsWith('Sending'))""")
+    for _ in range(60):                            # the queue settled: one waits in it, none on its way to Publora
+        posts = api(page, "GET", "/api/state")[1]["posts"]
+        if any(p["queued"] for p in posts) and not any(p["status"] == "scheduling" for p in posts):
+            break
+        page.wait_for_timeout(500)
+    page.wait_for_timeout(2500)                    # and the page's next poll has drawn it
     page.evaluate("() => document.querySelector('#schedulePage').scrollTo(0, 0)")
     page.wait_for_timeout(300)
     cam.both("coming")

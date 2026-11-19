@@ -25,7 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import codex, flows, images, mcp, posting, privacy, render
+from . import codex, flows, images, mcp, posting, privacy, rank, render
 from .claude_runner import ClaudeRunner
 from .config import DATA_DIR, HOST, Config, path_problems
 from .db import DB, loads
@@ -128,7 +128,7 @@ class Studio:
         return {"id": row["id"], "title": row["title"], "first": first_line(row["text"]) or "Nothing written yet",
                 "status": row["status"], "label": label, "kind": kind, "when": when, "queued": queued,
                 "scheduled_at": row["scheduled_at"], "picture": bool(images.chosen_ids(row)), "busy": busy, "trashed": trashed,
-                "rank": row["rank"],
+                "rank": row["rank"], "verdict": rank.verdict_of(row["rank"]) if row["rank"] else None,   # the list's rank tile
                 "link": link}
 
     def post_busy(self, post_id: int) -> bool:

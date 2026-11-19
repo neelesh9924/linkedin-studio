@@ -17,15 +17,24 @@ You double-click a shortcut and an app window opens. Closing the window stops ev
 
 ## The studio
 
-One window in three columns: your posts on the left, the post as LinkedIn will show it in the
-middle, and Ask Claude beside it. **New to it? Open Guide in the sidebar**: it walks through the
-routine step by step, with a picture of where each step happens.
+One window in three columns: the sidebar on the left (your posts in four tabs, and the studio's
+pages), what you picked in the middle (a tab's posts, or a post as LinkedIn will show it), and Ask
+Claude beside a post. **New to it? Open Guide in the sidebar**: it walks through the routine step
+by step, with a picture of where each step happens.
+
+**Your posts**, a tab at a time: each post with its rank and where it stands, best first, and the
+search across all of them:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/posts-dark.webp">
+  <img src="app/static/guide/posts-light.webp" width="900" alt="Drafts: the posts best first, each with its rank, the search above them and the sidebar's tabs on the left">
+</picture>
 
 **A post, as LinkedIn will show it**, with Ask Claude beside it to change it:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="app/static/guide/post-dark.webp">
-  <img src="app/static/guide/post-light.webp" width="900" alt="A post as LinkedIn shows it, with the sidebar of posts on the left and Ask Claude on the right">
+  <img src="app/static/guide/post-light.webp" width="900" alt="A post as LinkedIn shows it, with the sidebar's tabs on the left and Ask Claude on the right">
 </picture>
 
 **Hot topics**: the news in your niche, each item ranked for how well it fits you, and one press
@@ -53,13 +62,17 @@ blank where it has no fact of yours, instead of inventing one:
 
 *Made-up demo data: the Guide's own pictures, retaken by `dev\guide_shots.py`.*
 
-- **The sidebar** lists your posts, each with its first line and its state: drafts first, then
-  approved ones, then what goes out, soonest first (scheduled and queued together). The
-  **Posts** heading counts the drafts, and the approved, queued and scheduled posts when there
-  are any. Published and cancelled posts fold away under
-  **Earlier**, which stays as you leave it; the post you have open always shows. **New post**
-  starts one. Below the list: Schedule, Hot topics, Story Bank & Voice, Tools, Guide, Settings, Trash,
-  and the light/dark switch.
+- **The sidebar** is for getting around, and counts nothing. **New post** starts one. Under
+  **Posts**, four tabs: **Drafts**; **Approved** (in the queue, or waiting for you to queue or
+  schedule it); **Scheduled** (at Publora, with a post being sent and one that did not go out: that
+  one first, in red); **Published** (with the posts you cancelled on Publora). Under **Studio**:
+  Schedule, Hot topics, Story Bank & Voice, Tools and Guide. Then Settings, Trash and the
+  light/dark switch. Each tab has a colour of its own, and the one you are in is marked.
+- **A tab's page** lists its posts best first (drafts not ranked yet on top, then the highest rank;
+  what goes out, soonest first), each with its rank, its first line and where it stands (Claude at
+  work on it, too), and says how many there are. Open one to work on it: **Back**, before its title,
+  returns to its tab, and **Alt+↑ / Alt+↓** step through the posts of that tab. A post that did not
+  go out is named across the top of every page, with **Open it**, until you deal with it.
 - **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
   "…more" fold at about 210 characters and its pictures in LinkedIn's grid, or its carousel to page
   through), under your name, headline and photo
@@ -147,16 +160,18 @@ blank where it has no fact of yours, instead of inventing one:
   versions, chat and pictures; **Delete forever…** and **Empty trash** ask first and name what goes.
   A published post stays on LinkedIn, and its month still counts it after Delete forever.
   Scheduled posts stay protected: cancel one on Publora first.
-- **Search.** The box under **New post** (or **/** from anywhere) finds a post by any word in it, as
-  you type: its text, first comment, the words on its carousel or card, the news it was drafted
-  from, its title, or where it stands ("scheduled", "draft"). Every word must be somewhere, in any
-  case, LinkedIn's bold letters read as plain ones; each post found shows the line its words are on,
-  marked. Esc empties it. Ctrl+K finds posts the same way.
+- **Search.** The box at the top of each tab's page (or **/** from anywhere) finds a post of any tab
+  by any word in it, as you type: its text, first comment, the words on its carousel or card, the
+  news it was drafted from, its title, or where it stands ("scheduled", "draft"). Every word must be
+  somewhere, in any case, LinkedIn's bold letters read as plain ones; each post found shows the line
+  its words are on, marked. ↓ goes to the first one and Enter opens it; Esc empties it. Ctrl+K finds
+  posts the same way.
 
 **The pages**
 
 | Page | What it does |
 |---|---|
+| Drafts, Approved, Scheduled, Published | Your posts, a tab each (the sidebar's **Posts**): the tab's posts best first with their ranks and where they stand, how many there are, and **Search all your posts** at the top. Each has its own address (`#~posts-drafts`, `-approved`, `-scheduled`, `-published`); the studio opens on Drafts |
 | Schedule | **Coming up** first: the posts at Publora with their times, the queue in line order (**Move up**, **Move down**, **First in line**, **Take out**), the posting times still free, and **Check Publora**. Then Getting set up (until its steps are done), and this month: posts used (x of 15), the next post out, and Claude's status |
 | Hot topics | The last 14 days of news in your niche (Android and Kotlin, Flutter, Swift and iOS, Django and Python, Postgres, the web, AI coding agents), **ranked for you**: from the teams behind your tools (Android, Android Studio, Kotlin, Flutter, Dart, Django, Python, PostgreSQL, GitHub, Firebase), every article of the Android Weekly and iOS Dev Weekly issues, the Swift and Django forums, engineering blogs (Cloudflare, Netflix, Shopify, Meta, Discord, InfoQ, JetBrains), dev.to's most liked of the week, and the Hacker News stories with 100 points or more that name your areas. Claude ranks each new item 1 to 10, how good a post it makes for you: how it fits you (your voice profile; its run is refused the Story Bank) and whether it has something to teach; each item shows its rank, why, and the post it would become. **Best for you** first, then the items not ranked yet; those ranked 1 to 4 fold away under **Not for you**, and the same story from several sources is one item. **Draft** has Claude write that post from the article, with its link in the first comment; the item then shows the draft at work, then **Open the post**, and the post keeps a **From Hot topics** card. The studio reads the news when the page opens and its copy is over an hour old (**Refresh** reads it again), then ranks what is new, a batch at a time. **Search the news** shows only the items with every word somewhere in them (title, source, area, rank, why, the post), the words marked; Not for you opens while it holds a match |
 | Story Bank & Voice | Both files, formatted, with the sections that have material; the Interviewer (`linkedin-interviewer`) and the voice-profile builder (`linkedin-humanizer --mode profile`) as chats beside them. **Ask me about this** on a filled Story Bank entry starts a short interview about that entry alone, in a new conversation |
@@ -166,7 +181,7 @@ blank where it has no fact of yours, instead of inventing one:
 | Trash | Posts moved there: Put back, Delete forever…, Empty trash |
 
 **Keys.** / goes to the search (on Hot topics, the news's own); Ctrl+K searches posts, pages and actions; Alt+N starts a new post; Ctrl+/ goes to Ask
-Claude; Alt+↑ / Alt+↓ open the previous or next post; ? lists the shortcuts. In Ask Claude, Enter
+Claude; Alt+↑ / Alt+↓ open the previous or next post in its tab; ? lists the shortcuts. In Ask Claude, Enter
 sends, Shift+Enter adds a line and ↑ in an empty box brings back your last message; on its edge,
 ← and → make the panel wider or narrower (Shift for bigger steps). The Guide's
 Keys and limits lists them all.

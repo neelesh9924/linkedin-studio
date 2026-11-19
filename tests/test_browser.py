@@ -1,14 +1,15 @@
 """The page itself, in Chrome (headless, through Playwright), on the demo studio with its stand-ins (dev/demo_server.py
 in a folder of its own: no Claude, Publora or ChatGPT). Skipped without Playwright or without Chrome or Edge.
 
-The shell; a post's chat that rewrites the post; a file attached and sent, opened again, and the attached picture
-added to the post's pictures; a carousel in its place, and each tile filling its frame in a narrow card; Approve refused
-while blanks remain; the focus kept through the polls; every page and the
-audit card in words (never "[object …]"); dialogs named by their heading; light and dark; New post opening the new post;
-Move to Trash… on the top draft (one request, no alert, the focus on the next post), Put back and Delete forever…; Hot
-topics (the demo's made-up news) and its Draft, which opens the post with its news beside it and the link in its first
-comment; the search, in the sidebar and on Hot topics, from / and gone with Esc; Back up's file, chosen again under
-Restore from a backup…, with only the parts ticked put back."""
+The shell (the sidebar's tabs in groups, counting nothing; Drafts listing the posts); a post's chat that rewrites the
+post; a file attached and sent, opened again, and the attached picture added to the post's pictures; a carousel in its
+place, and each tile filling its frame in a narrow card; Approve refused while blanks remain; the focus kept through the
+polls; every page and the audit card in words (never "[object …]"); dialogs named by their heading; light and dark; New
+post opening the new post, and Back to Drafts; Move to Trash… on the top draft (one request, no alert, the list with the
+focus on the next post), Put back and Delete forever…; Hot topics (the demo's made-up news) and its Draft, which opens
+the post with its news beside it and the link in its first comment; the search, on the posts page and on Hot topics,
+from / and gone with Esc; Back up's file, chosen again under Restore from a backup…, with only the parts ticked put
+back."""
 import json
 import socket
 import subprocess
@@ -43,7 +44,7 @@ def studio(tmp_path_factory):
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.set_default_timeout(20000)
         page.goto(info["url"])
-        page.wait_for_selector("#list .nav-item")
+        page.wait_for_selector("#postList .post-row")
         yield page, errors, folder
         browser.close()
     server.terminate()
@@ -54,24 +55,38 @@ def idle(page):
     page.wait_for_function("() => !document.querySelector('#activity .activity')", timeout=30000)
 
 
-def test_the_shell_lists_the_posts_with_no_counts_anywhere_in_the_sidebar(studio):
+def listed(page, has_text, tab="drafts"):
+    """A post's row in its tab's list, the tab picked in the sidebar as a person would."""
+    page.click(f"#tab-{tab}")
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    return page.locator("#postList .post-row", has_text=has_text).first
+
+
+SIDEBAR = """() => [...document.querySelectorAll('#views > .side-label')].map((label) => ({ label: label.textContent,
+  tabs: [...document.querySelectorAll(`[aria-labelledby="${label.id}"] .nav-item`)].map((b) => ({ name: b.textContent.trim(),
+    tone: b.querySelector('.nav-mark').className.replace('nav-mark', '').trim() })) }))"""
+
+
+def test_the_sidebar_holds_tabs_in_groups_and_drafts_lists_the_posts(studio):
     page, errors, _ = studio
-    names = page.locator("#list .nav-item .name").all_inner_texts()
-    subs = page.locator("#list .nav-item .sub").all_inner_texts()
-    assert len(names) == 3 and {"Draft", "Approved"} <= set(subs) and "Published" not in subs   # the published one: Earlier
-    assert page.locator("#earlierFold").get_attribute("aria-expanded") == "false"
-    page.click("#earlierFold")
-    assert page.locator("#earlierList .nav-item .sub").all_inner_texts() == ["Published"]
-    page.click("#earlierFold")                                         # closed again, as it was
-    side = page.locator(".sidebar").inner_text()
-    assert [w for w in ("Schedule", "Hot topics", "Story Bank & Voice", "Tools", "Guide", "Settings", "Trash") if w not in side] == []
-    assert page.locator(".sidebar .chip, .sidebar .badge, .sidebar .count").count() == 0
+    assert page.evaluate("location.hash") == "" and page.locator("#title").inner_text() == "Drafts"   # the start: Drafts
+    assert page.locator("#tab-drafts").get_attribute("aria-current") == "page"
+    groups = page.evaluate(SIDEBAR)
+    assert [(g["label"], [t["name"] for t in g["tabs"]]) for g in groups] == [
+        ("Posts", ["Drafts", "Approved", "Scheduled", "Published"]),
+        ("Studio", ["Schedule", "Hot topics", "Story Bank & Voice", "Tools", "Guide"])]
+    for g in groups:                                                   # a tint of its own in each group, never red
+        tones = [t["tone"] for t in g["tabs"]]
+        assert all(tones) and len(set(tones)) == len(tones) and "bad" not in tones, tones
+    assert page.locator(".side-links").inner_text().split() == ["Settings", "Trash"]
+    assert page.locator(".sidebar [data-post], .sidebar .chip, .sidebar .badge, .sidebar .count").count() == 0   # no posts, no counts
+    assert page.locator("#postList .post-row").all_inner_texts() == ["–\nOn 14 March I stopped coding my side project after 10 pm on weekdays.\nDraft"]
     assert errors == []
 
 
 def test_the_post_chat_rewrites_the_post_and_keeps_the_focus_in_the_box(studio):
     page, errors, _ = studio
-    page.locator("#list .nav-item", has_text="On 14 March").click()
+    listed(page, "On 14 March").click()
     page.wait_for_selector(".li-read")
     page.fill("#askText", "Write a sharper hook")
     page.keyboard.press("Enter")
@@ -159,7 +174,10 @@ def test_every_page_and_the_audit_card_show_words_never_an_object(studio):
         page.click(button)
         page.wait_for_selector(box)
         assert "[object" not in page.locator(box).inner_text(), button
-    page.locator("#list .nav-item", has_text="14 March").click()      # its first line since the new hook
+    for tab in ("drafts", "approved", "scheduled", "published"):
+        listed(page, "", tab).wait_for()
+        assert "[object" not in page.locator("#postsPage").inner_text(), tab
+    listed(page, "14 March").click()                                   # its first line since the new hook
     page.wait_for_selector(".li-read")
     assert errors == []
 
@@ -189,10 +207,11 @@ WATCH_ALARMS = """() => {
 }"""
 
 
-def test_new_post_opens_the_new_post_empty_with_the_focus_in_the_ask_box(studio):
+def test_new_post_opens_the_new_post_empty_with_the_focus_in_the_ask_box_and_back_lists_it(studio):
     page, errors, _ = studio
-    before = page.locator("#list .nav-item").count()
-    assert before >= 3
+    listed(page, "").wait_for()
+    before = page.locator("#postList .post-row").count()
+    assert before >= 1
     with page.expect_response("**/api/posts/new") as made:
         page.click("#newPost")
     new = made.value.json()["id"]
@@ -200,18 +219,23 @@ def test_new_post_opens_the_new_post_empty_with_the_focus_in_the_ask_box(studio)
     page.wait_for_selector(".li-text.placeholder")
     page.wait_for_timeout(2500)                                       # through a poll: still the new post, still the box
     assert page.evaluate("location.hash") == f"#post-{new}" and page.evaluate("document.activeElement.id") == "askText"
-    assert page.locator("#list .nav-item").count() == before + 1
-    assert page.locator(f'#list [data-post="{new}"]').get_attribute("aria-current") == "page"
+    assert page.locator("#tab-drafts").get_attribute("aria-current") == "true"      # the open post's tab
+    back = page.locator("#backTo")
+    assert back.get_attribute("aria-label") == "Back to Drafts" and back.inner_text().strip() == "Drafts"
+    back.click()                                                       # Back: the list, the focus on the post left
+    page.wait_for_function(f"() => location.hash === '#~posts-drafts' && document.activeElement.dataset.post === '{new}'")
+    assert page.locator("#postList .post-row").count() == before + 1 and page.locator("#backTo").is_hidden()
+    assert page.locator("#tab-drafts").get_attribute("aria-current") == "page"
     assert errors == []
 
 
 def test_move_to_trash_on_the_top_draft_moves_on_quietly_and_the_trash_puts_it_back(studio):
     page, errors, _ = studio
-    top = page.locator("#list .nav-item").first
-    gone, after = top.get_attribute("data-post"), page.locator("#list .nav-item").nth(1).get_attribute("data-post")
+    top = listed(page, "")
+    gone, after = top.get_attribute("data-post"), page.locator("#postList .post-row").nth(1).get_attribute("data-post")
     top.click()
     page.wait_for_function(f"() => location.hash === '#post-{gone}'")
-    page.wait_for_selector(".li-text.placeholder")
+    page.wait_for_selector('#topActions [data-act="queue"]')         # it shows (the gear waits for the post it opens)
     page.evaluate(WATCH_ALARMS)
     seen = []
     page.on("response", lambda r: seen.append((r.request.method, r.url, r.status)))
@@ -219,10 +243,10 @@ def test_move_to_trash_on_the_top_draft_moves_on_quietly_and_the_trash_puts_it_b
     page.get_by_role("button", name="Move to Trash…").click()
     assert "Untitled draft" in page.locator("dialog h2").inner_text()     # the dialog names the post
     page.locator("dialog").get_by_role("button", name="Move to Trash").click()
-    page.wait_for_function(f"() => document.activeElement.dataset.post === '{after}'")
+    page.wait_for_function(f"() => document.activeElement.dataset.post === '{after}'")   # its list, on the next post
     page.wait_for_timeout(2500)                                       # a poll and more
-    assert page.locator(f'#list [data-post="{gone}"]').count() == 0
-    assert page.evaluate("document.activeElement.dataset.post") == after and page.evaluate("location.hash") == f"#post-{after}"
+    assert page.locator(f'#postList [data-post="{gone}"]').count() == 0
+    assert page.evaluate("document.activeElement.dataset.post") == after and page.evaluate("location.hash") == "#~posts-drafts"
     assert len([s for s in seen if s[0] == "POST" and s[1].endswith(f"/api/post/{gone}/trash")]) == 1
     assert len([s for s in seen if s[2] == 404]) <= 1 and page.evaluate("window.alarms") == []
     page.locator(".toast a", has_text="Open the Trash").click()
@@ -231,21 +255,23 @@ def test_move_to_trash_on_the_top_draft_moves_on_quietly_and_the_trash_puts_it_b
     page.get_by_role("button", name="Put back, Untitled draft").click()
     page.wait_for_function("() => document.activeElement.closest('#trashPage .result.ok')")
     assert "back among your posts" in page.locator("#trashPage .result.ok").inner_text()
-    page.wait_for_selector(f'#list [data-post="{gone}"]')
-    assert page.locator(f'#list [data-post="{gone}"] .sub').inner_text() == "Draft"
+    listed(page, "")
+    page.wait_for_selector(f'#postList [data-post="{gone}"]')
+    assert page.locator(f'#postList [data-post="{gone}"] .post-where').inner_text() == "Draft"
     assert errors == []
 
 
 def test_delete_forever_names_the_post_and_leaves_the_focus_on_what_it_did(studio):
     page, errors, _ = studio
-    gone = page.locator("#list .nav-item").first.get_attribute("data-post")
-    page.locator("#list .nav-item").first.click()
+    top = listed(page, "")
+    gone = top.get_attribute("data-post")
+    top.click()
     page.wait_for_function(f"() => location.hash === '#post-{gone}'")
-    page.wait_for_selector(".li-text.placeholder")                    # it shows (the gear waits for the post it opens)
+    page.wait_for_selector('#topActions [data-act="queue"]')         # it shows (the gear waits for the post it opens)
     page.click("#postGear")
     page.get_by_role("button", name="Move to Trash…").click()
     page.locator("dialog").get_by_role("button", name="Move to Trash").click()
-    page.wait_for_function(f"() => !document.querySelector('#list [data-post=\"{gone}\"]')")
+    page.wait_for_function(f"() => location.hash === '#~posts-drafts' && !document.querySelector('#postList [data-post=\"{gone}\"]')")
     page.click("#goTrash")
     page.get_by_role("button", name="Delete forever, Untitled draft").click()
     assert page.locator("dialog .trash-names").inner_text() == "Untitled draft"
@@ -284,32 +310,46 @@ def test_hot_topics_lists_the_news_and_draft_writes_a_post_from_one(studio):
     page.wait_for_selector('#postPage [data-card="news"]')
     assert title in page.locator('[data-card="news"]').inner_text()
     assert "https://example.com/news/1" in page.locator("#postPage .li-comment textarea").input_value()   # the link
-    assert page.locator('#list .nav-item[aria-current="page"] .name').inner_text().startswith("Count your queries")   # the angle
+    assert page.locator("#postPage .li-body").inner_text().startswith("Count your queries")             # the angle
+    assert page.locator("#tab-drafts").get_attribute("aria-current") == "true"
     assert errors == []
 
 
 def test_the_search_finds_a_post_by_any_word_in_it_and_hot_topics_by_the_news(studio):
     page, errors, _ = studio
-    box, rows = page.locator("#postSearch"), page.locator("#list .nav-item")
+    box, rows = page.locator("#postSearch"), page.locator("#postList .post-row")
     page.locator("#title").click()
-    page.keyboard.press("/")                                           # from anywhere: the search
-    assert page.evaluate("document.activeElement.id") == "postSearch"
+    page.keyboard.press("/")                                           # from anywhere (a post): its tab's list, the search
+    page.wait_for_function("() => location.hash === '#~posts-drafts' && document.activeElement.id === 'postSearch'")
+    drafts = rows.count()
     box.fill("tax-export")                                             # deep in the draft, not on its first line
-    march = page.locator("#list .nav-item", has_text="14 March")
-    march.locator(".sub mark.hit").first.wait_for()
-    assert "tax-export" in march.locator(".sub").inner_text()
-    assert all("tax-export" in sub for sub in page.locator("#list .nav-item .sub").all_inner_texts())   # each, by its line
-    box.fill("BILLING 40,000")                                         # any case, every word: an earlier post too
-    page.wait_for_function("() => document.querySelector('#list .nav-item .name')?.textContent.startsWith('Three years ago')")
-    assert rows.count() == 1 and page.locator("#earlierFold").count() == 0
+    march = page.locator("#postList .post-row", has_text="14 March")
+    march.locator(".post-found mark.hit").first.wait_for()
+    assert "tax-export" in march.locator(".post-found").inner_text() and march.locator(".post-where").inner_text() == "Draft"
+    assert all("tax-export" in line for line in page.locator("#postList .post-found").all_inner_texts())   # each, by its line
+    box.fill("BILLING 40,000")                                         # any case, every word: a published post too, from Drafts
+    page.wait_for_function("() => document.querySelector('#postList .post-first')?.textContent.startsWith('Three years ago')")
+    assert rows.count() == 1 and page.locator("#postFound").inner_text().startswith("1 of ")
+    assert rows.first.locator(".post-where").inner_text() == "Published"
     box.fill("scheduled")                                              # where a post stands, as the list says it
-    page.locator("#list .nav-item", has_text="Our deploys").wait_for()
+    page.locator("#postList .post-row", has_text="Our deploys").wait_for()
     box.fill("zebra")
-    page.wait_for_selector("#list .side-none")
-    assert page.locator("#list").inner_text() == "No posts match “zebra”." and "none match" in page.locator("#postsCount").inner_text()
+    page.wait_for_selector("#postList .posts-none")
+    assert page.locator("#postList").inner_text() == "No posts match “zebra”." and page.locator("#postFound").inner_text() == ""
     box.press("Escape")                                                # the list as it was
-    page.wait_for_selector("#earlierFold")
-    assert box.input_value() == "" and rows.count() >= 4 and "match" not in page.locator("#postsCount").inner_text()
+    page.wait_for_function(f"() => document.querySelectorAll('#postList .post-row').length === {drafts}")
+    assert box.input_value() == "" and page.evaluate("document.activeElement.id") == "postSearch"
+    box.fill("BILLING")
+    box.press("ArrowDown")                                             # ↓: the first post found; Enter opens it
+    assert page.evaluate("document.activeElement.textContent").startswith("–Three years ago")
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => document.getElementById('title').textContent === 'Three years of Rust'")
+    page.click("#backTo")                                              # back to its tab, the search as it was
+    page.wait_for_function("() => location.hash === '#~posts-published' && document.activeElement.classList.contains('post-row')")
+    assert box.input_value() == "BILLING" and rows.count() == 1
+    page.click("#tab-drafts")                                          # a tab picked: its posts, the search emptied
+    page.wait_for_function(f"() => document.querySelectorAll('#postList .post-row').length === {drafts}")
+    assert box.input_value() == ""
     page.click("#goHot")
     page.wait_for_selector('#hotPage ol[aria-labelledby="hot-best"] .hot-row', timeout=60000)
     page.locator("#hot-title").click()

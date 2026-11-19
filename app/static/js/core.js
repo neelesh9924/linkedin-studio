@@ -8,6 +8,7 @@ export const $ = (id) => document.getElementById(id);
 export const state = {
   page: "", postId: null, posts: [], jobs: [], ended: [], rev: -1, seq: 0, setup: false, tz: "", chatgpt: false,
   target: { min: 900, max: 1300, hard: 3000, fold: 210 }, offline: false, view: "desktop", titleMark: "", first: true,
+  tab: "drafts",   // the posts tab shown last (posts.js)
 };
 
 export function h(tag, attrs, ...kids) {
@@ -404,7 +405,7 @@ export function toast(text, href = "", label = "Open") {
   announce(text);
 }
 
-// A choice this window keeps for next time (the panel shown, its width, the Earlier fold), and never relies on: storage
+// A choice this window keeps for next time (the panel shown, its width), and never relies on: storage
 // that is blocked or empty gives the fallback, and a write that fails is let go. null forgets it.
 export function recall(key, fallback = null) {
   try {

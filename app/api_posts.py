@@ -228,7 +228,7 @@ def register(app: FastAPI, s: Studio) -> None:
     # ---- search ---------------------------------------------------------------------
     @app.get("/api/search")
     def search_words():
-        """What the search looks in (static/js/search.js matches it as the owner types, in the sidebar and Ctrl+K): each
+        """What the search looks in (static/js/search.js matches it as the owner types, on the posts page and Ctrl+K): each
         post out of the Trash, its words by where they are, in the order a match is shown from: its text, its first
         comment, the words on the carousel or card on it, the news it was drafted from, its title. `rev`: the state it
         was read at, so the page asks again only after a change."""

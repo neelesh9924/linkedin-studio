@@ -1,12 +1,13 @@
 // Ctrl+K: one box to jump to a post, a page or a tool, or to press one of the page's own controls; and the studio's
 // keys, as in the owner's other studios: Alt+N a new post, Ctrl+/ the Ask box, Alt+↑ / Alt+↓ the previous or next
-// post, / the search (the page's own on Hot topics, else the sidebar's), ? the list of keys (the Guide's own, from
-// /api/guide). Also the two skip links at the top of the page and the search button beside light or dark. An
-// accessible combobox: the input owns a listbox and points at the active option with aria-activedescendant, so the
-// focus never leaves the input. Posts are found as the sidebar finds them (search.js). It starts itself once, however
-// often it is loaded.
+// post in its tab, / the search (the page's own on Hot topics, else the posts page's, opened from anywhere), ? the list
+// of keys (the Guide's own, from /api/guide). Also the two skip links at the top of the page and the search button
+// beside light or dark. An accessible combobox: the input owns a listbox and points at the active option with
+// aria-activedescendant, so the focus never leaves the input. Posts are found as the posts page finds them (search.js).
+// It starts itself once, however often it is loaded.
 import { $, state, h, icon, api, go, showDialog, closeButton, announce, focusFirst, onPoll } from "./core.js";
 import { wordsOf, findPost, lineOf, ensure, shownAlready } from "./search.js";
+import { TABS, stepPost, focusSearch } from "./posts.js";
 import { PANELS as SETTINGS } from "./settings.js";
 
 const GROUPS = ["Posts", "Pages", "Actions"];
@@ -27,6 +28,7 @@ function items() {
   }
   const page = (label, hash, glyph, hint = "", keys = "") => out.push({ group: "Pages", label, hash, icon: glyph, hint, keys,
     current: location.hash === hash, run: () => go(hash) });
+  for (const t of TABS) page(t.name, `#~posts-${t.id}`, t.icon, t.hint, `posts list ${t.statuses.join(" ")}`);
   page("Schedule", "#~schedule", "calendar", "What goes out when", "coming up queue planner month");
   page("Hot topics", "#~hot", "flame", "The news in your niche, to post about", "news trending latest release");
   page("Story Bank", "#~bank", "book", "The interviewer", "interview stories");
@@ -76,8 +78,8 @@ function items() {
   return out;
 }
 
-// Every word must appear somewhere; a label that starts with what was typed comes first. A post: found as the sidebar
-// finds it (its words are search.js's, folded), the line it was found on its hint.
+// Every word must appear somewhere; a label that starts with what was typed comes first. A post: found as the posts
+// page finds it (its words are search.js's, folded), the line it was found on its hint.
 function score(item, words, query, folded) {
   const label = item.label.toLowerCase();
   if (item.post) {
@@ -241,14 +243,6 @@ function focusAsk() {
   announce("Ask Claude is beside a post, the Story Bank and the voice profile. Open one of them first.");
 }
 
-function stepPost(dir) {
-  const posts = state.posts;
-  if (!posts.length) return;
-  const at = state.page === "post" ? posts.findIndex((p) => p.id === state.postId) : -1;
-  const next = at < 0 ? posts[dir > 0 ? 0 : posts.length - 1] : posts[(at + dir + posts.length) % posts.length];
-  go(`#post-${next.id}`);
-}
-
 function onKey(event) {
   if (event.defaultPrevented || event.isComposing) return;
   const mod = event.ctrlKey || event.metaKey;
@@ -274,11 +268,9 @@ function onKey(event) {
   }
   if (!mod && !event.altKey && event.key === "/" && !typing(event.target)) {
     event.preventDefault();
-    const box = shown($("hotSearch")) ? $("hotSearch") : $("postSearch");
-    if (box) {
-      box.focus();
-      box.select();
-    }
+    if (!shown($("hotSearch"))) return void focusSearch();
+    $("hotSearch").focus();
+    $("hotSearch").select();
     return;
   }
   if (!mod && !event.altKey && event.key === "?" && !typing(event.target)) {

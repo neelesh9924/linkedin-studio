@@ -87,6 +87,11 @@ username in them).
   Each box holds the whole path; beside its name a chip says Found by itself while the box holds a place
   `paths.usual_places` found (Not found when it is empty and nothing was), and an emptied box offers Find it, which
   puts the first place found back (`settings.js` `drawSetup`).
+- **The sidebar is navigation only** (the owner's word, 19 Nov 2026): no post, count or badge in it; the figures are on
+  the pages. A post is in one tab by its status (`posts.js` `TABS`/`tabOf`, one definition for the sidebar, the tab's
+  page, Back, Alt+↑/↓ and Ctrl+K): Drafts; Approved (queued or not); Scheduled (sending, scheduled, failed); Published
+  (published, cancelled). A tab's page lists its posts in `/api/state`'s order; a failed post comes first under
+  Scheduled and is named across the top of every page (`warnFailed`) until it is dealt with.
 - **The Trash keeps posts, never sends them.** A post in it is `posts.trashed_at`, refused by every post endpoint
   (`api_posts.find`), by the studio's tools (`mcp.py`) and by `Publisher.schedule`/`retry`. Scheduled and sending
   posts, a post Publora holds a draft of, and a post Claude is working on are never moved there. A published post
@@ -129,7 +134,7 @@ username in them).
 | `app/versions.py`, `app/images.py`, `app/attached.py` | A post's versions, its pictures and carousels (what goes out, in order), a chat's attached files |
 | `app/rank.py` | A post's rank: 1-10 with why and what would lift it (Claude's `set_rank`, judged by `rank.RUBRIC`, or the owner's own number); drafts list best first |
 | `app/carousel.py`, `app/bold.py`, `app/static/js/bold.js` | Carousels and cards: the spec checked (`LOOKS` × `TINTS`, `FORMATS`, `KINDS`, at most `MAX_ART` art), its slides drawn as HTML (each look a CSS block; `FIT` shrinks what outgrows a slide, grows a card), then a PDF and a PNG a slide with Playwright (a card: its one PNG, kept as a picture, source `card`); ChatGPT art drawn once (`draw_art`, `art_prompt`) and kept as `art-<hash>.png` beside the pictures (`images.art_of`, gone when no spec shows it); Try another look is `next_look` through `CYCLE`; LinkedIn's bold, the same mapping on both sides |
-| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, editor, post, assist, schedule, hot, bank, tools, settings, guide, jobs, md, audit, palette, trash, wdiff, precheck, search) |
+| `app/static/` | `index.html`, `app.css`, `app.js` and `js/` (core, sidebar, posts, editor, post, assist, schedule, hot, bank, tools, settings, guide, jobs, md, audit, palette, trash, wdiff, precheck, search) |
 | `dev/demo_server.py` | The page on made-up data with stand-ins for Claude (and its sign-in), Publora, ChatGPT and Hot topics' news (example.com) |
 | `dev/guide_shots.py` | The Guide's pictures, taken on the demo into `app/static/guide/` |
 

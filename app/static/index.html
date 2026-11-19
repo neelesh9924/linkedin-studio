@@ -20,14 +20,19 @@
         <span class="brand-text"><span>LinkedIn Studio</span><small>posts in your own voice</small></span>
       </div>
       <button id="newPost" class="btn soft wide" type="button"><span>New post</span></button>
-      <div class="side-label" id="postsLabel">Posts<span class="side-count" id="postsCount"></span></div>
-      <nav id="list" class="nav" aria-labelledby="postsLabel"></nav>
-      <nav class="side-links" aria-label="The studio">
-        <button id="goSchedule" class="nav-item" type="button" data-page="schedule"><span class="nav-text"><span class="name">Schedule</span></span></button>
-        <button id="goHot" class="nav-item" type="button" data-page="hot"><span class="nav-text"><span class="name">Hot topics</span></span></button>
-        <button id="goBank" class="nav-item" type="button" data-page="bank"><span class="nav-text"><span class="name">Story Bank &amp; Voice</span></span></button>
-        <button id="goTools" class="nav-item" type="button" data-page="tools"><span class="nav-text"><span class="name">Tools</span></span></button>
-        <button id="goGuide" class="nav-item" type="button" data-page="guide"><span class="nav-text"><span class="name">Guide</span></span></button>
+      <nav id="views" class="nav" aria-label="Your posts and the studio">
+        <div class="side-label" id="postsLabel">Posts</div>
+        <div id="postTabs" class="nav-group" role="group" aria-labelledby="postsLabel"></div>
+        <div class="side-label" id="studioLabel">Studio</div>
+        <div class="nav-group" role="group" aria-labelledby="studioLabel">
+          <button id="goSchedule" class="nav-item" type="button" data-page="schedule" title="What goes out when"><span class="nav-text"><span class="name">Schedule</span></span></button>
+          <button id="goHot" class="nav-item" type="button" data-page="hot" title="The news in your niche, ranked for you"><span class="nav-text"><span class="name">Hot topics</span></span></button>
+          <button id="goBank" class="nav-item" type="button" data-page="bank" title="Your stories and your voice, and the interviews that fill them"><span class="nav-text"><span class="name">Story Bank &amp; Voice</span></span></button>
+          <button id="goTools" class="nav-item" type="button" data-page="tools" title="One-off jobs: humanize, audit, hooks, comments, repurpose, your profile"><span class="nav-text"><span class="name">Tools</span></span></button>
+          <button id="goGuide" class="nav-item" type="button" data-page="guide" title="How the studio works"><span class="nav-text"><span class="name">Guide</span></span></button>
+        </div>
+      </nav>
+      <nav class="side-links" aria-label="Settings and the Trash">
         <button id="goSettings" class="nav-item" type="button" data-page="settings"><span class="nav-text"><span class="name">Settings</span></span></button>
         <div class="side-row">
           <button id="goTrash" class="nav-item" type="button" data-page="trash" title="The posts you moved to the Trash"><span class="nav-text"><span class="name">Trash</span></span></button>
@@ -41,6 +46,7 @@
       <div id="banners" class="banners" hidden></div>
       <header id="top" class="topbar">
         <div class="titles">
+          <button id="backTo" class="btn ghost small back-to" type="button" hidden><span>Drafts</span></button>
           <h1 id="title"></h1>
           <span id="status" role="status"></span>
         </div>
@@ -51,7 +57,7 @@
       </header>
 
       <div id="postPage" class="content" hidden></div>
-      <div id="emptyPage" class="page" hidden></div>
+      <div id="postsPage" class="page" hidden></div>
       <div id="schedulePage" class="page" hidden></div>
       <div id="hotPage" class="page" hidden></div>
       <div id="bankPage" class="page" hidden></div>

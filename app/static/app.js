@@ -1,11 +1,13 @@
 // The studio's page, its entry (a module: no build step, nothing from outside this PC). Here: the pages and the address
-// they follow (#post-<id>, #~schedule, #~hot, #~bank, #~voice, #~tools, #~guide, #~settings, #~trash, #~setup), asking the studio
-// what changed and having each area draw it, and the start. Each area is its module in js/.
-import { $, state, h, icon, api, put, setTitle, polled, lost, go, banner, focusFirst, forget } from "./js/core.js";
-import { renderList, takeMade, init as initSidebar } from "./js/sidebar.js";
-import { loadPost, forgetRefusal, init as initPost } from "./js/post.js";
+// they follow (#~posts-<tab>, the start: Drafts; #post-<id>, #~schedule, #~hot, #~bank, #~voice, #~tools, #~guide,
+// #~settings, #~trash, #~setup), asking the studio what changed and having each area draw it, and the start. Each area is
+// its module in js/.
+import { $, state, h, icon, api, setTitle, polled, lost, banner, focusFirst, forget } from "./js/core.js";
+import { renderSide, takeMade, init as initSidebar } from "./js/sidebar.js";
+import { loadPost, shownPost, forgetRefusal, init as initPost } from "./js/post.js";
 import { showFor, refresh as refreshChat, init as initAssist } from "./js/assist.js";
 import { init as initJobs } from "./js/jobs.js";
+import * as posts from "./js/posts.js";
 import * as schedule from "./js/schedule.js";
 import * as hot from "./js/hot.js";
 import * as bank from "./js/bank.js";
@@ -15,10 +17,10 @@ import * as guide from "./js/guide.js";
 import * as trash from "./js/trash.js";
 
 const POLL_MS = 2000;
-const PAGES = { schedule: ["Schedule", schedule], hot: ["Hot topics", hot], bank: ["Story Bank & Voice", bank],
+const PAGES = { posts: ["Posts", posts], schedule: ["Schedule", schedule], hot: ["Hot topics", hot], bank: ["Story Bank & Voice", bank],
   voice: ["Story Bank & Voice", bank], tools: ["Tools", tools], guide: ["Guide", guide], settings: ["Settings", settings],
   trash: ["Trash", trash], setup: ["Set up LinkedIn Studio", settings] };
-const BOXES = ["postPage", "emptyPage", "schedulePage", "hotPage", "bankPage", "toolsPage", "guidePage", "settingsPage", "trashPage",
+const BOXES = ["postPage", "postsPage", "schedulePage", "hotPage", "bankPage", "toolsPage", "guidePage", "settingsPage", "trashPage",
   "setupPage"];
 const SUMMARY = ["id", "title", "first", "status", "label", "kind", "when", "queued", "scheduled_at", "picture", "busy", "trashed"];
 
@@ -56,60 +58,49 @@ async function route() {
     }
     if (state.posts.some((p) => p.id === id)) return void openPost(id);
   }
+  const from = state.postId;   // the post left, whose row in its list takes the focus that went with it
   state.postId = null;
   $("postGear").hidden = true;
+  $("backTo").hidden = true;
   $("topActions").replaceChildren();
   forget($("topActions"));   // so the same post, opened again unchanged, draws its buttons again
   $("status").replaceChildren();
-  const [page, sub] = mark.startsWith("~") ? mark.slice(1).split("-") : ["posts"];
-  if (PAGES[page]) {
-    state.page = page;
-    const [heading, module] = PAGES[page];
-    $("title").textContent = heading;
-    setTitle(`${heading} · LinkedIn Studio`);
-    const box = `${page === "voice" ? "bank" : page === "setup" ? "setup" : page}Page`;
-    show(box);
-    showFor(page === "bank" || page === "voice" ? { kind: page } : null);
-    module.render($(box), { page, sub });
-    renderList();
-    return;
-  }
-  // Posts: the first one (quietly, in place of one that is gone), or the page that says there are none.
-  const first = state.posts[0];
-  if (first) return replace(`#post-${first.id}`);
-  state.page = "empty";
-  $("title").textContent = "LinkedIn Studio";
-  setTitle("LinkedIn Studio");
-  show("emptyPage");
-  showFor(null);
-  renderEmpty();
-  renderList();
+  // A page, or the posts (the start, a post that is gone, an address not known): a tab's list, Drafts unless named; the
+  // address said so, quietly, when it named something else.
+  const [named, sub] = mark.startsWith("~") ? mark.slice(1).split("-") : ["posts"];
+  const page = PAGES[named] ? named : "posts";
+  if (mark && page === "posts" && !mark.startsWith("~posts")) return replace("#~posts-drafts");
+  state.page = page;
+  const [heading, module] = PAGES[page];
+  const title = page === "posts" ? posts.tabNamed(sub).name : heading;
+  $("title").textContent = title;
+  setTitle(`${title} · LinkedIn Studio`);
+  const box = `${page === "voice" ? "bank" : page === "setup" ? "setup" : page}Page`;
+  show(box);
+  showFor(page === "bank" || page === "voice" ? { kind: page } : null);
+  module.render($(box), { page, sub, from });
+  renderSide();
+  posts.warnFailed();
 }
 
 // A post in the middle, its chat beside it. One made just now gets the focus in the Ask box (or on its text when the
-// panel is hidden), so the next thing the owner types is what it should say.
+// panel is hidden), so the next thing the owner types is what it should say. While the page still holds the post opened
+// before (opened from a list, the page between them), it stays out of sight until this one is drawn.
 function openPost(id) {
   state.page = "post";
   state.postId = id;
+  $("postPage").classList.toggle("loading", !!shownPost() && shownPost().id !== id);
   show("postPage");
   $("postGear").hidden = false;
   showFor({ kind: "post", id });
   const fresh = takeMade(id);
   const asked = fresh && !$("app").classList.contains("no-assist") && focusFirst($("askText"));
   loadPost(id).then(() => {
+    if (state.postId === id) $("postPage").classList.remove("loading");
     if (fresh && !asked && state.postId === id) focusFirst($("postPage").querySelector(".li-read, .li-edit"));
   });
-  renderList();
-}
-
-function renderEmpty() {
-  const start = h("button", { class: "btn primary", type: "button", onclick: () => $("newPost").click() }, icon("plus", 15), h("span", null, "New post"));
-  const news = h("button", { class: "btn", type: "button", onclick: () => go("#~hot") }, icon("flame", 15), h("span", null, "Hot topics"));
-  put($("emptyPage"), h("div", { class: "empty" },
-    h("div", { class: "empty-mark" }, icon("file", 26)),
-    h("h2", null, "No posts yet"),
-    h("p", null, "Start a post and tell Claude what it is about, or draft one from the news in Hot topics. Each post shows here as LinkedIn will show it."),
-    h("div", { class: "form-foot" }, start, news)));
+  renderSide();
+  posts.warnFailed();
 }
 
 // ---------- asking the studio what changed ----------
@@ -145,12 +136,12 @@ async function poll() {
       if (state.page === "post" && !state.posts.some((p) => p.id === state.postId)) route();   // moved to the Trash or deleted elsewhere
       else if (state.page === "post") loadPost(state.postId, { quiet: true });
       else if (PAGES[state.page]) PAGES[state.page][1].refresh();
-      else if (state.page === "empty" && state.posts.length) route();
       refreshChat();
     } else if (PAGES[state.page] && PAGES[state.page][1].tick) {
       PAGES[state.page][1].tick();
     }
-    renderList();
+    renderSide();
+    posts.warnFailed();
     polled(data);
   } finally {
     polling = false;

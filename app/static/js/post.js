@@ -8,7 +8,8 @@
 import { $, state, h, icon, api, post, put, number, plural, announce, whileBusy, focusFirst, drawIfChanged, showDialog,
   closeDialog, closeButton, setTitle, go, toast, onPoll, currentPost } from "./core.js";
 import { renderPost, saveNow, noticeBox, nextBlank, editorState } from "./editor.js";
-import { statusOf, renderList, openNew } from "./sidebar.js";
+import { openNew } from "./sidebar.js";
+import { statusOf, tabOf, takeFocus } from "./posts.js";
 import { wordDiff } from "./wdiff.js";
 import { beforeYouConfirm } from "./precheck.js";
 
@@ -57,12 +58,12 @@ async function fetchPost(id, quiet) {
 }
 
 // The post went (to the Trash, or for good) while it was open: it leaves the list, and the page goes, once and quietly,
-// to the Trash or to the first post.
+// to the Trash or to its tab's list.
 function lost(id, trashed) {
   shown = null;
+  const tab = tabOf(state.posts.find((p) => p.id === id));
   state.posts = state.posts.filter((p) => p.id !== id);
-  renderList();
-  history.replaceState(null, "", trashed ? "#~trash" : "#~posts");
+  history.replaceState(null, "", trashed ? "#~trash" : `#~posts-${tab}`);
   window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
@@ -85,8 +86,8 @@ function renderTop(p) {
   });
 }
 
-// Where the post stands, in the sidebar's words (statusOf): from the full post when it is drawn, and from the list after
-// each poll, so the chip moves with the sidebar's line (Claude's working minutes among it). The chip sits in a live
+// Where the post stands, in its row's words (statusOf): from the full post when it is drawn, and from the list after
+// each poll, so the chip moves with the row's line (Claude's working minutes among it). The chip sits in a live
 // region: the minutes are shown but not said, so a screen reader hears the post move on, not each minute.
 function drawChip(p) {
   const status = statusOf(p);
@@ -258,7 +259,7 @@ async function approve() {
     announce(reply.error, { urgent: true });
   } else {
     announce("Approved. Add it to the queue, or pick a time with Schedule….");
-    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
+    window.dispatchEvent(new Event("studio:poll"));   // its row and the sidebar follow at once
   }
   await refresh();
   if (!reply.error) focusFirst($("topActions").querySelector('[data-act="queue"]'));
@@ -296,7 +297,7 @@ async function sendToQueue(p) {
     announce(`It did not go through: ${reply.error} Try again resends the very same request.`, { urgent: true });
   } else {
     announce(reply.said);
-    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
+    window.dispatchEvent(new Event("studio:poll"));   // its row and the sidebar follow at once
   }
   await refresh();
   focusFirst($("topActions").querySelector("button"), $("postGear"));
@@ -313,7 +314,7 @@ async function change(what, said) {
     announce(reply.error || "It did not go through.", { urgent: true });
   } else {
     announce(said);
-    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
+    window.dispatchEvent(new Event("studio:poll"));   // its row and the sidebar follow at once
   }
   await refresh();
 }
@@ -443,7 +444,7 @@ export function confirmNow(p, after) {
     closeDialog();
     if (reply.ok === false) announce(`It did not go through: ${reply.error} Try again resends the very same request.`, { urgent: true });
     else announce(reply.said);
-    window.dispatchEvent(new Event("studio:poll"));   // the sidebar's line follows at once
+    window.dispatchEvent(new Event("studio:poll"));   // its row and the sidebar follow at once
     await after();
   }));
   showDialog(h("h2", null, "Post this now?"),
@@ -575,7 +576,7 @@ function confirmCancel(p) {
 }
 
 // Move to Trash…: the dialog names the post (its title and first line). Afterwards the post is out of the list at once,
-// the next one opens with the focus on its button in the list, and a note links to the Trash.
+// its tab's list shows with the focus on the post after it, and a note links to the Trash.
 function confirmTrash(p) {
   const yes = h("button", { class: "btn danger", type: "button" }, icon("trash", 15), h("span", null, "Move to Trash"));
   const out = h("div", { class: "results" });
@@ -599,16 +600,17 @@ function confirmTrash(p) {
     h("div", { class: "dialog-foot" }, closeButton("Keep it"), yes));
 }
 
-// The list without that post, at once (the next poll agrees), and the post after it opened in its place.
+// The list without that post, at once (the next poll agrees): its tab's, the post after it taking the focus (or the one
+// before it, when it was the last).
 function moveOn(id) {
-  const at = state.posts.findIndex((x) => x.id === id);
+  const tab = tabOf(state.posts.find((x) => x.id === id));
+  const mine = state.posts.filter((x) => tabOf(x) === tab);
+  const at = mine.findIndex((x) => x.id === id);
+  const next = mine[at + 1] || mine[at - 1] || null;
   state.posts = state.posts.filter((x) => x.id !== id);
-  const next = state.posts[Math.max(at, 0)] || state.posts[at - 1] || null;
   shown = null;
-  state.postId = next ? next.id : null;
-  renderList();
-  go(next ? `#post-${next.id}` : "#~posts");
-  focusFirst(next ? $("list").querySelector(`[data-post="${next.id}"]`) : null, $("newPost"));
+  takeFocus(next ? next.id : 0);
+  go(`#~posts-${tab}`);
 }
 
 export function forgetRefusal() {

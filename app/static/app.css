@@ -94,27 +94,29 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .logo { flex: none; border-radius: 8px; }
 .side-label { padding: 20px 10px 6px; font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
-.side-count { font-weight: 500; letter-spacing: 0; text-transform: none; }
 .nav { flex: 1; min-height: 0; display: grid; gap: 2px; align-content: start; overflow: hidden auto; }
 .nav-item { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px;
   border-radius: 8px; color: var(--text-2); cursor: pointer; transition: background .12s, color .12s; }
 .nav-item:hover { background: var(--surface-2); color: var(--text); }
 .nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* where the owner is: in colour, and with a bar at its edge (a colour alone does not tell it) */
-.nav-item[aria-current="page"] { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 3px 0 0 var(--accent); }
+/* where the owner is: in colour, and with a bar at its edge (a colour alone does not tell it); "true": the tab of the
+   open post */
+.nav-item:is([aria-current="page"], [aria-current="true"]) { background: var(--accent-soft); color: var(--accent-ink);
+  box-shadow: inset 3px 0 0 var(--accent); }
 .nav-text { flex: 1; min-width: 0; display: grid; }
 .nav-text .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nav-text .sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nav-item[aria-current="page"] .sub { color: var(--accent-ink); }
-/* Earlier: the published and cancelled posts, folded away under a label like Posts, with no count */
-.side-fold { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px;
-  border-radius: 8px; color: var(--text-3); font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
-  cursor: pointer; }
-.side-fold:hover { background: var(--surface-2); color: var(--text); }
-.side-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.side-fold .icon { transform: rotate(-90deg); transition: transform .15s; }
-.side-fold[aria-expanded="true"] .icon { transform: none; }
+/* the tabs, in groups (Posts, Studio), each with a tinted mark of its own, as in Job Studio (the owner's word, 19 Nov
+   2026: tabs that "all just blend in"); red stays for a post that did not go out */
 .nav-group { display: grid; gap: 2px; }
+.nav-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; border-radius: 8px; }
+:is(.nav-mark, .panel-mark).plain { background: var(--surface-3); color: var(--text-2); }
+:is(.nav-mark, .panel-mark).quiet { background: var(--surface-2); color: var(--text-3); }
+:is(.nav-mark, .panel-mark).accent { background: var(--accent-soft); color: var(--accent); }
+:is(.nav-mark, .panel-mark).ready { background: var(--ready-soft); color: var(--ready); }
+:is(.nav-mark, .panel-mark).ok { background: var(--ok-soft); color: var(--ok); }
+:is(.nav-mark, .panel-mark).warn { background: var(--warn-soft); color: var(--warn); }
+/* on the current tab's tint, its mark keeps an edge */
+.nav-item:is([aria-current="page"], [aria-current="true"]) .nav-mark { box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 28%, transparent); }
 .side-links { display: grid; gap: 1px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .side-links .nav-item { gap: 9px; padding: 6px 10px; }
 .side-links .nav-text .name { font-weight: 500; }
@@ -122,14 +124,6 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-2); 
 .side-row .nav-item { flex: 1; }
 .side-foot { display: flex; gap: 8px; margin: 10px 8px 2px; font-size: 12px; line-height: 1.45; color: var(--text-3); }
 .side-foot .icon { margin-top: 2px; }
-/* the search, under New post: the list below it is the posts found while it has words */
-.side-search { position: relative; display: flex; align-items: center; margin-top: 10px; color: var(--text-3); }
-.side-search > .icon { position: absolute; left: 10px; pointer-events: none; }
-.side-search .side-search-input { height: 32px; padding: 0 28px 0 32px; font-size: 13px; }   /* over .input's */
-.side-search-key { position: absolute; right: 8px; padding: 0 6px; font-size: 11px; pointer-events: none; }
-.side-search-input:focus ~ .side-search-key, .side-search-input:not(:placeholder-shown) ~ .side-search-key { display: none; }
-.side-search-input::-webkit-search-cancel-button { cursor: pointer; }
-.side-none { padding: 6px 10px; font-size: 13px; }
 mark.hit { background: var(--hit); color: var(--hit-ink); border-radius: 3px; padding: 0 1px; }
 
 .dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
@@ -153,11 +147,14 @@ mark.hit { background: var(--hit); color: var(--hit-ink); border-radius: 3px; pa
 .chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .titles h1 { flex: 0 1 auto; min-width: 0; font-size: 20px; font-weight: 600; letter-spacing: -.018em; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; }
+/* an open post's way back to its tab's list, before its title */
+.back-to { flex: none; margin-left: -10px; }
 .top-actions { flex: 0 1 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .top-when { display: inline-flex; align-items: center; gap: 7px; padding: 0 4px; font-size: 13.5px; font-weight: 600; color: var(--text-2); }
 .banners { flex: none; display: grid; gap: 8px; padding: 12px 28px 0; }
 .banners .notice { margin-bottom: 0; align-items: center; }
 .content { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding: 14px 28px 20px; }
+.content.loading > * { visibility: hidden; }   /* the post opened before, until the one opened now is drawn (app.js) */
 .page { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 28px 64px; }
 .lede { max-width: 96ch; margin-bottom: 16px; color: var(--text-2); }
 
@@ -671,6 +668,38 @@ button.coming-what:focus-visible { outline: 2px solid var(--accent); outline-off
 .hot-search .search-input::-webkit-search-cancel-button { cursor: pointer; }
 #hotFound { flex: none; font-size: 13px; }
 #hotFound:empty { display: none; }
+/* Your posts (posts.js): a tab's posts, a row each: its rank (a tile in its band's colour, and its number: the colour
+   alone tells nothing, as in Job Studio), its first line, where it stands and, while searching, the line found */
+.post-search .search-input { padding-right: 34px; }
+.search-key { position: absolute; right: 10px; padding: 0 6px; font-size: 11px; pointer-events: none; }
+.search-input:focus ~ .search-key, .search-input:not(:placeholder-shown) ~ .search-key { display: none; }
+#postFound { flex: none; font-size: 13px; }
+#postFound:empty { display: none; }
+.post-list { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow-1); }
+/* position: relative keeps a row's screen-reader words (.sr-only, absolute) inside it */
+.post-row { all: unset; box-sizing: border-box; position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 14px; align-items: center; width: 100%; padding: 10px 12px; border-radius: 10px; cursor: pointer; transition: background .12s; }
+.post-row:hover { background: var(--surface-2); }
+.post-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.post-row > .rank { grid-row: 1 / span 3; align-self: start; }
+.post-first { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.post-where { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; color: var(--text-3); }
+.post-where > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.post-found { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+/* a post that did not go out: red at its edge and in its words, first in Scheduled */
+.post-row.failed { box-shadow: inset 3px 0 0 var(--bad); background: color-mix(in srgb, var(--bad-soft) 60%, transparent); }
+.post-row.failed .post-where { color: var(--bad); font-weight: 600; }
+.rank { flex: none; display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 12px;
+  font: 700 14px var(--display); font-variant-numeric: tabular-nums; background: var(--surface-3); color: var(--text-2); }
+.rank.post { background: var(--ok-soft); color: var(--ok); }
+.rank.strengthen { background: var(--warn-soft); color: var(--warn); }
+.rank.none { background: var(--surface-2); color: var(--text-3); font-weight: 500; }
+.posts-none { padding: 4px 2px; font-size: 13px; }
+.posts-empty { display: grid; gap: 12px; justify-items: center; padding: 36px 20px; text-align: center; color: var(--text-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+.posts-empty .panel-mark { width: 40px; height: 40px; border-radius: 12px; }
+.posts-empty p { max-width: 42ch; font-size: 13.5px; }
 /* Settings › Claude's Model, and Posting times: a row a day, the day ticked on or off and its time */
 .model-form { display: grid; gap: 8px; max-width: 520px; }
 .posting-form { display: grid; gap: 14px; max-width: 520px; }
@@ -876,7 +905,8 @@ body:has(> .app.bare) .toasts { left: 18px; max-width: calc(100vw - 36px); }
 @media (max-width: 940px) {
   .app, .app.no-assist { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .nav { max-height: 30vh; }
+  .nav-group, .side-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }   /* two by two, so the page starts sooner */
+  .side-label { padding-top: 14px; }
   .main { height: auto; }
   .stage { flex: none; min-height: 72vh; }
   .page { overflow: visible; }
@@ -899,6 +929,7 @@ body:has(> .app.bare) .toasts { left: 18px; max-width: calc(100vw - 36px); }
   .panel-head:has(.panel-tools) { flex-wrap: wrap; }
   .panel-tools { flex-basis: 100%; justify-content: flex-start; }
   .titles h1 { font-size: 18px; }
+  .post-first { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .trash-row { flex-wrap: wrap; }
   .trash-row .version-text { flex: 1 1 calc(100% - 26px); }
   .trash-row .version-text b, .trash-row .version-text small { white-space: normal; }

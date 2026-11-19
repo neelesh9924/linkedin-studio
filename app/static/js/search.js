@@ -1,4 +1,4 @@
-// The search, one for the sidebar's box, Ctrl+K and Hot topics, so the three never differ: every word typed must be
+// The search, one for the posts page's box, Ctrl+K and Hot topics, so the three never differ: every word typed must be
 // somewhere in what is looked in, in any case, LinkedIn's bold letters (𝗯𝗼𝗹𝗱) read as plain ones and curly quotes as
 // straight. A post is looked in from /api/search (its text, its first comment, the words on its carousel or card, the
 // news it came from, its title), asked again only once the studio changed (state.rev), and in what its caller adds
@@ -56,8 +56,8 @@ const WHERE = { comment: "First comment: ", carousel: "Carousel: ", card: "Card:
 const LONE = /[\uD800-\uDBFF]$/;   // the first half of a letter that takes two characters (a bold one)
 
 // The line a match was found on, as a post's line under its name: where it was (not for its text), cut at spaces round
-// the first word found when it is long, `lead` characters of what comes before it kept (the sidebar's line is narrow:
-// a short lead keeps the word in sight).
+// the first word found when it is long, `lead` characters of what comes before it kept (a narrow line wants a short
+// lead, to keep the word in sight).
 export function lineOf(hit, words, size = 90, lead = 24) {
   const line = hit.line;
   const at = (places(line, words)[0] || [0])[0];
