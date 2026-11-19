@@ -98,18 +98,35 @@ def post_chat_context(db: DB, post_id: int, conversation_id: int, request_id: in
               db.all("SELECT spec FROM images WHERE source IN ('carousel','card') AND spec IS NOT NULL ORDER BY id DESC LIMIT 4")]
     if lately:
         picture += f". Looks used lately on carousels and cards: {', '.join(dict.fromkeys(lately))}"
-    audit = loads(post["audit"], None)
-    audit_line = ""
-    if isinstance(audit, dict) and audit.get("verdict"):
-        audit_line = f"{audit.get('verdict')}: {audit.get('summary') or ''}".strip()
-        if audit.get("text") != post["text"]:
-            audit_line += " (the text has changed since)"
     news = loads(post["news"], None)
     news_line = f"{news.get('title')} ({news.get('source')}, {news.get('url')})" if isinstance(news, dict) else ""
     history = chat_history(db, conversation_id, request_id)
     return {"status": post["status"], "text": post["text"], "first_comment": post["first_comment"],
             "chars": len(post["text"]), "blanks": len(placeholder_slots(post["text"])), "picture": picture,
-            "audit": audit_line, "news": news_line, "style": style.of_post(db, post)}, history
+            "audit": audit_for_chat(loads(post["audit"], None), post["text"]), "news": news_line,
+            "style": style.of_post(db, post)}, history
+
+
+def audit_for_chat(audit, text: str) -> str:
+    """The post's last audit as the editor shows it beside the post (audit.js auditView): the verdict and its line, then
+    Fix before posting and Worth a look, each finding with its fix, numbered down the page as they show, so "point 3"
+    means the same to the owner and the chat (the owner's word, 20 Nov 2026: the chat had the line, not the findings).
+    "" when the post has none."""
+    if not isinstance(audit, dict) or not audit.get("verdict"):
+        return ""
+    lines = [f"{str(audit['verdict']).upper()}: {audit.get('summary') or ''}".strip()
+             + (" (the text has changed since)" if audit.get("text") != text else "")]
+    n = 0
+    for head, found in (("Fix before posting", audit.get("blockers")), ("Worth a look", audit.get("warnings"))):
+        found = found if isinstance(found, list) else []
+        if found:
+            lines.append(f"{head} ({len(found)}):")
+        for item in found:
+            n += 1
+            issue, fix = (item.get("issue"), item.get("fix")) if isinstance(item, dict) else (item, "")
+            issue, fix = str(issue or "").strip(), str(fix or "").strip()
+            lines.append(f"{n}. {issue}" + (f" Fix: {fix}" if fix else ""))
+    return "\n".join(lines)
 
 
 MODE_OF = {"interview": "bank", "voice": "voice"}

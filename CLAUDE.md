@@ -89,9 +89,14 @@ username in them).
   puts the first place found back (`settings.js` `drawSetup`).
 - **The sidebar is navigation only** (the owner's word, 19 Nov 2026): no post, count or badge in it; the figures are on
   the pages. A post is in one tab by its status (`posts.js` `TABS`/`tabOf`, one definition for the sidebar, the tab's
-  page, Back, Alt+↑/↓ and Ctrl+K): Drafts; Approved (queued or not); Scheduled (sending, scheduled, failed); Published
-  (published, cancelled). A tab's page lists its posts in `/api/state`'s order; a failed post comes first under
-  Scheduled and is named across the top of every page (`warnFailed`) until it is dealt with.
+  page, Back, Alt+↑/↓ and Ctrl+K): Drafts; Approved (waiting for the owner to queue or schedule it); Scheduled (sending,
+  scheduled, failed, and the queued posts: the owner's word, 20 Nov 2026, queued in blue beside scheduled in green);
+  Published (published, cancelled). A tab's page lists its posts in `/api/state`'s order: what goes out soonest first
+  (compared as times), what went out the most recent first, each row with its date (`statusOf`); a failed post comes
+  first under Scheduled and is named across the top of every page (`warnFailed`) until it is dealt with.
+- **A post's chat sees its last audit whole** (the owner's word, 20 Nov 2026: asked to work on the audit's five points,
+  it had only its one line): the verdict and line, then each finding with its fix, numbered as the editor lists them
+  (`flows.audit_for_chat`, as data in the prompt).
 - **The Trash keeps posts, never sends them.** A post in it is `posts.trashed_at`, refused by every post endpoint
   (`api_posts.find`), by the studio's tools (`mcp.py`) and by `Publisher.schedule`/`retry`. Scheduled and sending
   posts, a post Publora holds a draft of, and a post Claude is working on are never moved there. A published post

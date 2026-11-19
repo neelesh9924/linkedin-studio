@@ -11,6 +11,7 @@ the post with its news beside it and the link in its first comment; the search, 
 from / and gone with Esc; Back up's file, chosen again under Restore from a backup…, with only the parts ticked put
 back."""
 import json
+import re
 import socket
 import subprocess
 import sys
@@ -58,7 +59,8 @@ def idle(page):
 def listed(page, has_text, tab="drafts"):
     """A post's row in its tab's list, the tab picked in the sidebar as a person would."""
     page.click(f"#tab-{tab}")
-    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden"
+                           " && (document.getElementById('posts-title') || {}).textContent === t[0].toUpperCase() + t.slice(1)", arg=tab)   # drawn on the hashchange, after the address changes
     return page.locator("#postList .post-row", has_text=has_text).first
 
 
@@ -330,7 +332,8 @@ def test_the_search_finds_a_post_by_any_word_in_it_and_hot_topics_by_the_news(st
     box.fill("BILLING 40,000")                                         # any case, every word: a published post too, from Drafts
     page.wait_for_function("() => document.querySelector('#postList .post-first')?.textContent.startsWith('Three years ago')")
     assert rows.count() == 1 and page.locator("#postFound").inner_text().startswith("1 of ")
-    assert rows.first.locator(".post-where").inner_text() == "Published"
+    assert re.fullmatch(r"Published · [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}, \d{1,2}:\d{2} [ap]m",       # with the day it went out
+                        rows.first.locator(".post-where").inner_text().strip())
     box.fill("scheduled")                                              # where a post stands, as the list says it
     page.locator("#postList .post-row", has_text="Our deploys").wait_for()
     box.fill("zebra")

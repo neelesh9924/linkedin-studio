@@ -46,7 +46,8 @@ def studio(tmp_path_factory):
 
 def open_post(page, has_text, status, tab):
     page.click(f"#tab-{tab}")               # its tab in the sidebar, then its row in the list
-    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden"
+                           " && (document.getElementById('posts-title') || {}).textContent === t[0].toUpperCase() + t.slice(1)", arg=tab)   # drawn on the hashchange, after the address changes
     page.locator("#postList .post-row", has_text=has_text).first.click()
     page.wait_for_function("(s) => document.querySelector('#status').innerText.includes(s)", arg=status)
 

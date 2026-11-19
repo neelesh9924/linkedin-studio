@@ -123,7 +123,7 @@ function comingRow(c) {
   const open = h("button", { class: "coming-what", type: "button", title: p.first, "data-keep": `open:${p.id}`, onclick: () => go(`#post-${p.id}`) },
     h("b", null, p.first));
   const chip = c.kind === "publora" ? h("span", { class: `chip ${p.kind}` }, p.status === "scheduling" ? "Sending" : "At Publora")
-    : h("span", { class: "chip ok" }, `Queued · ${c.place} of ${c.of}`);
+    : h("span", { class: "chip queued" }, `Queued · ${c.place} of ${c.of}`);   // its own colour, as in Scheduled
   const tools = c.kind === "queued" ? h("span", { class: "coming-tools" },
     moveButton(c, "up", "arrow-up", "Move up", c.place === 1),
     moveButton(c, "down", "arrow-down", "Move down", c.place === c.of),

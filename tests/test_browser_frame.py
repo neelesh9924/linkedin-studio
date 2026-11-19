@@ -59,7 +59,8 @@ def studio(tmp_path_factory):
 
 def show_tab(page, tab):
     page.click(f"#tab-{tab}")
-    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden"
+                           " && (document.getElementById('posts-title') || {}).textContent === t[0].toUpperCase() + t.slice(1)", arg=tab)   # drawn on the hashchange, after the address changes
 
 
 def open_draft(page) -> int:
@@ -91,7 +92,7 @@ TAB_OF = """async () => {
 def test_every_status_is_in_one_tab_and_each_tab_lists_its_posts_in_the_studios_order(studio):
     page, errors = studio
     out = page.evaluate(TAB_OF)
-    assert out["tabs"] == {"draft": "drafts", "approved": "approved", "approved queued": "approved", "scheduling": "scheduled",
+    assert out["tabs"] == {"draft": "drafts", "approved": "approved", "approved queued": "scheduled", "scheduling": "scheduled",
                            "scheduled": "scheduled", "failed": "scheduled", "published": "published", "cancelled": "published"}
     assert sorted(out["statuses"]) == sorted(set(out["statuses"]))               # no status in two tabs
     for title in ("Feature flags are cheap to add and expensive to forget.", "A retry without a limit is an outage waiting for a reason."):
@@ -118,8 +119,8 @@ def test_every_status_is_in_one_tab_and_each_tab_lists_its_posts_in_the_studios_
 
 def test_each_tab_says_how_many_on_its_page_and_the_sidebar_counts_nothing(studio):
     page, errors = studio
-    for tab, said in (("drafts", "3 drafts, best first"), ("approved", "1 approved post: 1 waiting to be queued or scheduled."),
-                      ("scheduled", "1 scheduled at Publora, soonest first"), ("published", "1 published on LinkedIn")):
+    for tab, said in (("drafts", "3 drafts, best first"), ("approved", "1 approved post, waiting for you to queue or schedule it."),
+                      ("scheduled", "1 scheduled at Publora, in green: soonest first."), ("published", "1 published on LinkedIn, the most recent first.")):
         show_tab(page, tab)
         assert page.locator("#posts-said").inner_text().startswith(said), tab
         assert page.locator(f"#tab-{tab}").get_attribute("aria-current") == "page"
@@ -162,15 +163,19 @@ def test_alt_arrows_walk_the_posts_of_the_open_posts_tab(studio):
     open_draft(page)
     drafts = [str(p["id"]) for p in page.evaluate(POSTS) if p["status"] == "draft"]
     assert len(drafts) == 3
+    # The page's own state, read as it polls: the next press waits until the post the address names is open, since the
+    # browser takes a key press ahead of the hashchange that opens it (a press can come before the page has moved on)
+    page.evaluate("async () => { window.coreForTest = await import(document.querySelector('meta[name=studio-static]').content + 'js/core.js'); }")
+    opened = "window.coreForTest.state.postId === Number(location.hash.replace('#post-', ''))"
     seen = []
     for _ in drafts:
         before = page.evaluate("location.hash")
         page.keyboard.press("Alt+ArrowDown")
-        page.wait_for_function(f"() => location.hash !== '{before}' && document.getElementById('tab-drafts').getAttribute('aria-current') === 'true'")
+        page.wait_for_function(f"() => location.hash !== '{before}' && {opened} && document.getElementById('tab-drafts').getAttribute('aria-current') === 'true'")
         seen.append(page.evaluate("location.hash.replace('#post-', '')"))
     assert sorted(seen) == sorted(drafts) and seen[-1] == drafts[0]           # round the tab, back to the first: drafts only
     page.keyboard.press("Alt+ArrowUp")
-    page.wait_for_function(f"() => location.hash === '#post-{drafts[-1]}'")
+    page.wait_for_function(f"() => location.hash === '#post-{drafts[-1]}' && {opened}")
     show_tab(page, "approved")                                                 # alone in its tab: it stays, and says so
     page.locator("#postList .post-row").first.click()
     page.wait_for_function("() => document.querySelector('#status').innerText.includes('Approved')")
@@ -214,6 +219,54 @@ def test_a_post_that_did_not_go_out_comes_first_in_scheduled_and_is_named_across
     assert out["first"] == ["9900", True, "Failed"]                            # first, in red, ahead of the scheduled one
     assert out["said"].startswith("1 did not go out: it comes first, in red.")
     assert out["gone"]                                                         # dealt with: the banner goes
+    assert errors == []
+
+
+# What goes out and what went out, as their tabs show them: made up in the page's own state (in the studio's order, as
+# /api/state sends it), drawn, read and taken back before the next poll. Each row says its date, and a post at Publora
+# and a queued one are told apart by their colour (the owner's word, 20 Nov 2026).
+DATED = """async () => {
+  const at = document.querySelector('meta[name=studio-static]').content;
+  const { state } = await import(at + 'js/core.js');
+  const posts = await import(at + 'js/posts.js');
+  const kept = state.posts;
+  const made = (id, status, label, kind, when, queued) => ({ id, title: 'Made up', first: `A made-up post, number ${id}.`,
+    status, label, kind, when, queued, busy: false, rank: null });
+  state.posts = [made(9911, 'scheduled', 'Scheduled', 'ok', 'Tue 24 Nov, 8:00 am IST', false),
+    made(9912, 'approved', 'Queued', 'queued', 'Thu 26 Nov, 8:00 am IST', true),
+    made(9913, 'published', 'Published', 'ok', 'Wed 18 Nov, 8:00 am IST', false),
+    made(9914, 'cancelled', 'Cancelled', 'warn', 'Thu 12 Nov, 8:00 am IST', false), ...kept];
+  posts.refresh();
+  const rows = [...document.querySelectorAll('#postList .post-row')].filter((r) => Number(r.dataset.post) > 9900).map((r) => {
+    const where = r.querySelector('.post-where');
+    return [Number(r.dataset.post), where.className, where.innerText.trim(), getComputedStyle(where).color];
+  });
+  const said = document.getElementById('posts-said').innerText;
+  state.posts = kept;
+  posts.refresh();
+  const colourOf = (token) => {   // a token's colour as the page computes it
+    const probe = document.body.appendChild(Object.assign(document.createElement('span'), { style: `color: var(${token})` }));
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  };
+  return { rows, said, ok: colourOf('--ok'), queue: colourOf('--queue'), warn: colourOf('--warn') };
+}"""
+
+
+def test_scheduled_and_published_give_each_posts_date_and_tell_a_queued_post_by_its_colour(studio):
+    page, errors = studio
+    show_tab(page, "scheduled")
+    out = page.evaluate(DATED)
+    one, two = out["rows"]
+    assert one == [9911, "post-where ok", "Scheduled · Tue 24 Nov, 8:00 am", out["ok"]]       # green
+    assert two == [9912, "post-where queued", "Queued · Thu 26 Nov, 8:00 am", out["queue"]]   # blue
+    assert out["ok"] != out["queue"]                          # told apart by their colour, not by their words alone
+    assert "scheduled at Publora, in green, and 1 queued, in blue: soonest first." in out["said"]
+    show_tab(page, "published")
+    out = page.evaluate(DATED)
+    assert out["rows"] == [[9913, "post-where ok", "Published · Wed 18 Nov, 8:00 am", out["ok"]],
+                           [9914, "post-where warn", "Cancelled · was due Thu 12 Nov, 8:00 am", out["warn"]]]
     assert errors == []
 
 

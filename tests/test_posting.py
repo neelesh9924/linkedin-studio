@@ -212,7 +212,7 @@ def test_a_post_beyond_the_window_waits_in_line_with_its_time_and_can_be_taken_o
     assert (shown["label"], shown["queued"], shown["when"], shown["can_queue"]) == ("Queued", True, "Thu 22 Oct, 8:00 am IST", False)
     assert shown["posting"] == "Tue 8:00 am, Wed 9:30 am and Thu 8:00 am" and shown["window"] == 14
     listed = {p["id"]: p for p in http.get("/api/state").json()["posts"]}
-    assert (listed[pid]["label"], listed[pid]["when"], listed[pid]["kind"]) == ("Queued", "Thu 22 Oct, 8:00 am IST", "ok")
+    assert (listed[pid]["label"], listed[pid]["when"], listed[pid]["kind"]) == ("Queued", "Thu 22 Oct, 8:00 am IST", "queued")
     order = [p["id"] for p in http.get("/api/state").json()["posts"]]
     assert order[-1] == pid                                  # what goes out, in time order: the queued one last
     coming = http.get("/api/schedule").json()["coming"]
@@ -220,6 +220,28 @@ def test_a_post_beyond_the_window_waits_in_line_with_its_time_and_can_be_taken_o
     assert http.post(f"/api/post/{pid}/unqueue", json={}).json() == {"ok": True}
     assert http.get(f"/api/post/{pid}").json()["label"] == "Approved" and len(client.calls) == 6
     assert http.post(f"/api/post/{pid}/unqueue", json={}).status_code == 409
+
+
+def test_the_list_has_what_goes_out_soonest_first_and_the_published_posts_the_most_recent_first(studio):
+    """The owner's word, 20 Nov 2026: Scheduled soonest first, a queued post among the posts at Publora by its time, in
+    its own colour; Published the most recent first, whatever their ranks, then the cancelled posts likewise."""
+    http, app, _client = studio()
+    db = app.state.db
+    at_publora = []
+    for _ in range(6):                                       # every posting day inside the window has a post
+        at_publora.append(add_post(db, "approved"))
+        http.post(f"/api/post/{at_publora[-1]}/queue", json={})
+    waiting = add_post(db, "approved")
+    http.post(f"/api/post/{waiting}/queue", json={})          # Thu 22 Oct: beyond the window, it waits in line
+    later = add_post(db, "scheduled", scheduled_at=ist("2026-10-27 08:00").isoformat())
+    sep29, oct6, oct1 = (add_post(db, "published", rank=rank, scheduled_at=ist(day).isoformat())
+                         for rank, day in ((9, "2026-09-29 08:00"), (5, "2026-10-06 08:00"), (7, "2026-10-01 08:00")))
+    oct2, oct5 = (add_post(db, "cancelled", scheduled_at=ist(day).isoformat()) for day in ("2026-10-02 08:00", "2026-10-05 08:00"))
+    posts = http.get("/api/state").json()["posts"]
+    assert [p["id"] for p in posts] == [*at_publora, waiting, later, oct6, oct1, sep29, oct5, oct2]
+    shown = {p["id"]: p for p in posts}
+    assert [shown[pid]["kind"] for pid in (at_publora[-1], waiting, later)] == ["ok", "queued", "ok"]
+    assert (shown[oct6]["when"], shown[oct5]["when"]) == ("Tue 6 Oct, 8:00 am IST", "Mon 5 Oct, 8:00 am IST")
 
 
 def test_back_to_draft_and_the_trash_take_a_post_out_of_the_line(studio):

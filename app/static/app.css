@@ -18,6 +18,8 @@
   --bad: #b92c1b; --bad-soft: #fde8e4; --scrim: rgba(16, 24, 40, .42);
   /* Approved, ready to schedule: its own colour, not the green of Scheduled and Published (6.2:1 on its tint) */
   --ready: #7a2db1; --ready-soft: #f3e8fb;
+  /* Queued, going out by itself at its time: blue beside the green of a post at Publora (5.4:1 on its tint) */
+  --queue: #0b62a8; --queue-soft: #e2f0fb;
   --stage: #e9ecf1; --device: #1b1f27;
   --shadow-1: 0 1px 2px rgba(16, 24, 40, .06);
   --shadow-2: 0 6px 22px rgba(16, 24, 40, .09);
@@ -45,6 +47,7 @@
   --ok: #56c690; --ok-soft: #11301f; --warn: #e7b655; --warn-soft: #33280e; --warn-ink: #f0cf8a;
   --bad: #ff8573; --bad-soft: #3a1914; --scrim: rgba(0, 0, 0, .6);
   --ready: #d4a7f7; --ready-soft: #2c1a3f;
+  --queue: #73b8f2; --queue-soft: #11263a;
   --stage: #090b0e; --device: #000000;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
   --shadow-2: 0 8px 26px rgba(0, 0, 0, .45);
@@ -132,6 +135,7 @@ mark.hit { background: var(--hit); color: var(--hit-ink); border-radius: 3px; pa
 .dot.warn { background: #b07a0c; }
 .dot.bad { background: #d6452f; }
 .dot.ready { background: #a05ad6; }
+.dot.queued { background: #2f86d6; }
 .dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 
 .main { min-width: 0; display: flex; flex-direction: column; height: 100vh; }
@@ -201,6 +205,7 @@ select.input { padding-right: 6px; }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
 .chip.busy { background: var(--accent-soft); color: var(--accent-ink); }
 .chip.ready { background: var(--ready-soft); color: var(--ready); }
+.chip.queued { background: var(--queue-soft); color: var(--queue); }
 
 .notice { flex: none; display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding: 11px 14px; border-radius: var(--radius);
   background: var(--warn-soft); color: var(--warn-ink); }
@@ -686,6 +691,12 @@ button.coming-what:focus-visible { outline: 2px solid var(--accent); outline-off
 .post-first { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .post-where { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12.5px; color: var(--text-3); }
 .post-where > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* once a post has a time, its words take its colour too, not its dot alone: Scheduled tells a post at Publora (green)
+   from a queued one (blue) at a glance, and Published a cancelled one (amber) */
+.post-where:is(.ok, .queued, .warn) { font-weight: 600; }
+.post-where.ok { color: var(--ok); }
+.post-where.queued { color: var(--queue); }
+.post-where.warn { color: var(--warn); }
 .post-found { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
 /* a post that did not go out: red at its edge and in its words, first in Scheduled */
 .post-row.failed { box-shadow: inset 3px 0 0 var(--bad); background: color-mix(in srgb, var(--bad-soft) 60%, transparent); }

@@ -63,14 +63,16 @@ blank where it has no fact of yours, instead of inventing one:
 *Made-up demo data: the Guide's own pictures, retaken by `dev\guide_shots.py`.*
 
 - **The sidebar** is for getting around, and counts nothing. **New post** starts one. Under
-  **Posts**, four tabs: **Drafts**; **Approved** (in the queue, or waiting for you to queue or
-  schedule it); **Scheduled** (at Publora, with a post being sent and one that did not go out: that
-  one first, in red); **Published** (with the posts you cancelled on Publora). Under **Studio**:
+  **Posts**, four tabs: **Drafts**; **Approved** (waiting for you to queue or schedule it);
+  **Scheduled** (what goes out: at Publora in green and queued in blue, with a post being sent and
+  one that did not go out: that one first, in red); **Published** (with the posts you cancelled on
+  Publora after them). Under **Studio**:
   Schedule, Hot topics, Story Bank & Voice, Tools and Guide. Then Settings, Trash and the
   light/dark switch. Each tab has a colour of its own, and the one you are in is marked.
-- **A tab's page** lists its posts best first (drafts not ranked yet on top, then the highest rank;
-  what goes out, soonest first), each with its rank, its first line and where it stands (Claude at
-  work on it, too), and says how many there are. Open one to work on it: **Back**, before its title,
+- **A tab's page** lists its posts in order (drafts not ranked yet on top, then the highest rank;
+  what goes out, soonest first; what went out, the most recent first), each with its rank, its first
+  line and where it stands, with its date once it has one (Claude at work on it, too), and says how
+  many there are. Open one to work on it: **Back**, before its title,
   returns to its tab, and **Alt+↑ / Alt+↓** step through the posts of that tab. A post that did not
   go out is named across the top of every page, with **Open it**, until you deal with it.
 - **The centre** is the post you picked, as LinkedIn shows it (Desktop or Phone, with the
@@ -121,7 +123,8 @@ blank where it has no fact of yours, instead of inventing one:
   request in brackets. The editor counts them, **Next blank** jumps to each one, and Approve
   refuses while any remain. Code in a post is not a blank: brackets holding quotes, parentheses
   or operators, a list of numbers, or an index like `items[0]`.
-- **Audit and Revise.** Audit findings appear beside the text. New hook, Shorter or More
+- **Audit and Revise.** Audit findings appear beside the text, and Ask Claude has them too,
+  numbered as you see them, to work on when you ask. New hook, Shorter or More
   technical shows the changes word by word; nothing is replaced until you choose **Use this
   version**.
 - **Post style.** Four sliders: **Hook** (plain to bold: how the first line pulls a reader in),

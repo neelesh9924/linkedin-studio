@@ -65,7 +65,8 @@ def studio(tmp_path_factory):
 def listed(page, has_text, tab="drafts"):
     """A post's row in its tab's list, the tab picked in the sidebar."""
     page.click(f"#tab-{tab}")
-    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden"
+                           " && (document.getElementById('posts-title') || {}).textContent === t[0].toUpperCase() + t.slice(1)", arg=tab)   # drawn on the hashchange, after the address changes
     return page.locator("#postList .post-row", has_text=has_text).first
 
 

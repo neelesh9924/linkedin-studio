@@ -53,7 +53,8 @@ def studio(tmp_path_factory):
 def listed(page, has_text, tab="drafts"):
     """A post's row in its tab's list, the tab picked in the sidebar."""
     page.click(f"#tab-{tab}")
-    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden", arg=tab)
+    page.wait_for_function("(t) => location.hash === `#~posts-${t}` && !document.getElementById('postsPage').hidden"
+                           " && (document.getElementById('posts-title') || {}).textContent === t[0].toUpperCase() + t.slice(1)", arg=tab)   # drawn on the hashchange, after the address changes
     return page.locator("#postList .post-row", has_text=has_text).first
 
 
@@ -228,7 +229,7 @@ def test_each_tabs_page_says_how_many_and_posts_in_the_sidebar_says_none(studio)
     listed(page, "", "drafts")
     assert page.locator("#posts-said").inner_text().startswith(f"{drafts} draft{'' if drafts == 1 else 's'}, best first")
     listed(page, "", "approved")                 # the demo queues nothing before this test: approved is not queued
-    assert page.locator("#posts-said").inner_text() == "1 approved post: 1 waiting to be queued or scheduled."
+    assert page.locator("#posts-said").inner_text() == "1 approved post, waiting for you to queue or schedule it."
     assert page.locator("#postsLabel").text_content() == "Posts"           # the heading counts nothing
     assert page.locator("#postList ol").get_attribute("aria-label") == "Approved"
     assert errors == []

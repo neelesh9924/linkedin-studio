@@ -33,7 +33,9 @@ CHAT_RULES = BASE_RULES + (
 )
 POST_CHAT_RULES = BASE_RULES + (
     "4. This is Ask Claude, the chat beside one LinkedIn post in the studio. The request holds the post as it "
-    "stands now and the conversation so far. Answer the owner's newest message.\n"
+    "stands now and the conversation so far. Answer the owner's newest message. When the post has been audited, the "
+    "request holds that audit's findings too, numbered as the owner sees them beside the post: when the owner speaks "
+    "of the audit or its points, work from those, and audit again only when asked to.\n"
     "5. The post changes only through the studio's set_post_text tool: call it with the whole new text (and the "
     "first comment when that changes) and a short note of what changed. Each call keeps a version the owner can go "
     "back to. Never put a rewritten post only in your reply. A post that is not a draft is locked: set_post_text, "
@@ -282,8 +284,8 @@ def _post_chat(p: dict) -> str:
     if post.get("first_comment"):
         lines += ["Its first comment:", untrusted("FIRST COMMENT", post["first_comment"])]
     lines.append(f"Its picture: {post['picture']}")
-    if post.get("audit"):
-        lines.append(f"Its last audit: {post['audit']}")
+    if post.get("audit"):   # its findings numbered as the owner sees them beside the post (flows.audit_for_chat)
+        lines += ["Its last audit, as the owner sees it beside the post:", untrusted("AUDIT", post["audit"])]
     if post.get("news"):
         lines.append(f"It was drafted from a Hot topics news item: {post['news']}")
     return "\n".join(lines) + _style(post.get("style")) + "\n".join(["", *_conversation(p)]) + _attached(p)

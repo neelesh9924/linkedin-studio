@@ -66,7 +66,8 @@ LANES = [
          "gives": "Changes in your voice, and pictures from ChatGPT ({per_request} at most a request)."},
         {"id": "audit", "shot": "post", "title": "Audit and revise", "icon": "check-circle", "where": "The post", "href": "#~posts",
          "claude": "Runs Claude, about 40 seconds", "demo": "audit",
-         "do": ["Press Audit. The findings appear beside the post: red must be fixed, amber is worth a look.",
+         "do": ["Press Audit. The findings appear beside the post: red must be fixed, amber is worth a look. Ask "
+                "Claude, beside the post, has them too, numbered as you see them: ask it to work on them, or on one.",
                 "Want a different take? Revise: New hook, Shorter or More technical.",
                 "Style: four sliders (Hook plain to bold, Tone formal to warm, Emojis none to markers, Layout plain or "
                 "sections with bold heads). Restyle writes the same post in them, and they become that post's own style.",
@@ -133,7 +134,7 @@ STATES = [
                                                                 "Schedule… and pick a time", "Back to draft to edit again",
                                                                 "Ask Claude to audit it; the text stays as it is",
                                                                 "Move to Trash…"]),
-    ("Queued", "Approved, and waiting in the queue for its posting time.",
+    ("Queued", "Approved, and waiting in the queue for its posting time. It is under Scheduled, in blue.",
      ["Move it up or down in Schedule's Coming up", "Take out of the queue: it stays approved",
       "Back to draft, which takes it out of the queue",
       "It goes to Publora by itself once its time is {max_days} days away"]),
@@ -150,12 +151,12 @@ STATES = [
 SCREENS = [
     {"key": "posts", "title": "Your posts", "href": "#~posts", "icon": "list", "shot": "posts",
      "purpose": "Every post in one of four tabs, each tab a page of its own.",
-     "points": ["The sidebar's Posts tabs: Drafts; Approved, in the queue or waiting to be queued; Scheduled, at Publora, "
-                "with a post being sent and one that did not go out (first, in red); Published, with the posts cancelled "
-                "on Publora.",
-                "A tab's page lists its posts best first: drafts not ranked yet on top, then the highest rank; what goes "
-                "out, soonest first. Each row shows the post's rank, its first line and where it stands, and says when "
-                "Claude is at work on it.",
+     "points": ["The sidebar's Posts tabs: Drafts; Approved, waiting for you to queue or schedule it; Scheduled, what "
+                "goes out: at Publora in green and queued in blue, with a post being sent and one that did not go out "
+                "(first, in red); Published, with the posts cancelled on Publora after them.",
+                "A tab's page lists its posts in order: drafts not ranked yet on top, then the highest rank; what goes "
+                "out, soonest first; what went out, the most recent first. Each row shows the post's rank, its first "
+                "line and where it stands, with its date once it has one, and says when Claude is at work on it.",
                 "The page says how many there are. The sidebar never counts anything.",
                 "Search all your posts, at the top of the page (/ from anywhere): every word somewhere in a post of any "
                 "tab, each post found with the line its words are on, marked. ↓ goes to the first post found, Enter "

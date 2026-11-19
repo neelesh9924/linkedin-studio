@@ -12,7 +12,7 @@ from support import PNG
 
 from app import carousel, codex, mcp, render, versions
 from app.claude_runner import RunResult, build_command
-from app.db import loads
+from app.db import dumps, loads
 from app.jobs import wait_for
 from app.main import create_app
 from app.skills import ACTIONS
@@ -197,6 +197,32 @@ def test_record_audit_shows_its_findings_beside_the_post(studio):
                      "warnings": [], "stale": False}
     client.post(f"/api/post/{post}/save", json={"text": "It has a 4 blank."})
     assert client.get(f"/api/post/{post}").json()["audit"]["stale"] is True
+
+
+def test_the_chat_is_given_the_audits_findings_numbered_as_the_page_shows_them(studio):
+    """The owner's word, 20 Nov 2026: asked to work on the five points of the audit they ran, the chat saw only its line.
+    Every finding goes with its fix, blockers then warnings as the editor lists them, as data."""
+    client, app, runner = studio
+    db = app.state.db
+    post = add_post(db, text="It has a [N] blank.")
+    audit = {"verdict": "fail", "summary": "Four to look at.", "text": "It has a [N] blank.",
+             "blockers": [{"issue": "Blank [N]", "fix": "Fill it"}, {"issue": "Two points say the same thing", "fix": "Keep one"}],
+             "warnings": [{"issue": "The middle has no example", "fix": ""}, "The last line repeats the hook"]}
+    db.run("UPDATE posts SET audit=? WHERE id=?", (dumps(audit), post))
+    shown = client.get(f"/api/post/{post}").json()["audit"]
+    assert [*shown["blockers"], *shown["warnings"]] == [*audit["blockers"], *audit["warnings"]]   # the page's order
+    wait_for(db, ask(client, post, "Work on the audit's points"), 10)
+    said = ("FAIL: Four to look at.\nFix before posting (2):\n1. Blank [N] Fix: Fill it\n"
+            "2. Two points say the same thing Fix: Keep one\nWorth a look (2):\n3. The middle has no example\n"
+            "4. The last line repeats the hook\n")
+    assert "Its last audit, as the owner sees it beside the post:\n<<<UNTRUSTED AUDIT" in runner.requests[-1].prompt
+    assert said in runner.requests[-1].prompt
+    client.post(f"/api/post/{post}/save", json={"text": "It has a 4 blank."})
+    wait_for(db, ask(client, post, "And now?"), 10)
+    assert said.replace("look at.", "look at. (the text has changed since)") in runner.requests[-1].prompt
+    db.run("UPDATE posts SET audit=NULL WHERE id=?", (post,))
+    wait_for(db, ask(client, post, "Any audit?"), 10)
+    assert "Its last audit" not in runner.requests[-1].prompt
 
 
 def test_make_image_keeps_the_picture_for_the_post_at_most_a_few_a_request(studio, monkeypatch):

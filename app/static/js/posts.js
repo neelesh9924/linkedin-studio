@@ -1,8 +1,10 @@
 // Your posts, a page of their own (the owner's word, 19 Nov 2026: the sidebar showed everything in one list). Each post is
-// in one tab by where it stands (TABS, tabOf): Drafts; Approved, queued or not; Scheduled, with a post being sent and one
-// that did not go out (first, in red: it waits on you); Published, with the ones cancelled on Publora. A tab's page lists
-// its posts in the studio's order (best first, as /api/state sends them), a row each: its rank, its first line and where
-// it stands (statusOf, Claude at work on it first). The page says how many; the sidebar counts nothing. The search at the
+// in one tab by where it stands (TABS, tabOf): Drafts; Approved, waiting for you to queue or schedule it; Scheduled, what
+// goes out, soonest first: at Publora in green and queued in blue (the owner's word, 20 Nov 2026), with a post being sent
+// and one that did not go out (first, in red: it waits on you); Published, the most recent first, with the ones cancelled
+// on Publora after them. A tab's page lists its posts in the studio's order (as /api/state sends them), a row each: its
+// rank, its first line and where it stands, with its date once it has one (statusOf, Claude at work on it first). The
+// page says how many; the sidebar counts nothing. The search at the
 // top looks in every post, whatever the tab (search.js); / comes to it from anywhere (palette.js), Esc empties it, ↓ goes
 // to the first post and Enter opens it. A post opened from here has Back to its tab above it, and Alt+↑/↓ step through
 // that tab (stepPost). A post that did not go out is named across the top of every page until it is dealt with.
@@ -14,21 +16,23 @@ export const TABS = [
   { id: "drafts", name: "Drafts", icon: "pen", tone: "accent", statuses: ["draft"], hint: "Your drafts, best first",
     empty: "No drafts. Press New post, or Draft beside a news item in Hot topics." },
   { id: "approved", name: "Approved", icon: "check", tone: "ready", statuses: ["approved"],
-    hint: "Approved posts: in the queue, or waiting for you to queue or schedule them",
-    empty: "Nothing approved. Approve and queue a finished draft: it takes your next free posting time." },
-  { id: "scheduled", name: "Scheduled", icon: "clock", tone: "ok", statuses: ["scheduling", "scheduled", "failed"],
-    hint: "At Publora, soonest first; a post that did not go out comes first",
-    empty: "Nothing at Publora. A queued post goes there by itself once its time is near." },
+    hint: "Approved posts waiting for you to queue or schedule them",
+    empty: "Nothing waiting for you. Approve and queue a finished draft: it takes your next free posting time, under Scheduled." },
+  { id: "scheduled", name: "Scheduled", icon: "clock", tone: "ok", statuses: ["scheduling", "scheduled", "failed"], also: ["queued"],
+    hint: "What goes out, soonest first: at Publora in green, queued in blue; a post that did not go out comes first",
+    empty: "Nothing scheduled or queued. Approve and queue a finished draft: it takes your next free posting time." },
   { id: "published", name: "Published", icon: "plane", tone: "plain", statuses: ["published", "cancelled"],
-    hint: "On LinkedIn, and the posts cancelled on Publora",
+    hint: "On LinkedIn, the most recent first, then the posts cancelled on Publora",
     empty: "Nothing published yet. A post shows here once Publora says it went out." },
 ];
 const TAB_OF = Object.fromEntries(TABS.flatMap((t) => t.statuses.map((s) => [s, t.id])));
-export const tabOf = (p) => (p && TAB_OF[p.status]) || "drafts";
+// A queued post is approved, but it goes out by itself at its time: it is under Scheduled, with the posts at Publora.
+export const tabOf = (p) => (p && p.status === "approved" && p.queued ? "scheduled" : p && TAB_OF[p.status]) || "drafts";
 export const tabNamed = (id) => TABS.find((t) => t.id === id) || TABS[0];
 
 // Where a post stands, in its row and the top bar's chip: Claude at work on it first, and for how long once that is a
-// minute or more. The chip is drawn from the full post too, whose rank is the rank card's (its number in it).
+// minute or more; the date it goes out, went out or was due, once it has one. The chip is drawn from the full post too,
+// whose rank is the rank card's (its number in it).
 export function statusOf(p) {
   const rank = p.rank && typeof p.rank === "object" ? p.rank.rank : p.rank;
   if (p.busy) {
@@ -36,8 +40,11 @@ export function statusOf(p) {
     const minutes = job ? Math.floor((job.seconds || 0) / 60) : 0;
     return { text: minutes >= 1 ? `Claude is working · ${minutes} min` : "Claude is working", kind: "busy" };
   }
-  if (p.status === "scheduled" && p.when) return { text: `Scheduled · ${p.when.replace(/ [A-Z]{2,5}$/, "")}`, kind: "ok" };
-  if (p.queued && p.when) return { text: `Queued · ${p.when.replace(/ [A-Z]{2,5}$/, "")}`, kind: p.kind };
+  const when = (p.when || "").replace(/ [A-Z]{2,5}$/, "");
+  if (p.status === "scheduled" && when) return { text: `Scheduled · ${when}`, kind: "ok" };
+  if (p.queued && when) return { text: `Queued · ${when}`, kind: p.kind };
+  if (p.status === "published" && when) return { text: `Published · ${when}`, kind: p.kind };
+  if (p.status === "cancelled" && when) return { text: `Cancelled · was due ${when}`, kind: p.kind };
   return { text: rank && p.status === "draft" ? `${p.label} · ${rank}/10` : p.label, kind: p.kind };   // the owner asked: 3 Nov 2026
 }
 
@@ -150,23 +157,20 @@ function saidOf(tab, mine) {
   if (!mine.length) return `${tab.hint}.`;
   if (tab.id === "drafts") return `${plural(mine.length, "draft", "drafts")}, best first: any not ranked yet on top, then the highest rank.`;
   if (tab.id === "approved") {
-    const waiting = n((p) => !(p.queued && p.when));
-    const queued = mine.length - waiting;
-    return `${plural(mine.length, "approved post", "approved posts")}: ${[
-      waiting ? `${waiting} waiting to be queued or scheduled` : "",
-      queued ? `${queued} in the queue, soonest first` : ""].filter(Boolean).join(", then ")}.`;
+    return `${plural(mine.length, "approved post", "approved posts")}, waiting for you to queue or schedule ${mine.length === 1 ? "it" : "them"}.`;
   }
   if (tab.id === "scheduled") {
     const failed = n((p) => p.status === "failed");
     const sending = n((p) => p.status === "scheduling");
-    const waiting = n((p) => p.status === "scheduled");
+    const going = [[n((p) => p.status === "scheduled"), "scheduled at Publora, in green"], [n((p) => p.queued), "queued, in blue"]]
+      .filter(([count]) => count).map(([count, words]) => `${count} ${words}`);
     return [failed ? `${failed} did not go out: ${failed === 1 ? "it comes" : "they come"} first, in red.` : "",
-      waiting ? `${waiting} scheduled at Publora, soonest first.` : "",
+      going.length ? `${going.join(", and ")}: soonest first.` : "",
       sending ? `${sending} being sent to Publora.` : ""].filter(Boolean).join(" ");
   }
   const cancelled = n((p) => p.status === "cancelled");
   const out = mine.length - cancelled;
-  return `${[out ? `${out} published on LinkedIn` : "", cancelled ? `${cancelled} cancelled on Publora` : ""].filter(Boolean).join(", and ")}.`;
+  return `${[out ? `${out} published on LinkedIn, the most recent first` : "", cancelled ? `${cancelled} cancelled on Publora` : ""].filter(Boolean).join(", then ")}.`;
 }
 
 const rowOf = (p) => ({ id: p.id, first: p.first, status: p.status, rank: p.rank, verdict: p.verdict || "", ...statusOf(p) });
@@ -213,7 +217,7 @@ function row(r, words) {
   r.rank ? h("span", { class: `rank ${r.verdict}`.trim(), "aria-hidden": "true", title: `Ranked ${r.rank} of 10` }, String(r.rank))
     : h("span", { class: "rank none", "aria-hidden": "true", title: "Not ranked yet" }, "–"),
   h("span", { class: "post-first" }, marked(r.first, words), ranked),
-  h("span", { class: "post-where" }, h("i", { class: `dot ${r.kind}`, "aria-hidden": "true" }), h("span", null, marked(r.text, words))),
+  h("span", { class: `post-where ${r.kind || ""}`.trim() }, h("i", { class: `dot ${r.kind}`, "aria-hidden": "true" }), h("span", null, marked(r.text, words))),
   r.found ? h("span", { class: "post-found" }, marked(r.found, words)) : null));
 }
 

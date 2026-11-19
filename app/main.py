@@ -41,7 +41,8 @@ ACTIVE = ("queued", "running")
 PROBLEM = ("failed", "unparsed")
 STATUS_LABEL = {"draft": "Draft", "approved": "Approved", "scheduling": "Sending", "scheduled": "Scheduled",
                 "published": "Published", "failed": "Failed", "cancelled": "Cancelled"}
-QUEUED_LABEL = "Queued"     # an approved post waiting in the posting queue; it takes a scheduled post's colour
+QUEUED_LABEL = "Queued"     # an approved post waiting in the posting queue
+QUEUED_KIND = "queued"      # its own colour beside a scheduled post's green (the owner's word, 20 Nov 2026)
 STATUS_KIND = {"draft": "", "approved": "ready", "scheduling": "busy", "scheduled": "ok", "published": "ok",
                "failed": "bad", "cancelled": "warn"}
 ORDER = {"draft": 0, "approved": 1, "failed": 2, "scheduling": 3, "scheduled": 4, "published": 5, "cancelled": 6}
@@ -120,7 +121,7 @@ class Studio:
         link = linkedin_link(row["published_url"]) if "published_url" in keys and row["status"] == "published" else None
         queued = not trashed and row["status"] == "approved" and "queue_pos" in keys and row["queue_pos"] is not None
         label = TRASHED_LABEL if trashed else QUEUED_LABEL if queued else STATUS_LABEL.get(row["status"], row["status"])
-        kind = "" if trashed else STATUS_KIND["scheduled"] if queued else STATUS_KIND.get(row["status"], "")
+        kind = "" if trashed else QUEUED_KIND if queued else STATUS_KIND.get(row["status"], "")
         when = self.when(row["scheduled_at"])
         if queued:
             at = (spots if spots is not None else dict(self.queue.lineup())).get(row["id"])
@@ -262,18 +263,32 @@ def create_app(cfg: Config, token: str, *, db_path: Path | None = None, runner: 
         queue.kick()         # likewise, when a queued post's time is near
         spots = dict(queue.lineup())
 
-        def goes_out(r) -> str:
-            """A scheduled post's time, or the time the queue gives a queued one; "" for any other post."""
-            if r["status"] in ("scheduling", "scheduled"):
-                return r["scheduled_at"] or ""
-            spot = spots.get(r["id"]) if r["status"] == "approved" else None
-            return spot.isoformat(timespec="seconds") if spot else ""
+        def at(value: str | None) -> float:
+            dt = render.parse_utc(value or "")
+            return dt.timestamp() if dt else 0.0
 
-        # Drafts first (any not ranked yet, newest first, then the ranked ones best first), then approved and failed
-        # ones alike; then what goes out, in time order (the queued posts among the scheduled ones); then published and
-        # cancelled.
-        rows.sort(key=lambda r: (ORDER["scheduled"], goes_out(r), 0, 0) if goes_out(r)
-                  else (ORDER.get(r["status"], 9), "", -(r["rank"] or 11), -r["id"]))
+        def goes_out(r) -> float | None:
+            """When a post goes out, as a time: a scheduled post's, or the one the queue gives a queued post (a queued
+            post with no free time yet goes after every timed one); None for any other post."""
+            if r["status"] in ("scheduling", "scheduled") and r["scheduled_at"]:
+                return at(r["scheduled_at"])
+            if r["status"] == "approved" and r["id"] in spots:
+                return spots[r["id"]].timestamp() if spots[r["id"]] else float("inf")
+            return None
+
+        def order(r) -> tuple:
+            """Drafts first (any not ranked yet, newest first, then the ranked ones best first), then the approved ones
+            waiting for the owner and the failed ones; then what goes out, soonest first (the queued posts among the
+            scheduled ones, compared as times, never as text in two time zones); then the published ones, the most
+            recent first, then the cancelled ones likewise (the owner's word, 20 Nov 2026)."""
+            out = goes_out(r)
+            if out is not None:
+                return (ORDER["scheduled"], out, 0, 0)
+            if r["status"] in ("published", "cancelled"):
+                return (ORDER[r["status"]], -at(r["scheduled_at"]), 0, -r["id"])
+            return (ORDER.get(r["status"], 9), 0, -(r["rank"] or 11), -r["id"])
+
+        rows.sort(key=order)
         active = [studio.job_public(r) for r in jobs.active()]
         ended = db.all("SELECT * FROM jobs WHERE status NOT IN ('queued','running') AND finished_at IS NOT NULL "
                        "ORDER BY finished_at DESC, id DESC LIMIT 12")

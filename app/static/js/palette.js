@@ -28,7 +28,7 @@ function items() {
   }
   const page = (label, hash, glyph, hint = "", keys = "") => out.push({ group: "Pages", label, hash, icon: glyph, hint, keys,
     current: location.hash === hash, run: () => go(hash) });
-  for (const t of TABS) page(t.name, `#~posts-${t.id}`, t.icon, t.hint, `posts list ${t.statuses.join(" ")}`);
+  for (const t of TABS) page(t.name, `#~posts-${t.id}`, t.icon, t.hint, `posts list ${[...t.statuses, ...(t.also || [])].join(" ")}`);
   page("Schedule", "#~schedule", "calendar", "What goes out when", "coming up queue planner month");
   page("Hot topics", "#~hot", "flame", "The news in your niche, to post about", "news trending latest release");
   page("Story Bank", "#~bank", "book", "The interviewer", "interview stories");
